@@ -4,6 +4,8 @@
 
 Работает на чистом Node.js, внешние зависимости не нужны.
 
+**Сайт: https://ku-portal.onrender.com** (тестовый вход — на экране входа, пароль `1234`)
+
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/SAKEDA-hub/ku-portal)
 
 | Вход | Комнаты по предметам | Вызов на спикинг | Пульт преподавателя |
@@ -53,6 +55,8 @@ node server.js
 По одному предмету можно стоять только в одной очереди.
 
 ## Публикация для других людей
+
+Рабочая версия уже опубликована: https://ku-portal.onrender.com. Ниже — как развернуть свою копию.
 
 GitHub Pages не подходит: порталу нужен сервер. Бесплатный вариант — Render, настройки уже лежат в `render.yaml`.
 
