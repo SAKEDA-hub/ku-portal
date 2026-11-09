@@ -485,3 +485,58 @@ button.room:hover { box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08); }
 .calltitle { font-size: 19px; font-weight: 800; }
 .callsub { color: var(--muted); margin-top: 4px; font-size: 13.5px; }
 @media (prefers-reduced-motion: reduce) { .callpulse, .mycard.called { animation: none; } }
+
+/* Таймер ответа */
+.tx-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.linkbtn {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; cursor: pointer;
+  color: var(--accent-strong); font-size: 13px; font-weight: 600; padding: 4px 0; white-space: nowrap;
+}
+.linkbtn svg { width: 16px; height: 16px; }
+.tcard {
+  border: 1.5px solid var(--line-strong); border-radius: 14px; padding: 12px; margin-bottom: 10px;
+  background: var(--card); transition: border-color 0.3s, background 0.3s;
+}
+.tcard-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.tclock {
+  font-size: 44px; font-weight: 800; letter-spacing: 1px; text-align: center; margin: 8px 0 4px;
+  font-variant-numeric: tabular-nums; color: var(--accent-deep);
+}
+.tbar { margin: 0 0 6px; }
+.tstate { text-align: center; font-size: 13px; font-weight: 600; color: var(--text-2); min-height: 18px; }
+.trow { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+.tcard.ph-warn { border-color: var(--lv3); background: #fffaf0; }
+.tcard.ph-warn .tclock, .tclock.ph-warn { color: #a66f00; }
+.tcard.ph-warn .tbar i, .tbar.ph-warn i { background: var(--lv3); }
+.tcard.ph-over { border-color: var(--lv4); background: #fff5f5; animation: overpulse 1.6s infinite; }
+.tcard.ph-over .tclock, .tclock.ph-over { color: var(--lv4); }
+.tcard.ph-over .tbar i, .tbar.ph-over i { background: var(--lv4); }
+.tcard.ph-over .tstate { color: var(--lv4); }
+@keyframes overpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(209, 67, 67, 0.35); } 50% { box-shadow: 0 0 0 5px rgba(209, 67, 67, 0); } }
+.gradebox { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
+.gradebox .row2 { align-items: stretch; }
+.gradebox .inp { margin-bottom: 8px; }
+.gradebox textarea.inp { resize: vertical; min-height: 44px; font-size: 14px; }
+.gradebox.attn { border-top-color: var(--lv4); }
+.gradebox.attn .sc { border-color: var(--lv4); box-shadow: 0 0 0 3px var(--danger-dim); }
+.btn.ok-btn { background: var(--ok); color: #fff; margin-bottom: 8px; }
+.btn.ok-btn:hover { background: #1a7a43; }
+.btn.slim { padding: 9px; font-size: 13.5px; }
+
+/* Результаты студента и комментарии */
+.qhead-row { display: flex; justify-content: space-between; align-items: center; padding-right: 16px; }
+.fbk {
+  margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: var(--card-2);
+  border-left: 3px solid var(--accent); font-size: 13.5px; color: var(--text-2); white-space: pre-wrap;
+}
+.fbk.sm { margin-top: 6px; padding: 6px 9px; font-size: 12.5px; }
+
+/* Панель модулей очереди (заполняется через registerQueueModule, см. AGENTS.md) */
+.modbar { display: flex; gap: 8px; overflow-x: auto; padding: 0 14px 12px; scrollbar-width: none; }
+.modbar::-webkit-scrollbar { display: none; }
+.modbtn {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line); color: var(--text); font-size: 13px; font-weight: 600; box-shadow: var(--shadow);
+}
+.modbtn svg { width: 18px; height: 18px; color: var(--accent-strong); }
+@media (prefers-reduced-motion: reduce) { .tcard.ph-over { animation: none; } }

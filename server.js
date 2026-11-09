@@ -29,11 +29,8 @@ function loadDB() {
   }
   migrateQueue();
 }
-/* Атомарная запись: сначала во временный файл, затем rename — db.json не бьётся при падении процесса */
 function saveDB() {
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 1));
-  fs.renameSync(tmp, DB_FILE);
+  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 1));
 }
 function nid(prefix) {
   db.seq = db.seq || {};
@@ -85,7 +82,7 @@ function pubUser(u) {
   return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '' };
 }
 
-const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 function hhmm(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
 function fmtDate(d) { return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}, ${WEEKDAYS[(d.getDay() + 6) % 7]}`; }
@@ -123,7 +120,10 @@ function nextLesson(group) {
  * Модель:
  *   examSession (= «комната») — { id, teacherId, subjectId, discipline, level, title, room, date, time,
  *                                 group, status: open|paused|closed, slotMin, capacity, rev, createdAt }
- *   queue entry                — { id, sessionId, studentId, ts, ord, status, calledAt, ackAt, doneAt, score }
+ *   queue entry                — { id, sessionId, studentId, ts, ord, status, calledAt, ackAt, startedAt,
+ *                                 extraSec, doneAt, score, comment, soonPos }
+ *   Таймер ответа: startedAt (кнопка «Начать») + лимит = slotMin*60 + extraSec; за warnSec до конца —
+ *   предупреждение, после лимита — «пора выставлять оценку». Клиент считает время с поправкой на serverNow.
  *   Жизненный цикл записи: waiting → called → done | absent;  waiting → left (сам вышел);
  *                          absent/called → waiting (вернуть в очередь);  * → removed | cancelled (комната закрыта).
  * Порядок в очереди — по полю ord (по умолчанию = ts записи), что позволяет «вернуть в начало».
@@ -170,6 +170,7 @@ function migrateQueue() {
     if (s.capacity == null) { s.capacity = 0; changed = true; }
     if (s.title == null) { s.title = ''; changed = true; }
     if (!s.rev) { s.rev = 1; changed = true; }
+    if (s.warnSec == null) { s.warnSec = 60; changed = true; }
   }
   if (changed) saveDB();
 }
@@ -182,10 +183,16 @@ function waitingOf(sid) { return entriesOf(sid, 'waiting').sort((a, b) => qkey(a
 function calledOf(sid) { return entriesOf(sid, 'called').sort((a, b) => a.calledAt - b.calledAt); }
 
 /* Средняя длительность ответа: по последним 8 принятым, иначе — норматив комнаты */
+/* Длительность ответа: от «Начать» (или от вызова, если таймер не запускали) до приёма */
+function answerMs(q) {
+  const from = q.startedAt || q.calledAt;
+  return from && q.doneAt && q.doneAt > from ? q.doneAt - from : 0;
+}
+function limitSec(s, e) { return (s.slotMin || 7) * 60 + ((e && e.extraSec) || 0); }
 function avgSlotMs(s) {
-  const done = entriesOf(s.id, 'done').filter((q) => q.calledAt && q.doneAt && q.doneAt > q.calledAt)
+  const done = entriesOf(s.id, 'done').filter((q) => answerMs(q) > 0)
     .sort((a, b) => a.doneAt - b.doneAt).slice(-8);
-  if (done.length >= 2) return done.reduce((a, q) => a + (q.doneAt - q.calledAt), 0) / done.length;
+  if (done.length >= 2) return done.reduce((a, q) => a + answerMs(q), 0) / done.length;
   return (s.slotMin || 7) * 60000;
 }
 /* Примерное ожидание для позиции pos (1-based) */
@@ -200,7 +207,7 @@ function roomPublic(s) {
     id: s.id, discipline: s.discipline, disciplineName: discName(s.discipline),
     level: s.level, title: s.title || '', subject: subjName(s.subjectId), teacher: teacherFio(s.teacherId),
     date: s.date, time: s.time, room: s.room, group: s.group, status: s.status,
-    slotMin: s.slotMin, capacity: s.capacity || 0, rev: s.rev || 1,
+    slotMin: s.slotMin, warnSec: s.warnSec != null ? s.warnSec : 60, capacity: s.capacity || 0, rev: s.rev || 1,
     waiting: entriesOf(s.id, 'waiting').length, called: entriesOf(s.id, 'called').length,
     done: entriesOf(s.id, 'done').length,
   };
@@ -211,6 +218,7 @@ function myEntryView(s, e) {
   const pos = e.status === 'waiting' ? w.indexOf(e) + 1 : 0;
   return {
     id: e.id, status: e.status, pos, ts: e.ts, calledAt: e.calledAt || null, ackAt: e.ackAt || null,
+    startedAt: e.startedAt || null, limitSec: limitSec(s, e),
     etaMin: e.status === 'waiting' ? etaMin(s, pos) : 0,
   };
 }
@@ -222,6 +230,14 @@ function roomSort(a, b) {
   return (st[a.status] - st[b.status]) || String(a.date).localeCompare(String(b.date)) ||
     String(a.time).localeCompare(String(b.time)) || a.level - b.level;
 }
+
+/*
+ * Точка расширения раздела «Электронная очередь» (см. AGENTS.md, раздел «Модули очереди»).
+ * Сюда подключаются серверные обработчики будущих модулей: пробные тесты, задания по грамматике
+ * и вокабуляру, редактор заданий преподавателя. Обработчик: async (ctx) => boolean — вернуть true,
+ * если запрос обработан. Пока массив пуст, поведение сервера не меняется.
+ */
+const QUEUE_MODULE_ROUTES = [];
 
 /* ------------------- Live-обновления: Server-Sent Events -------------------- */
 /*
@@ -240,6 +256,17 @@ function notifyRoom(s, reason) {
   s.rev = (s.rev || 1) + 1;
   const payload = { type: 'room', sessionId: s.id, discipline: s.discipline, rev: s.rev, reason: reason || 'update' };
   for (const c of sseClients) if (canSee(s, c.user)) sseWrite(c, payload);
+  notifySoon(s);
+}
+/* «Скоро ваша очередь»: когда студент стал 2-м, и ещё раз — когда стал следующим (1-м) */
+function notifySoon(s) {
+  if (s.status === 'closed') return;
+  waitingOf(s.id).slice(0, 2).forEach((e, i) => {
+    const pos = i + 1;
+    if (e.soonPos && e.soonPos <= pos) return; // об этой (или лучшей) позиции уже сообщили
+    e.soonPos = pos;
+    notifyUser(e.studentId, { type: 'soon', sessionId: s.id, entryId: e.id, pos, room: s.room, discipline: discName(s.discipline) });
+  });
 }
 function notifyUser(uid, payload) {
   for (const c of sseClients) if (c.user.id === uid) sseWrite(c, payload);
@@ -278,7 +305,7 @@ function teacherEntry(id, u) {
   return { e, s };
 }
 function callEntry(s, e) {
-  e.status = 'called'; e.calledAt = Date.now(); e.ackAt = null;
+  e.status = 'called'; e.calledAt = Date.now(); e.ackAt = null; e.startedAt = null; e.extraSec = 0;
   notifyRoom(s, 'called');
   notifyUser(e.studentId, {
     type: 'called', sessionId: s.id, entryId: e.id, disciplineId: s.discipline,
@@ -521,7 +548,7 @@ async function ollamaChat(messages) {
 async function aiReply(q, history) {
   const ctx = relevantChunks(q).map((c) => c.text).join('\n---\n');
   const system =
-    'Ты — AI-помощник портала Kozybayev University (KU), г. Петропавловск, Казахстан. ' +
+    'Ты — AI-помощник портала Kozybayev University (KU), г. Костанай, Казахстан. ' +
     'Отвечай кратко и дружелюбно на русском языке (если вопрос на другом языке — на языке вопроса). ' +
     'Опирайся ТОЛЬКО на справочный контекст ниже, собранный с официального сайта ku.edu.kz. ' +
     'Если ответа в контексте нет — честно скажи, что такой информации нет на сайте, и предложи обратиться в приёмную комиссию или деканат. ' +
@@ -749,7 +776,8 @@ const server = http.createServer(async (req, res) => {
         waiting: waiting.length,
         myEntry: myEntryView(s, e),
         etaNew: etaMin(s, waiting.length + 1),
-        calledNow: calledOf(s.id).map((q) => ({ fio: fio(q), me: q.studentId === u.id, calledAt: q.calledAt })),
+        serverNow: Date.now(),
+        calledNow: calledOf(s.id).map((q) => ({ fio: fio(q), me: q.studentId === u.id, calledAt: q.calledAt, startedAt: q.startedAt || null })),
         queue: waiting.map((q, i) => ({ pos: i + 1, fio: fio(q), me: q.studentId === u.id, ts: q.ts })),
       });
     }
@@ -774,6 +802,9 @@ const server = http.createServer(async (req, res) => {
         return bad(res, 409, `Очередь заполнена (лимит ${s.capacity})`);
       const now = Date.now();
       const entry = { id: nid('q'), sessionId: s.id, studentId: u.id, ts: now, ord: now, status: 'waiting' };
+      // Встал сразу 1-м/2-м — он и так видит позицию, отдельное «скоро» об этой позиции не шлём
+      const wl = entriesOf(s.id, 'waiting').length;
+      if (wl < 2) entry.soonPos = wl + 1;
       db.queue.push(entry); saveDB();
       notifyRoom(s, 'join');
       const pos = waitingOf(s.id).indexOf(entry) + 1;
@@ -797,6 +828,23 @@ const server = http.createServer(async (req, res) => {
       const s = db.examSessions.find((x) => x.id === e.sessionId);
       if (s) notifyRoom(s, 'ack');
       return ok(res);
+    }
+
+    /* История ответов студента: баллы и комментарии преподавателя */
+    if (p === '/api/exam/my-results' && req.method === 'GET' && u.role === 'student') {
+      const items = db.queue.filter((q) => q.studentId === u.id && ['done', 'absent'].includes(q.status))
+        .map((q) => {
+          const s = db.examSessions.find((x) => x.id === q.sessionId);
+          if (!s) return null;
+          return {
+            id: q.id, status: q.status, discipline: s.discipline, disciplineName: discName(s.discipline), level: s.level,
+            title: s.title || subjName(s.subjectId), teacher: teacherFio(s.teacherId), room: s.room,
+            at: q.doneAt || q.absentAt || q.ts, durSec: Math.round(answerMs(q) / 1000) || null,
+            score: q.score != null ? q.score : null, comment: q.comment || '',
+          };
+        }).filter(Boolean).sort((a, b) => b.at - a.at);
+      const scored = items.filter((x) => x.score != null);
+      return ok(res, { items, avg: scored.length ? Math.round((scored.reduce((a, x) => a + x.score, 0) / scored.length) * 10) / 10 : null });
     }
 
     /* ---------- Преподаватель ---------- */
@@ -841,7 +889,8 @@ const server = http.createServer(async (req, res) => {
         id: nid('ex'), subjectId: sub.id, teacherId: u.id, discipline: disc, level,
         title: String(title).trim().slice(0, 80), date, time,
         room: String(room || '').trim().slice(0, 40), group: String(group || '').trim().slice(0, 40),
-        status: 'open', slotMin: clampInt(body.slotMin, 1, 60, 7), capacity: clampInt(body.capacity, 0, 500, 0),
+        status: 'open', slotMin: clampInt(body.slotMin, 1, 60, 7), warnSec: clampInt(body.warnSec, 0, 600, 60),
+        capacity: clampInt(body.capacity, 0, 500, 0),
         rev: 1, createdAt: Date.now(),
       };
       db.examSessions.push(s); saveDB();
@@ -876,6 +925,7 @@ const server = http.createServer(async (req, res) => {
       if (body.title != null) s.title = String(body.title).trim().slice(0, 80);
       if (body.slotMin != null) s.slotMin = clampInt(body.slotMin, 1, 60, s.slotMin);
       if (body.capacity != null) s.capacity = clampInt(body.capacity, 0, 500, s.capacity);
+      if (body.warnSec != null) s.warnSec = clampInt(body.warnSec, 0, 600, s.warnSec);
       saveDB();
       notifyRoom(s, 'patch');
       return ok(res, { session: roomPublic(s) });
@@ -890,18 +940,48 @@ const server = http.createServer(async (req, res) => {
         return {
           id: e.id, pos: i + 1, fio: st ? st.fio : 'Студент', group: st ? st.group : '', ts: e.ts,
           status: e.status, calledAt: e.calledAt || null, ackAt: e.ackAt || null, doneAt: e.doneAt || null,
-          score: e.score != null ? e.score : null,
+          startedAt: e.startedAt || null, limitSec: limitSec(s, e), durSec: Math.round(answerMs(e) / 1000) || null,
+          score: e.score != null ? e.score : null, comment: e.comment || '',
         };
       };
       const byTime = (k) => (a, b) => (b[k] || 0) - (a[k] || 0);
       return ok(res, {
         session: roomPublic(s),
-        stats: { avgMin: Math.round((avgSlotMs(s) / 60000) * 10) / 10 },
+        serverNow: Date.now(),
+        stats: {
+          avgMin: Math.round((avgSlotMs(s) / 60000) * 10) / 10,
+          avgScore: (() => { const d = entriesOf(s.id, 'done').filter((q) => q.score != null); return d.length ? Math.round((d.reduce((a, q) => a + q.score, 0) / d.length) * 10) / 10 : null; })(),
+        },
         called: calledOf(s.id).map(row),
         waiting: waitingOf(s.id).map(row),
         done: entriesOf(s.id, 'done').sort(byTime('doneAt')).map(row),
         absent: entriesOf(s.id, 'absent').sort(byTime('absentAt')).map(row),
       });
+    }
+
+    /* Ведомость комнаты в CSV (UTF-8 с BOM — корректно открывается в Excel) */
+    if (/^\/api\/teacher\/sessions\/[\w-]+\/export\.csv$/.test(p) && req.method === 'GET' && u.role === 'teacher') {
+      const id = p.split('/')[4];
+      const s = db.examSessions.find((x) => x.id === id && x.teacherId === u.id);
+      if (!s) return bad(res, 404, 'Комната не найдена');
+      const ST = { waiting: 'В очереди', called: 'Вызван', done: 'Принят', absent: 'Не пришёл', left: 'Вышел сам', removed: 'Убран', cancelled: 'Отменён' };
+      const t = (ms) => (ms ? new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '');
+      const cell = (v) => {
+        let x = String(v == null ? '' : v);
+        if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; // защита от CSV/formula injection
+        return /[";\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x;
+      };
+      const rows = [['№', 'ФИО', 'Группа', 'Статус', 'Встал', 'Вызван', 'Начал', 'Закончил', 'Длительность, мин', 'Балл', 'Комментарий']];
+      entriesOf(s.id).sort((a, b) => a.ts - b.ts).forEach((q, i) => {
+        const st = db.users.find((x) => x.id === q.studentId);
+        const ms = answerMs(q);
+        rows.push([i + 1, st ? st.fio : '', st ? st.group : '', ST[q.status] || q.status, t(q.ts), t(q.calledAt), t(q.startedAt), t(q.doneAt),
+          ms ? (ms / 60000).toFixed(1).replace('.', ',') : '', q.score != null ? q.score : '', q.comment || '']);
+      });
+      const csv = '\ufeff' + rows.map((r) => r.map(cell).join(';')).join('\r\n');
+      const fname = `vedomost-${s.discipline}-${s.date}-${s.id}.csv`;
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${fname}"` });
+      return res.end(csv);
     }
 
     if (/^\/api\/teacher\/sessions\/[\w-]+\/call-next$/.test(p) && req.method === 'POST' && u.role === 'teacher') {
@@ -915,8 +995,8 @@ const server = http.createServer(async (req, res) => {
       return ok(res, { entryId: e.id });
     }
 
-    /* Действия над конкретной записью: call | accept | absent | requeue | remove */
-    const qm = /^\/api\/teacher\/queue\/([\w-]+)\/(call|accept|absent|requeue|remove)$/.exec(p);
+    /* Действия над конкретной записью: call | start | extend | accept | absent | requeue | remove */
+    const qm = /^\/api\/teacher\/queue\/([\w-]+)\/(call|start|extend|accept|absent|requeue|remove)$/.exec(p);
     if (qm && req.method === 'POST' && u.role === 'teacher') {
       const r = teacherEntry(qm[1], u);
       if (r.err) return bad(res, r.err[0], r.err[1]);
@@ -927,6 +1007,17 @@ const server = http.createServer(async (req, res) => {
         if (e.status !== 'waiting') return bad(res, 409, 'Студент не в ожидании');
         if (s.status === 'closed') return bad(res, 409, 'Комната закрыта');
         callEntry(s, e);
+      } else if (act === 'start') {
+        // Запуск таймера ответа: студент дошёл и начал говорить
+        if (e.status !== 'called') return bad(res, 409, 'Сначала вызовите студента');
+        if (!e.startedAt) e.startedAt = now;
+        notifyRoom(s, 'start');
+        notifyUser(e.studentId, { type: 'started', sessionId: s.id, entryId: e.id, limitSec: limitSec(s, e) });
+      } else if (act === 'extend') {
+        if (e.status !== 'called') return bad(res, 409, 'Продлить можно только текущий ответ');
+        const add = clampInt(body.sec, 15, 600, 60);
+        e.extraSec = Math.min(1800, (e.extraSec || 0) + add);
+        notifyRoom(s, 'extend');
       } else if (act === 'accept') {
         if (!ACTIVE.has(e.status)) return bad(res, 409, 'Студент уже не в очереди');
         let sc = null;
@@ -936,12 +1027,14 @@ const server = http.createServer(async (req, res) => {
         }
         if (!e.calledAt) e.calledAt = now; // принят сразу из ожидания (старый сценарий)
         e.status = 'done'; e.doneAt = now;
+        const comment = String(body.comment || '').trim().slice(0, 300);
+        if (comment) e.comment = comment;
         if (sc != null) {
           e.score = sc;
           db.grades.push({ id: nid('gr'), studentId: e.studentId, subjectId: s.subjectId, teacherId: u.id, score: sc, date: new Date().toISOString().slice(0, 10), source: 'speaking:' + s.id });
         }
         notifyRoom(s, 'done');
-        notifyUser(e.studentId, { type: 'done', sessionId: s.id, entryId: e.id, score: sc });
+        notifyUser(e.studentId, { type: 'done', sessionId: s.id, entryId: e.id, score: sc, comment: e.comment || '' });
       } else if (act === 'absent') {
         if (!ACTIVE.has(e.status)) return bad(res, 409, 'Студент уже не в очереди');
         e.status = 'absent'; e.absentAt = now;
@@ -953,7 +1046,7 @@ const server = http.createServer(async (req, res) => {
         // front=true — в начало очереди (например, студент вышел на минуту), иначе — в конец
         const w = waitingOf(s.id);
         e.ord = body.front && w.length ? qkey(w[0]) - 1 : now;
-        e.status = 'waiting'; e.calledAt = null; e.ackAt = null; e.absentAt = null;
+        e.status = 'waiting'; e.calledAt = null; e.ackAt = null; e.absentAt = null; e.startedAt = null; e.extraSec = 0; e.soonPos = null;
         notifyRoom(s, 'requeue');
         notifyUser(e.studentId, { type: 'requeue', sessionId: s.id, entryId: e.id });
       } else if (act === 'remove') {
@@ -1013,6 +1106,17 @@ const server = http.createServer(async (req, res) => {
           src: 'offline',
         });
       }
+    }
+
+    // Модули очереди (AGENTS.md): обрабатывают только свои пути /api/modules/<id>/...
+    if (p.startsWith('/api/modules/')) {
+      const mctx = { p, req, res, url, u, body, db, saveDB, nid, ok, bad, notifyUser, notifyRoom, subjectForDiscipline, discName, DISCIPLINES, LEVELS };
+      for (const h of QUEUE_MODULE_ROUTES) { if (await h(mctx)) return; }
+    }
+
+    if (p === '/api/ai/status' && req.method === 'GET') {
+      const model = await pickModel();
+      return ok(res, { model, online: !!model, ctx: kuCtx.chunks.length, ctxUpdated: kuCtx.updated });
     }
 
     return bad(res, 404, 'Не найдено');
