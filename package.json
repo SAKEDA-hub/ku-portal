@@ -1,0 +1,12 @@
+{
+  "name": "ku-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kozybayev University portal — студенческий/преподавательский портал с локальным AI-помощником",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
