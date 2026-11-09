@@ -1,0 +1,11 @@
+# Render Blueprint — бесплатный деплой (https://render.com)
+services:
+  - type: web
+    name: ku-portal
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
