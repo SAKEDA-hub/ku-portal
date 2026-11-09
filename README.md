@@ -35,11 +35,24 @@ ollama pull qwen2.5:1.5b   # если модель ещё не скачана
 3. **Студент** той же группы в сервисе «Запись на зачёт» видит карточки «Политология — ФИО преподавателя», жмёт → открывается экран с большой кнопкой **«Записаться»** → после записи показывает **ваш номер в очереди** (обновляется в реальном времени каждые ~3 с).
 4. Панель преподавателя показывает, кто сейчас стоит в очереди на зачёт.
 
+## Электронная очередь (спикинг)
+
+- **Комнаты** открывает преподаватель: предмет (вкладка у студентов), **серьёзность** 1–4 — *Лёгкая / Средняя / Сложная / Экзаменационная* (для английского дополнительно A2/B1/B2/C1), тема, аудитория, группа, норматив минут на студента, лимит очереди.
+- **Вкладки у студентов**: Английский, Высшая математика, Политология, Экология, Экономика, Введение в ИТ (+ «Другое» для прочих предметов). Внутри вкладки — фильтр по серьёзности и счётчик открытых комнат.
+- **Студент**: встаёт в очередь, видит номер, прогресс и ETA (по фактической средней длительности ответов). Правило: **одна активная очередь на предмет**, иначе можно было бы занять место во всех комнатах сразу.
+- **Вызов**: преподаватель жмёт «Вызвать следующего» (или конкретного студента). У студента на любом экране всплывает окно «Вас вызывают» с аудиторией, звуком, вибрацией и системным уведомлением; кнопка «Иду» подтверждает вызов (преподаватель видит «идёт ✓»).
+- **Пульт преподавателя**: смена серьёзности на лету, «Принять» с необязательным баллом (сразу уходит в «Успеваемость»), «Не пришёл», «Вернуть в начало/в очередь», «Убрать», пауза записи (очередь сохраняется), закрытие комнаты (активные записи отменяются с уведомлением).
+- **Realtime**: Server-Sent Events (`GET /api/events?ticket=…`). Одноразовый ticket берётся через `POST /api/events/ticket`, поэтому постоянный токен не попадает в URL. В поток идут только сигналы, данные клиент перечитывает через обычный API с проверкой прав. При обрыве — экспоненциальный реконнект, на это время включается polling.
+- Старые записи `db.json` мигрируются автоматически: дисциплина определяется по названию предмета, уровень по умолчанию — «Средняя».
+
 ## API (кратко)
 
 - `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/me`
-- Студент: `GET /api/student/dashboard`, `GET /api/schedule`, `GET /api/grades`, `GET /api/rating`, `GET /api/exam/sessions`, `GET /api/exam/sessions/:id`, `POST /api/exam/sessions/:id/join`, `POST /api/exam/queue/leave`
-- Преподаватель: `GET|POST /api/teacher/subjects`, `GET|POST /api/teacher/sessions`, `GET /api/teacher/sessions/:id/queue`, `POST /api/teacher/queue/:id/accept`, `POST /api/teacher/schedule`, `POST /api/teacher/grades`, `GET /api/teacher/students?group=`
+- Студент: `GET /api/student/dashboard`, `GET /api/schedule`, `GET /api/grades`, `GET /api/rating`
+- Очередь (студент): `GET /api/queue/meta`, `GET /api/exam/sessions?discipline=&level=`, `GET /api/exam/sessions/:id`, `POST /api/exam/sessions/:id/join`, `POST /api/exam/queue/leave`, `POST /api/exam/queue/:id/ack`
+- Очередь (преподаватель): `GET|POST /api/teacher/sessions`, `PATCH /api/teacher/sessions/:id` (level, status, room, title, slotMin, capacity), `GET /api/teacher/sessions/:id/queue`, `POST /api/teacher/sessions/:id/call-next`, `POST /api/teacher/queue/:id/{call|accept|absent|requeue|remove}`
+- Live: `POST /api/events/ticket`, `GET /api/events?ticket=` (SSE)
+- Преподаватель (прочее): `GET|POST /api/teacher/subjects`, `POST /api/teacher/schedule`, `POST /api/teacher/grades`, `GET /api/teacher/students?group=`
 - AI: `POST /api/ai/chat`, `GET /api/ai/status`
 
 Данные хранятся в `data/db.json` (без БД, для учебного проекта этого достаточно).

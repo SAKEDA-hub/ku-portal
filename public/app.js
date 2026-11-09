@@ -40,7 +40,10 @@ function dstr(s) {
   if (!m) return s;
   return String(Number(s.slice(8))) + ' ' + RU_M[Number(s.slice(5, 7)) - 1];
 }
-function stopPoll() { if (window.__poll) { clearInterval(window.__poll); window.__poll = null; } }
+function stopPoll() {
+  if (window.__poll) { clearInterval(window.__poll); window.__poll = null; }
+  if (window.__unsub) { const f = window.__unsub; window.__unsub = null; f(); }
+}
 function toast(text, isErr) {
   const t = document.createElement('div');
   t.className = 'toast' + (isErr ? ' err' : '');
@@ -53,7 +56,7 @@ async function api(path, o) {
   o.headers = Object.assign({ 'Content-Type': 'application/json' }, S.token ? { Authorization: 'Bearer ' + S.token } : {}, o.headers || {});
   if (o.body && typeof o.body !== 'string') o.body = JSON.stringify(o.body);
   const r = await fetch('/api' + path, o);
-  if (r.status === 401 && S.token) { S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error('Сессия истекла'); }
+  if (r.status === 401 && S.token) { Live.stop(); S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error('Сессия истекла'); }
   const j = await r.json().catch(() => ({ error: 'Ошибка сервера' }));
   if (!r.ok) throw new Error(j.error || 'Ошибка сервера');
   return j;
@@ -146,7 +149,7 @@ async function doLogin() {
   authErr('');
   try {
     const d = await api('/auth/login', { method: 'POST', body: { email: v('liEmail'), password: v('liPass') } });
-    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
+    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; Live.start(); goHome();
   } catch (e) { authErr(e.message); }
 }
 async function doRegister() {
@@ -159,7 +162,7 @@ async function doRegister() {
         email: v('rEmail'), password: v('rPass'), role: authRole, group: authRole === 'student' ? v('rGroup') : '',
       },
     });
-    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
+    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; Live.start(); goHome();
   } catch (e) { authErr(e.message); }
 }
 function v(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
@@ -178,7 +181,7 @@ async function viewHome() {
 
     const srvs = [
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['Запись на зачёт', 'clipboard', '#/exam'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
+      ['Электронная очередь', 'clipboard', '#/exam'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
       ['Общежитие', 'building', '#/stub/Общежитие'], ['Голосование', 'mic', '#/stub/Голосование'], ['Библиотека', 'chart', '#/stub/Библиотека'],
     ];
 
@@ -243,10 +246,10 @@ async function viewHomeT() {
   bindHead();
   try {
     const d = await api('/teacher/sessions');
-    const totalWaiting = d.items.reduce((a, s) => a + s.waiting, 0);
-    const soon = d.items.find((s) => s.waiting > 0) || d.items[0];
+    const totalWaiting = d.items.filter((s) => s.status !== 'closed').reduce((a, s) => a + s.waiting, 0);
+    const soon = d.items.find((s) => s.status !== 'closed' && (s.waiting > 0 || s.called > 0)) || d.items.find((s) => s.status !== 'closed');
     const srvs = [
-      ['Зачёты (очередь)', 'clipboard', '#/t/queue'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
+      ['Электронная очередь', 'clipboard', '#/t/queue'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
       ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'], ['Мои предметы', 'book', '#/t/queue'],
     ];
     document.getElementById('pagebody').innerHTML = `
@@ -268,11 +271,11 @@ async function viewHomeT() {
         <div class="dt">${esc(dstr(soon.date))}, ${esc(soon.time)}</div>
         <hr class="rule">
         <div class="row">Аудитория: ${esc(soon.room || '—')}${soon.group ? ' · Группа: ' + esc(soon.group) : ''}</div>
-        <div class="row">${soon.now ? 'Сейчас на зачёте: ' + esc(soon.now) : 'В очереди: ' + soon.waiting + ' студ.'}</div>
-        <div class="foot">${svg('info')} Ближайший зачёт</div>
+        <div class="row">${soon.calledFio ? 'Отвечает: ' + esc(soon.calledFio) : 'В очереди: ' + soon.waiting + ' студ.'}</div>
+        <div class="foot">${svg('info')} Комната для спикинга</div>
       </div>` : `
       <div class="card" style="border-left:8px solid var(--accent)">
-        <div class="next-empty">Активных зачётов пока нет.<br>Создайте первый в разделе «Зачёты».</div>
+        <div class="next-empty">Активных зачётов пока нет.<br>Откройте комнату в разделе «Электронная очередь».</div>
       </div>`}
       <div class="section-label">Сервисы</div>
       <div class="srv-grid">
@@ -351,101 +354,318 @@ async function viewRating() {
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
 }
 
-/* ============================ Запись на зачёт ============================ */
-async function viewExamList() {
-  stopPoll();
-  app.innerHTML = `${miniHead('Запись на зачёт')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+/* ============================ Электронная очередь: общее ============================ */
+let META = null;
+async function meta() {
+  if (!META) META = await api('/queue/meta');
+  return META;
+}
+function discList() { return META ? META.disciplines : []; }
+function discShort(id) {
+  const d = discList().find((x) => x.id === id);
+  return d ? d.short : (META ? META.other.short : id);
+}
+function lvl(id) { return (META && META.levels.find((l) => l.id === id)) || { id, name: '—', cefr: '', hint: '' }; }
+/* Подпись серьёзности: для английского добавляем CEFR */
+function lvlLabel(level, disc) { const l = lvl(level); return l.name + (disc === 'english' && l.cefr ? ' · ' + l.cefr : ''); }
+function lvlBadge(level, disc) { return `<span class="lvb lv${level}"><i></i>${esc(lvlLabel(level, disc))}</span>`; }
+const ROOM_ST = { open: ['Открыта', 'st-open'], paused: ['Пауза', 'st-paused'], closed: ['Закрыта', 'st-closed'] };
+function stBadge(st) { const x = ROOM_ST[st] || ['—', '']; return `<span class="stb ${x[1]}">${x[0]}</span>`; }
+function minsAgo(ts) { const m = Math.floor((Date.now() - ts) / 60000); return m < 1 ? 'только что' : m + ' мин назад'; }
+function etaText(m) { return m == null ? '' : m < 60 ? `≈ ${m} мин` : `≈ ${Math.floor(m / 60)} ч ${m % 60} мин`; }
+function lsGet(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch { } }
+
+/* Подписка текущего экрана на live-события; снимается в stopPoll() при смене экрана */
+function onLive(fn) {
+  const off = Live.on(fn);
+  const prev = window.__unsub;
+  window.__unsub = () => { off(); if (prev) prev(); };
+}
+/* Склейка частых событий в одну перерисовку */
+function debounce(fn, ms) { let t = null; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+/* -------- Live: SSE с одноразовым ticket, экспоненциальный реконнект, fallback на polling -------- */
+const Live = {
+  es: null, subs: new Set(), retry: 0, timer: null, poll: null, connected: false,
+  on(fn) { this.subs.add(fn); return () => this.subs.delete(fn); },
+  emit(ev) { for (const fn of Array.from(this.subs)) { try { fn(ev); } catch (e) { console.error(e); } } },
+  async start() {
+    if (!S.token || this.es || typeof EventSource === 'undefined') { if (typeof EventSource === 'undefined') this.startPoll(); return; }
+    clearTimeout(this.timer);
+    let ticket;
+    try { ticket = (await api('/events/ticket', { method: 'POST', body: {} })).ticket; }
+    catch { return this.reconnect(); }
+    if (!S.token) return;
+    const es = new EventSource('/api/events?ticket=' + encodeURIComponent(ticket));
+    this.es = es;
+    es.onopen = () => { this.retry = 0; this.connected = true; this.stopPoll(); };
+    es.onmessage = (m) => {
+      let ev; try { ev = JSON.parse(m.data); } catch { return; }
+      if (ev.type === 'hello') { this.emit({ type: 'resync' }); return; } // после реконнекта — догоняем пропущенное
+      onGlobalEvent(ev);
+      this.emit(ev);
+    };
+    // Ticket одноразовый, поэтому встроенный автореконнект EventSource не подходит — переподключаемся сами
+    es.onerror = () => { es.close(); if (this.es === es) this.es = null; this.connected = false; this.reconnect(); };
+  },
+  reconnect() {
+    if (!S.token) return;
+    this.startPoll();
+    const delay = Math.min(30000, 1000 * Math.pow(2, this.retry++));
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.start(), delay);
+  },
+  startPoll() { if (!this.poll) this.poll = setInterval(() => this.emit({ type: 'tick' }), 5000); },
+  stopPoll() { if (this.poll) { clearInterval(this.poll); this.poll = null; } },
+  stop() {
+    clearTimeout(this.timer); this.stopPoll(); this.retry = 0; this.connected = false;
+    if (this.es) { this.es.close(); this.es = null; }
+  },
+};
+
+/* -------- Глобальные уведомления студента (на любом экране) -------- */
+function onGlobalEvent(ev) {
+  if (!S.user || S.user.role !== 'student') return;
+  if (ev.type === 'called') showCallAlert(ev);
+  else if (ev.type === 'done') { closeCallAlert(); toast(ev.score != null ? `Ответ принят. Балл: ${ev.score}` : 'Ответ принят ✓'); }
+  else if (ev.type === 'absent') { closeCallAlert(); toast('Вас отметили как отсутствующего', true); }
+  else if (ev.type === 'requeue') { closeCallAlert(); toast('Вас вернули в очередь'); }
+  else if (ev.type === 'removed') { closeCallAlert(); toast('Преподаватель убрал вас из очереди', true); }
+  else if (ev.type === 'cancelled') { closeCallAlert(); toast('Комната закрыта, запись отменена', true); }
+}
+let titleBlink = null;
+function beep() {
   try {
-    const d = await api('/exam/sessions');
-    document.getElementById('pagebody').innerHTML =
-      `<div class="ptitle" style="padding:0 0 12px">Доступные зачёты</div>` + (
-        d.items.length
-          ? d.items.map((s) => `
-        <button class="card" style="width:calc(100% - 28px);text-align:left;cursor:pointer;border:0" data-id="${s.id}">
-          <div class="stud-fio" style="font-size:18px">${esc(s.subject)}</div>
-          <div class="stud-group">${esc(s.teacher)}</div>
-          <div class="tx" style="margin-top:4px">📅 ${esc(dstr(s.date))} · ${esc(s.time)}${s.room ? ' · ауд. ' + esc(s.room) : ''}</div>
-          <div class="row2" style="margin-top:10px">
-            <span class="badge">В очереди: ${s.waiting}</span>
-            ${s.mine ? '<span class="badge" style="background:rgba(76,175,80,.18);color:#7bd47b">Записаны ✓</span>' : ''}
-          </div>
-        </button>`).join('')
-          : `<div class="card next-empty">Пока нет доступных зачётов.<br>Они появятся, когда преподаватель создаст запись.</div>`
-      );
-    document.querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => { location.hash = '#/exam/' + b.dataset.id; }));
-  } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    [0, 0.28, 0.56].forEach((t) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.22);
+      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.24);
+    });
+    setTimeout(() => ctx.close(), 1200);
+  } catch { }
+}
+function showCallAlert(ev) {
+  closeCallAlert();
+  const where = ev.room ? 'Аудитория ' + ev.room : 'Подойдите к преподавателю';
+  const el = document.createElement('div');
+  el.className = 'callov'; el.id = 'callov';
+  el.innerHTML = `
+    <div class="callbox lvbord${ev.level}">
+      <div class="callpulse">${svg('bell')}</div>
+      <div class="calltitle">Вас вызывают на спикинг!</div>
+      <div class="callsub">${esc(ev.discipline)}${ev.title ? ' · ' + esc(ev.title) : ''}</div>
+      <div class="callroom">${esc(where)}</div>
+      <div style="margin:10px 0 4px">${lvlBadge(ev.level, ev.disciplineId)}</div>
+      <div class="tx">${esc(ev.teacher)}</div>
+      <button class="btn pri big" id="callAck" style="margin-top:16px">Иду ✓</button>
+      <button class="btn ghost" id="callOpen" style="margin-top:8px">Открыть комнату</button>
+    </div>`;
+  document.body.appendChild(el);
+  document.getElementById('callAck').onclick = async () => {
+    try { await api('/exam/queue/' + ev.entryId + '/ack', { method: 'POST', body: {} }); } catch (e) { toast(e.message, true); }
+    closeCallAlert();
+  };
+  document.getElementById('callOpen').onclick = () => { closeCallAlert(); location.hash = '#/exam/' + ev.sessionId; };
+  beep();
+  if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    try { new Notification('Вас вызывают на спикинг', { body: `${ev.discipline} · ${where}`, tag: 'ku-call' }); } catch { }
+  }
+  const orig = document.title;
+  let f = false;
+  clearInterval(titleBlink);
+  titleBlink = setInterval(() => { document.title = (f = !f) ? '🔔 ВАС ВЫЗЫВАЮТ' : orig; }, 900);
+  el.dataset.title = orig;
+}
+function closeCallAlert() {
+  const el = document.getElementById('callov');
+  if (titleBlink) { clearInterval(titleBlink); titleBlink = null; }
+  if (el) { if (el.dataset.title) document.title = el.dataset.title; el.remove(); }
+}
+function askNotify() {
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => { });
 }
 
+/* ============================ Очередь: студент — вкладки предметов ============================ */
+let qTab = null, qLevel = 0;
+async function viewExamList(tab) {
+  stopPoll();
+  app.innerHTML = `${miniHead('Электронная очередь')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  try { await meta(); } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
+  qTab = tab || qTab || lsGet('ku_qtab', 'english');
+  qLevel = Number(lsGet('ku_qlvl', '0')) || 0;
+  await paintExamList();
+  const re = debounce(() => paintExamList(true), 250);
+  onLive(() => re()); // любое событие (room/tick/resync/called…) — перечитываем список
+}
+async function paintExamList(silent) {
+  const pb = document.getElementById('pagebody');
+  if (!pb) return;
+  let d;
+  try {
+    const qs = '?discipline=' + encodeURIComponent(qTab) + (qLevel ? '&level=' + qLevel : '');
+    d = await api('/exam/sessions' + qs);
+  } catch (e) { if (!silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
+  const key = JSON.stringify([qTab, qLevel, d]);
+  if (silent && pb.dataset.key === key) return;
+  pb.dataset.key = key;
+
+  const tabs = discList().slice();
+  if (d.tabs.other || qTab === 'other') tabs.push(META.other);
+  const scrollX = (document.getElementById('qtabs') || {}).scrollLeft || 0;
+
+  pb.innerHTML = `
+    ${d.my.length ? `<div class="mystrip">${d.my.map((m) => `
+      <button class="mycard ${m.status === 'called' ? 'called' : ''}" data-open="${m.session.id}">
+        <div class="mc-top">${esc(discShort(m.session.discipline))} ${lvlBadge(m.session.level, m.session.discipline)}</div>
+        <div class="mc-big">${m.status === 'called' ? '🔔 Вас вызвали' : '№ ' + m.pos}</div>
+        <div class="tx">${m.status === 'called' ? (m.session.room ? 'Ауд. ' + esc(m.session.room) : 'Подойдите к преподавателю') : etaText(m.etaMin)}</div>
+      </button>`).join('')}</div>` : ''}
+    <div class="qtabs" id="qtabs" role="tablist">
+      ${tabs.map((t) => {
+        const c = d.tabs[t.id];
+        return `<button role="tab" class="qtab ${t.id === qTab ? 'on' : ''}" data-tab="${t.id}" aria-selected="${t.id === qTab}">
+          ${esc(t.short)}${c && c.open ? `<b class="qcnt">${c.open}</b>` : ''}</button>`;
+      }).join('')}
+    </div>
+    <div class="lvfilter">
+      <button class="lvf ${!qLevel ? 'on' : ''}" data-lv="0">Все уровни</button>
+      ${META.levels.map((l) => `<button class="lvf lvf${l.id} ${qLevel === l.id ? 'on' : ''}" data-lv="${l.id}">${esc(lvlLabel(l.id, qTab))}</button>`).join('')}
+    </div>
+    <div class="qhead">${esc((tabs.find((t) => t.id === qTab) || {}).name || '')}</div>
+    ${d.items.length ? d.items.map((s) => roomCardStudent(s)).join('') : `
+      <div class="card next-empty">${qLevel ? 'Нет комнат с такой серьёзностью.' : 'По этому предмету комнат пока нет.'}<br>Они появятся, когда преподаватель откроет комнату для спикинга.</div>`}`;
+
+  const qt = document.getElementById('qtabs');
+  qt.scrollLeft = scrollX;
+  const act = qt.querySelector('.qtab.on');
+  if (act && !silent) act.scrollIntoView({ inline: 'center', block: 'nearest' });
+  qt.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => {
+    qTab = b.dataset.tab; lsSet('ku_qtab', qTab);
+    history.replaceState(null, '', '#/exam/tab/' + qTab);
+    paintExamList();
+  }));
+  pb.querySelectorAll('[data-lv]').forEach((b) => (b.onclick = () => { qLevel = Number(b.dataset.lv); lsSet('ku_qlvl', String(qLevel)); paintExamList(); }));
+  pb.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => { location.hash = '#/exam/' + b.dataset.open; }));
+}
+function roomCardStudent(s) {
+  const l = lvl(s.level);
+  return `
+    <button class="card room lvbord${s.level} ${s.status !== 'open' ? 'dim' : ''}" data-open="${s.id}">
+      <div class="room-top">
+        ${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)}
+        ${s.my ? `<span class="badge ok">${s.my.status === 'called' ? 'Вызваны 🔔' : 'Вы № ' + s.my.pos}</span>` : ''}
+      </div>
+      <div class="stud-fio" style="font-size:18px;margin-top:8px">${esc(s.title || s.subject)}</div>
+      <div class="stud-group" style="margin:4px 0 6px">${esc(s.teacher)}</div>
+      <div class="tx">${esc(l.hint)}</div>
+      <div class="room-meta">
+        <span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span>
+        <span>👥 ${s.waiting}${s.capacity ? '/' + s.capacity : ''}</span>
+        ${s.status === 'open' && !s.my ? `<span>⏱ ${etaText(s.etaMin)}</span>` : ''}
+      </div>
+    </button>`;
+}
+
+/* ============================ Очередь: студент — комната ============================ */
 let examSessionId = null;
 async function viewExamDetail(id) {
   stopPoll();
   examSessionId = id;
-  window.__examSnap = window.__examSnap || {};
-  window.__examSnap[id] = null;
-  app.innerHTML = `${miniHead('Запись на зачёт')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Комната')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  try { await meta(); } catch { }
   await renderExamDetail(id);
-  window.__poll = setInterval(async () => {
-    if (location.hash.startsWith('#/exam/') && examSessionId) await renderExamDetail(examSessionId, true);
-  }, 2800);
+  const re = debounce(() => renderExamDetail(id, true), 200);
+  onLive((ev) => { if (ev.type === 'tick' || ev.type === 'resync' || ev.sessionId === id) re(); });
+  // Тикаем раз в 30 с, чтобы «вызвали N мин назад» и ETA не устаревали
+  window.__poll = setInterval(() => renderExamDetail(id, true, true), 30000);
 }
-async function renderExamDetail(id, silent) {
+async function renderExamDetail(id, silent, force) {
   let d;
   try { d = await api('/exam/sessions/' + id); }
-  catch (e) { const pb = document.getElementById('pagebody'); if (pb && !silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
+  catch (e) { const pb = document.getElementById('pagebody'); if (pb && !silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div><a class="back" style="justify-content:center;width:100%" href="#/exam">← К комнатам</a>`; return; }
   if (examSessionId !== id) return;
-  window.__examSnap = window.__examSnap || {};
-  const key = JSON.stringify([d.session, d.waiting, d.myEntry, d.queue]);
-  if (silent && window.__examSnap[id] === key) return; // нет изменений — не трогаем DOM
-  window.__examSnap[id] = key;
   const pb = document.getElementById('pagebody');
   if (!pb) return;
-  if (d.myEntry) {
-    pb.innerHTML = `
-      <div class="card exhead">
-        <div class="stud-fio" style="font-size:19px">${esc(d.session.subject)}</div>
-        <div class="stud-group">${esc(d.session.teacher)}</div>
-        <div class="tx">📅 ${esc(dstr(d.session.date))} · ${esc(d.session.time)}${d.session.room ? ' · ауд. ' + esc(d.session.room) : ''}</div>
-        <div class="qnum">№ ${d.myEntry.pos}</div>
-        <div class="qcap">Ваша позиция в очереди · всего в очереди: ${d.waiting}</div>
-      </div>
-      <div class="card">
-        <div class="tx" style="margin-bottom:10px">Кто в очереди:</div>
-        ${d.queue.map((q) => `<div class="lstrow ${q.me ? 'me' : ''}" style="cursor:default"><div>${q.pos}. ${esc(q.fio)} ${q.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${tm(q.ts)}</div></div>`).join('')}
-      </div>
-      <div style="margin:8px 14px">
-        <button class="btn danger-ghost" id="leaveBtn">Отменить запись</button>
+  const key = JSON.stringify(d);
+  if (silent && !force && pb.dataset.key === key) return;
+  pb.dataset.key = key;
+  const s = d.session, me = d.myEntry, l = lvl(s.level);
+  const head = `
+    <div class="card room lvbord${s.level}" style="cursor:default">
+      <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)}</div>
+      <div class="stud-fio" style="font-size:20px;margin-top:8px">${esc(s.title || s.subject)}</div>
+      <div class="stud-group" style="margin:4px 0 6px">${esc(s.disciplineName)} · ${esc(s.teacher)}</div>
+      <div class="tx">${esc(l.hint)}</div>
+      <div class="room-meta"><span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span><span>👥 ${d.waiting}${s.capacity ? '/' + s.capacity : ''}</span></div>
+    </div>`;
+  const list = `
+    <div class="card">
+      ${d.calledNow.length ? `<div class="tx" style="margin-bottom:8px">Сейчас отвечают:</div>${d.calledNow.map((c) => `<div class="lstrow called ${c.me ? 'me' : ''}" style="cursor:default"><div>🎤 ${esc(c.fio)} ${c.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${minsAgo(c.calledAt)}</div></div>`).join('')}` : ''}
+      <div class="tx" style="margin:6px 0 10px">В очереди (${d.waiting}):</div>
+      ${d.queue.length ? d.queue.map((q) => `<div class="lstrow ${q.me ? 'me' : ''}" style="cursor:default"><div>${q.pos}. ${esc(q.fio)} ${q.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${tm(q.ts)}</div></div>`).join('') : '<div class="tx">Очередь пуста.</div>'}
+    </div>`;
+  let main;
+  if (me && me.status === 'called') {
+    main = `
+      <div class="card exhead calledbox">
+        <div class="qnum" style="font-size:30px">🔔 Вас вызвали!</div>
+        <div class="callroom">${s.room ? 'Аудитория ' + esc(s.room) : 'Подойдите к преподавателю'}</div>
+        <div class="qcap">${minsAgo(me.calledAt)}${me.ackAt ? ' · вы подтвердили' : ''}</div>
+        ${me.ackAt ? '' : '<button class="btn pri big" id="ackBtn">Иду ✓</button>'}
       </div>`;
-    document.getElementById('leaveBtn').onclick = async () => {
-      try { await api('/exam/queue/leave', { method: 'POST', body: { entryId: d.myEntry.id } }); toast('Вы отменили запись'); renderExamDetail(id, true); }
-      catch (e) { toast(e.message, true); }
-    };
+  } else if (me) {
+    main = `
+      <div class="card exhead">
+        <div class="qnum">№ ${me.pos}</div>
+        <div class="qcap">Ваша позиция · ожидание ${etaText(me.etaMin)}</div>
+        <div class="progress"><i style="width:${Math.max(6, 100 - ((me.pos - 1) / Math.max(1, d.waiting)) * 100)}%"></i></div>
+        ${s.status === 'paused' ? '<div class="tx" style="margin-top:10px;color:var(--yellow)">Преподаватель поставил комнату на паузу — ваше место сохранено.</div>' : ''}
+        ${'Notification' in window && Notification.permission === 'default' ? '<button class="btn ghost" id="notifBtn" style="margin-top:12px">🔔 Включить уведомления о вызове</button>' : ''}
+      </div>`;
+  } else if (s.status === 'open') {
+    const full = s.capacity && d.waiting >= s.capacity;
+    main = `
+      <div style="margin:6px 14px 12px">
+        <button class="btn pri big" id="joinBtn" ${full ? 'disabled' : ''}>${full ? 'Очередь заполнена' : 'Встать в очередь'}</button>
+        <div class="tx" style="text-align:center;margin-top:8px">Примерное ожидание: ${etaText(d.etaNew)}</div>
+      </div>`;
   } else {
-    pb.innerHTML = `
-      <div class="card">
-        <div class="stud-fio" style="font-size:21px">${esc(d.session.subject)}</div>
-        <div class="stud-group">${esc(d.session.teacher)}</div>
-        <hr class="rule">
-        <div class="row" style="color:#d5d7da;font-size:15.5px;line-height:1.8">
-          📅 Дата: ${esc(dstr(d.session.date))}<br>
-          🕘 Время: ${esc(d.session.time)}<br>
-          🚪 Аудитория: ${esc(d.session.room || '—')}<br>
-          👥 В очереди сейчас: ${d.waiting}
-        </div>
-      </div>
-      <div style="margin:6px 14px">
-        <button class="btn pri big" id="joinBtn">Записаться</button>
-      </div>
-      <a class="back" style="justify-content:center;width:100%" href="#/exam">← К списку зачётов</a>`;
-    const btn = document.getElementById('joinBtn');
-    btn.onclick = async () => {
-      btn.disabled = true; btn.textContent = 'Записываем…';
-      try {
-        const r = await api('/exam/sessions/' + id + '/join', { method: 'POST', body: {} });
-        toast('Вы записаны! Вы ' + r.pos + '-й в очереди');
-        await renderExamDetail(id, true);
-      } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Записаться'; }
-    };
+    main = `<div class="card next-empty">${s.status === 'paused' ? 'Запись временно приостановлена преподавателем.' : 'Комната закрыта.'}</div>`;
   }
+  pb.innerHTML = head + main + list + `
+    ${me ? '<div style="margin:8px 14px"><button class="btn danger-ghost" id="leaveBtn">Выйти из очереди</button></div>' : ''}
+    <a class="back" style="justify-content:center;width:100%" href="#/exam/tab/${esc(s.discipline)}">← К комнатам предмета</a>`;
+
+  const jb = document.getElementById('joinBtn');
+  if (jb) jb.onclick = async () => {
+    askNotify();
+    jb.disabled = true; jb.textContent = 'Записываем…';
+    try {
+      const r = await api('/exam/sessions/' + id + '/join', { method: 'POST', body: {} });
+      toast(`Вы в очереди: № ${r.pos} (${etaText(r.etaMin)})`);
+      await renderExamDetail(id, true, true);
+    } catch (e) { toast(e.message, true); jb.disabled = false; jb.textContent = 'Встать в очередь'; }
+  };
+  const lb = document.getElementById('leaveBtn');
+  if (lb) lb.onclick = async () => {
+    if (!confirm('Выйти из очереди? Место будет потеряно.')) return;
+    try { await api('/exam/queue/leave', { method: 'POST', body: { entryId: me.id } }); toast('Вы вышли из очереди'); renderExamDetail(id, true, true); }
+    catch (e) { toast(e.message, true); }
+  };
+  const ab = document.getElementById('ackBtn');
+  if (ab) ab.onclick = async () => {
+    try { await api('/exam/queue/' + me.id + '/ack', { method: 'POST', body: {} }); closeCallAlert(); renderExamDetail(id, true, true); }
+    catch (e) { toast(e.message, true); }
+  };
+  const nb = document.getElementById('notifBtn');
+  if (nb) nb.onclick = () => { Notification.requestPermission().then(() => renderExamDetail(id, true, true)).catch(() => { }); };
 }
 
 /* ============================ AI-помощник ============================ */
@@ -513,124 +733,233 @@ async function sendChat() {
   body.scrollTop = body.scrollHeight;
 }
 
-/* ============================ Панель преподавателя ============================ */
+/* ============================ Очередь: преподаватель ============================ */
+let tTab = 'all', tForm = { discipline: null, level: 2 };
 async function viewTQueue() {
   stopPoll();
-  app.innerHTML = `${miniHead('Зачёты и очередь')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
-  try {
-    const subs = await api('/teacher/subjects');
-    renderTQueue(subs.items);
-  } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
-}
-function renderTQueue(subjects) {
+  app.innerHTML = `${miniHead('Электронная очередь')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  try { await meta(); } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
+  tTab = lsGet('ku_ttab', 'all');
+  if (!tForm.discipline) tForm.discipline = tTab !== 'all' ? tTab : 'english';
   const pb = document.getElementById('pagebody');
-  if (!pb) return;
   pb.innerHTML = `
-    <div class="card">
-      <div class="stud-fio" style="font-size:17px;margin-bottom:8px">Новый зачёт</div>
-      ${subjects.length ? `
-      <label class="lbl">Предмет</label>
-      <select class="inp" id="nsSubj">${subjects.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>` : `
-      <div class="tx" style="margin-bottom:8px">Сначала добавьте предмет:</div>
-      <input class="inp" id="newSubj" placeholder="Например: Политология">`}
+    <details class="card newroom" id="newRoom">
+      <summary><span class="stud-fio" style="font-size:17px">＋ Новая комната для спикинга</span></summary>
+      <label class="lbl">Предмет (вкладка у студентов)</label>
+      <div class="discgrid" id="nrDisc"></div>
+      <label class="lbl">Серьёзность комнаты</label>
+      <div class="lvpick" id="nrLevel"></div>
+      <div class="tx" id="nrHint" style="margin:-2px 0 10px"></div>
+      <label class="lbl">Тема / название (необяз.)</label>
+      <input class="inp" id="nrTitle" maxlength="80" placeholder="Например: Speaking — Travel &amp; Tourism">
       <div class="row2">
-        <div><label class="lbl">Дата</label><input class="inp" id="nsDate" type="date"></div>
-        <div><label class="lbl">Время</label><input class="inp" id="nsTime" type="time"></div>
+        <div><label class="lbl">Аудитория</label><input class="inp" id="nrRoom" maxlength="40" placeholder="301"></div>
+        <div><label class="lbl">Группа</label><input class="inp" id="nrGroup" maxlength="40" placeholder="для всех"></div>
       </div>
       <div class="row2">
-        <div><label class="lbl">Аудитория</label><input class="inp" id="nsRoom" placeholder="301"></div>
-        <div><label class="lbl">Группа (необяз.)</label><input class="inp" id="nsGroup" placeholder="для всех"></div>
+        <div><label class="lbl">Дата</label><input class="inp" id="nrDate" type="date"></div>
+        <div><label class="lbl">Время</label><input class="inp" id="nrTime" type="time"></div>
       </div>
-      <button class="btn pri" id="nsBtn">${subjects.length ? 'Создать зачёт' : 'Добавить предмет и создать'}</button>
-    </div>
-    <div class="ptitle" style="padding:2px 0 10px">Мои зачёты</div>
+      <div class="row2">
+        <div><label class="lbl">Минут на студента</label><input class="inp" id="nrSlot" type="number" min="1" max="60" value="7"></div>
+        <div><label class="lbl">Лимит (0 — нет)</label><input class="inp" id="nrCap" type="number" min="0" max="500" value="0"></div>
+      </div>
+      <div class="tx" style="margin-bottom:10px">Пустые дата/время — комната открывается «сейчас».</div>
+      <button class="btn pri" id="nrBtn">Открыть комнату</button>
+    </details>
+    <div class="qtabs" id="ttabs"></div>
     <div id="tSessions"><div class="load">Загрузка…</div></div>`;
-  const nsBtn = document.getElementById('nsBtn');
-  nsBtn.onclick = async () => {
-    nsBtn.disabled = true;
-    try {
-      if (!subjects.length) {
-        const name = v('newSubj');
-        if (name.length < 2) throw new Error('Введите название предмета');
-        await api('/teacher/subjects', { method: 'POST', body: { name } });
-        toast('Предмет "' + name + '" добавлен — выберите его и заполните дату/время');
-        nsBtn.disabled = false;
-        return viewTQueue();
-      }
-      await api('/teacher/sessions', {
-        method: 'POST',
-        body: { subjectId: v('nsSubj'), date: v('nsDate'), time: v('nsTime'), room: v('nsRoom'), group: v('nsGroup') },
-      });
-      toast('Зачёт создан');
-      await renderTList();
-      nsBtn.disabled = false;
-    } catch (e) { toast(e.message, true); nsBtn.disabled = false; }
-  };
-  renderTList();
+  paintNewRoomForm();
+  document.getElementById('nrBtn').onclick = createRoom;
+  await renderTList();
+  const re = debounce(() => renderTList(true), 250);
+  onLive(() => re());
 }
-async function renderTList() {
+function paintNewRoomForm() {
+  const dg = document.getElementById('nrDisc');
+  if (!dg) return;
+  dg.innerHTML = discList().map((d) => `<button type="button" class="dchip ${tForm.discipline === d.id ? 'on' : ''}" data-d="${d.id}">${esc(d.short)}</button>`).join('');
+  dg.querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => { tForm.discipline = b.dataset.d; paintNewRoomForm(); }));
+  const lp = document.getElementById('nrLevel');
+  lp.innerHTML = META.levels.map((l) => `<button type="button" class="lvopt lvopt${l.id} ${tForm.level === l.id ? 'on' : ''}" data-l="${l.id}">
+      <b>${l.id}</b><span>${esc(lvlLabel(l.id, tForm.discipline))}</span></button>`).join('');
+  lp.querySelectorAll('[data-l]').forEach((b) => (b.onclick = () => { tForm.level = Number(b.dataset.l); paintNewRoomForm(); }));
+  document.getElementById('nrHint').textContent = lvl(tForm.level).hint;
+}
+async function createRoom() {
+  const btn = document.getElementById('nrBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/teacher/sessions', {
+      method: 'POST',
+      body: {
+        discipline: tForm.discipline, level: tForm.level, title: v('nrTitle'), room: v('nrRoom'), group: v('nrGroup'),
+        date: v('nrDate'), time: v('nrTime'), slotMin: Number(v('nrSlot') || 7), capacity: Number(v('nrCap') || 0),
+      },
+    });
+    toast('Комната открыта — студенты видят её во вкладке «' + discShort(tForm.discipline) + '»');
+    location.hash = '#/t/room/' + r.id;
+  } catch (e) { toast(e.message, true); btn.disabled = false; }
+}
+async function renderTList(silent) {
   const box = document.getElementById('tSessions');
   if (!box) return;
-  try {
-    const d = await api('/teacher/sessions');
-    box.innerHTML = d.items.length ? d.items.map((s) => `
-      <div class="card" style="padding:16px">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-          <div>
-            <div class="stud-fio" style="font-size:17.5px">${esc(s.subject)}</div>
-            <div class="stud-group">${esc(dstr(s.date))} · ${esc(s.time)}${s.room ? ' · ауд. ' + esc(s.room) : ''}${s.group ? ' · ' + esc(s.group) : ''}</div>
-          </div>
-          <span class="badge">${s.waiting} в очереди</span>
-        </div>
-        <div class="row2" style="margin-top:8px">
-          <button class="btn ghost" data-q="${s.id}">${s.now ? 'Сейчас: ' + esc(s.now.slice(0, 22)) : 'Открыть очередь'}</button>
-        </div>
-        <div id="qd_${s.id}"></div>
-      </div>`).join('')
-      : `<div class="card next-empty">Зачётов пока нет — создайте первый выше.</div>`;
-    box.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => toggleTQueue(b.dataset.q, b)));
-  } catch (e) { box.innerHTML = `<div class="load">${esc(e.message)}</div>`; }
-}
-let openQ = null;
-async function toggleTQueue(sid, btn) {
-  if (openQ === sid) {
-    document.getElementById('qd_' + sid) && (document.getElementById('qd_' + sid).innerHTML = '');
-    openQ = null; btn.textContent = 'Открыть очередь'; stopPoll(); return;
-  }
-  document.querySelectorAll('[id^=qd_]').forEach((x) => (x.innerHTML = ''));
-  window.__tqSnap = window.__tqSnap || {};
-  window.__tqSnap[sid] = null;
-  openQ = sid;
-  const box = document.getElementById('qd_' + sid);
-  box.innerHTML = '<div class="load">Загрузка…</div>';
-  await paintTQueue(sid);
-  if (window.__poll) clearInterval(window.__poll);
-  window.__poll = setInterval(async () => { if (openQ === sid) paintTQueue(sid); }, 3000);
-}
-async function paintTQueue(sid) {
-  const box = document.getElementById('qd_' + sid);
-  if (!box) return;
   let d;
-  try { d = await api('/teacher/sessions/' + sid + '/queue'); }
-  catch (e) { box.innerHTML = `<div class="tx" style="color:var(--danger)">${esc(e.message)}</div>`; return; }
-  window.__tqSnap = window.__tqSnap || {};
-  const key = JSON.stringify([d.session, d.waiting, d.done]);
-  if (window.__tqSnap[sid] === key) return; // без изменений не обновляем
-  window.__tqSnap[sid] = key;
-  const row = (r, waiting) => `
-    <div class="lstrow"><div><b>${waiting ? r.pos + '. ' : ''}</b>${esc(r.fio)}<div class="tx">${esc(r.group)} · в ${tm(r.ts)}</div></div>
-    ${waiting ? `<button class="badge" style="border:0;cursor:pointer;padding:8px 14px;font-size:13px" data-acc="${r.id}">Принять ✓</button>` : '<span class="badge" style="background:rgba(76,175,80,.18);color:#7bd47b">Принят</span>'}</div>`;
-  box.innerHTML = `
-    <div class="tqcont" style="margin-top:10px">
-      ${d.now && 0 ? '' : ''}
-      ${d.waiting.length ? `<div class="stud-group" style="margin:4px 0 8px">Сейчас на зачёте: <b style="color:var(--accent)">${esc(d.waiting[0].fio)}</b></div>` : '<div class="tx" style="margin:6px 0">Очередь пуста.</div>'}
-      ${d.waiting.map((r) => row(r, true)).join('')}
-      ${d.done.length ? `<div class="stud-group" style="margin:10px 0 6px"> Принято сегодня: ${d.done.length}</div>${d.done.map((r) => row(r, false)).join('')}` : ''}
-    </div>`;
-  box.querySelectorAll('[data-acc]').forEach((b) => (b.onclick = async () => {
-    try { await api('/teacher/queue/' + b.dataset.acc + '/accept', { method: 'POST', body: {} }); paintTQueue(sid); }
-    catch (e) { toast(e.message, true); }
+  try { d = await api('/teacher/sessions'); } catch (e) { if (!silent) box.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
+  const key = JSON.stringify([tTab, d]);
+  if (silent && box.dataset.key === key) return;
+  box.dataset.key = key;
+  const cnt = {};
+  d.items.forEach((s) => { if (s.status !== 'closed') cnt[s.discipline] = (cnt[s.discipline] || 0) + 1; });
+  const tabs = [{ id: 'all', short: 'Все' }].concat(discList());
+  if (d.items.some((s) => s.discipline === 'other')) tabs.push(META.other);
+  const tt = document.getElementById('ttabs');
+  tt.innerHTML = tabs.map((t) => {
+    const c = t.id === 'all' ? Object.values(cnt).reduce((a, b) => a + b, 0) : cnt[t.id];
+    return `<button class="qtab ${tTab === t.id ? 'on' : ''}" data-tab="${t.id}">${esc(t.short)}${c ? `<b class="qcnt">${c}</b>` : ''}</button>`;
+  }).join('');
+  tt.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => {
+    tTab = b.dataset.tab; lsSet('ku_ttab', tTab);
+    if (tTab !== 'all') { tForm.discipline = tTab; paintNewRoomForm(); }
+    renderTList();
   }));
+  const items = d.items.filter((s) => tTab === 'all' || s.discipline === tTab);
+  box.innerHTML = items.length ? items.map((s) => `
+    <button class="card room lvbord${s.level} ${s.status === 'closed' ? 'dim' : ''}" data-room="${s.id}">
+      <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)} <span class="badge">${esc(discShort(s.discipline))}</span></div>
+      <div class="stud-fio" style="font-size:17.5px;margin-top:8px">${esc(s.title || s.subject)}</div>
+      <div class="room-meta"><span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span>${s.group ? `<span>👥 ${esc(s.group)}</span>` : ''}</div>
+      <div class="room-meta"><span class="badge">${s.waiting} ждут</span>${s.called ? `<span class="badge warn">${s.called} вызван(о)</span>` : ''}<span class="badge ok">${s.done} принято</span></div>
+      ${s.calledFio ? `<div class="tx" style="margin-top:6px">Отвечает: <b style="color:var(--accent)">${esc(s.calledFio)}</b></div>` : ''}
+    </button>`).join('')
+    : `<div class="card next-empty">${tTab === 'all' ? 'Комнат пока нет — откройте первую выше.' : 'По этому предмету комнат нет.'}</div>`;
+  box.querySelectorAll('[data-room]').forEach((b) => (b.onclick = () => { location.hash = '#/t/room/' + b.dataset.room; }));
+}
+
+/* -------- Пульт комнаты: вызов, приём с баллом, неявка, возврат, смена серьёзности -------- */
+let tRoomId = null;
+async function viewTRoom(id) {
+  stopPoll();
+  tRoomId = id;
+  app.innerHTML = `<a class="back" href="#/t/queue">${svg('back')} Комнаты</a><h1 class="ptitle">Пульт комнаты</h1><div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  try { await meta(); } catch { }
+  await paintTRoom(id);
+  const re = debounce(() => paintTRoom(id, true), 150);
+  onLive((ev) => { if (ev.type === 'tick' || ev.type === 'resync' || ev.sessionId === id) re(); });
+  window.__poll = setInterval(() => paintTRoom(id, true, true), 30000); // таймеры «вызван N мин назад»
+}
+async function paintTRoom(id, silent, force) {
+  const pb = document.getElementById('pagebody');
+  if (!pb || tRoomId !== id) return;
+  let d;
+  try { d = await api('/teacher/sessions/' + id + '/queue'); }
+  catch (e) { if (!silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
+  const key = JSON.stringify(d);
+  if (silent && !force && pb.dataset.key === key) return;
+  // Не перерисовываем, пока преподаватель вводит балл — иначе потеряется фокус и ввод
+  const ae = document.activeElement;
+  if (silent && ae && pb.contains(ae) && ae.matches('input')) return;
+  pb.dataset.key = key;
+  const s = d.session;
+  const closed = s.status === 'closed';
+  const calledRow = (r) => `
+    <div class="lstrow called" style="cursor:default;flex-wrap:wrap">
+      <div style="flex:1;min-width:150px">🎤 <b>${esc(r.fio)}</b><div class="tx">${esc(r.group)} · вызван ${minsAgo(r.calledAt)} ${r.ackAt ? '· <span style="color:#7bd47b">идёт ✓</span>' : '· <span style="color:var(--yellow)">не подтвердил</span>'}</div></div>
+      <div class="actrow">
+        <input class="inp small sc" data-sc="${r.id}" type="number" min="0" max="100" placeholder="балл">
+        <button class="abtn ok" data-acc="${r.id}" title="Принять (балл необязателен)">Принять</button>
+        <button class="abtn" data-rq="${r.id}" data-front="1" title="Вернуть в начало очереди">↩︎</button>
+        <button class="abtn bad" data-abs="${r.id}" title="Не пришёл">Нет</button>
+      </div>
+    </div>`;
+  const waitRow = (r) => `
+    <div class="lstrow" style="cursor:default">
+      <div><b>${r.pos}.</b> ${esc(r.fio)}<div class="tx">${esc(r.group)} · в ${tm(r.ts)}</div></div>
+      <div class="actrow">
+        ${closed ? '' : `<button class="abtn" data-call="${r.id}">Вызвать</button>`}
+        <button class="abtn bad" data-rm="${r.id}" title="Убрать из очереди">✕</button>
+      </div>
+    </div>`;
+  pb.innerHTML = `
+    <div class="card room lvbord${s.level}" style="cursor:default">
+      <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)} <span class="badge">${esc(discShort(s.discipline))}</span></div>
+      <div class="stud-fio" style="font-size:19px;margin-top:8px">${esc(s.title || s.subject)}</div>
+      <div class="room-meta"><span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span>${s.group ? `<span>👥 ${esc(s.group)}</span>` : ''}</div>
+      <div class="room-meta"><span class="badge">${d.waiting.length} ждут</span><span class="badge ok">${d.done.length} принято</span><span class="badge">⌀ ${d.stats.avgMin} мин</span></div>
+      ${closed ? '' : `
+      <label class="lbl">Серьёзность — меняется на лету, студенты увидят сразу</label>
+      <div class="lvpick" id="lvLive">${META.levels.map((l) => `<button class="lvopt lvopt${l.id} ${s.level === l.id ? 'on' : ''}" data-setlv="${l.id}"><b>${l.id}</b><span>${esc(lvlLabel(l.id, s.discipline))}</span></button>`).join('')}</div>`}
+    </div>
+    ${closed ? '' : `
+    <div style="margin:0 14px 12px">
+      <button class="btn pri big" id="callNext" ${d.waiting.length ? '' : 'disabled'}>${d.waiting.length ? '📣 Вызвать следующего: ' + esc(d.waiting[0].fio.split(' ').slice(0, 2).join(' ')) : 'Очередь пуста'}</button>
+      ${d.called.length ? '<div class="tx" style="text-align:center;margin-top:6px;color:var(--yellow)">Внимание: уже есть вызванный студент</div>' : ''}
+    </div>`}
+    ${d.called.length ? `<div class="card"><div class="tx" style="margin-bottom:8px">Сейчас отвечают:</div>${d.called.map(calledRow).join('')}</div>` : ''}
+    <div class="card">
+      <div class="tx" style="margin-bottom:8px">Очередь (${d.waiting.length}):</div>
+      ${d.waiting.length ? d.waiting.map(waitRow).join('') : '<div class="tx">Пока никого.</div>'}
+    </div>
+    ${d.absent.length ? `<div class="card"><div class="tx" style="margin-bottom:8px">Не пришли (${d.absent.length}):</div>${d.absent.map((r) => `
+      <div class="lstrow" style="cursor:default"><div>${esc(r.fio)}<div class="tx">${esc(r.group)}</div></div>
+      ${closed ? '' : `<button class="abtn" data-rq="${r.id}">В очередь</button>`}</div>`).join('')}</div>` : ''}
+    ${d.done.length ? `<div class="card"><div class="tx" style="margin-bottom:8px">Принято (${d.done.length}):</div>${d.done.map((r) => `
+      <div class="lstrow" style="cursor:default"><div>${esc(r.fio)}<div class="tx">${esc(r.group)} · ${r.doneAt ? tm(r.doneAt) : ''}${r.calledAt && r.doneAt ? ' · ' + Math.max(1, Math.round((r.doneAt - r.calledAt) / 60000)) + ' мин' : ''}</div></div>
+      <span class="badge ok">${r.score != null ? r.score + ' б.' : 'Принят'}</span></div>`).join('')}</div>` : ''}
+    ${closed ? '' : `
+    <div class="card">
+      <div class="row2">
+        <div><label class="lbl">Аудитория</label><input class="inp" id="edRoom" value="${esc(s.room || '')}" maxlength="40"></div>
+        <div><label class="lbl">Мин. на студента</label><input class="inp" id="edSlot" type="number" min="1" max="60" value="${s.slotMin}"></div>
+      </div>
+      <div class="row2">
+        <div><label class="lbl">Лимит очереди</label><input class="inp" id="edCap" type="number" min="0" max="500" value="${s.capacity}"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn ghost" id="edSave" style="margin-bottom:10px">Сохранить</button></div>
+      </div>
+      <div class="row2">
+        <button class="btn ghost" id="pauseBtn">${s.status === 'paused' ? '▶ Возобновить запись' : '⏸ Пауза записи'}</button>
+        <button class="btn danger-ghost" id="closeBtn">Закрыть комнату</button>
+      </div>
+    </div>`}`;
+
+  const patch = async (body, msg) => {
+    try { await api('/teacher/sessions/' + id, { method: 'PATCH', body }); if (msg) toast(msg); paintTRoom(id, true, true); }
+    catch (e) { toast(e.message, true); }
+  };
+  const act = async (eid, action, body, msg) => {
+    try { await api('/teacher/queue/' + eid + '/' + action, { method: 'POST', body: body || {} }); if (msg) toast(msg); paintTRoom(id, true, true); }
+    catch (e) { toast(e.message, true); }
+  };
+  pb.querySelectorAll('[data-setlv]').forEach((b) => (b.onclick = () => {
+    const lv = Number(b.dataset.setlv);
+    if (lv !== s.level) patch({ level: lv }, 'Серьёзность: ' + lvlLabel(lv, s.discipline));
+  }));
+  const cn = document.getElementById('callNext');
+  if (cn) cn.onclick = async () => {
+    cn.disabled = true;
+    try { await api('/teacher/sessions/' + id + '/call-next', { method: 'POST', body: {} }); toast('Студент вызван — ему пришло уведомление'); }
+    catch (e) { toast(e.message, true); }
+    paintTRoom(id, true, true);
+  };
+  pb.querySelectorAll('[data-call]').forEach((b) => (b.onclick = () => act(b.dataset.call, 'call', {}, 'Студент вызван')));
+  pb.querySelectorAll('[data-acc]').forEach((b) => (b.onclick = () => {
+    const inp = pb.querySelector('[data-sc="' + b.dataset.acc + '"]');
+    const raw = inp ? inp.value.trim() : '';
+    act(b.dataset.acc, 'accept', raw === '' ? {} : { score: Number(raw) }, raw === '' ? 'Принят' : 'Принят, балл ' + raw + ' записан в успеваемость');
+  }));
+  pb.querySelectorAll('.sc').forEach((inp) => (inp.onkeydown = (e) => { if (e.key === 'Enter') pb.querySelector('[data-acc="' + inp.dataset.sc + '"]').click(); }));
+  pb.querySelectorAll('[data-abs]').forEach((b) => (b.onclick = () => act(b.dataset.abs, 'absent', {}, 'Отмечен как отсутствующий')));
+  pb.querySelectorAll('[data-rq]').forEach((b) => (b.onclick = () => act(b.dataset.rq, 'requeue', { front: !!b.dataset.front }, b.dataset.front ? 'Возвращён в начало очереди' : 'Возвращён в конец очереди')));
+  pb.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => { if (confirm('Убрать студента из очереди?')) act(b.dataset.rm, 'remove', {}, 'Убран из очереди'); }));
+  const es = document.getElementById('edSave');
+  if (es) es.onclick = () => patch({ room: v('edRoom'), slotMin: Number(v('edSlot')), capacity: Number(v('edCap')) }, 'Сохранено');
+  const pz = document.getElementById('pauseBtn');
+  if (pz) pz.onclick = () => patch({ status: s.status === 'paused' ? 'open' : 'paused' }, s.status === 'paused' ? 'Запись возобновлена' : 'Запись на паузе — очередь сохранена');
+  const cl = document.getElementById('closeBtn');
+  if (cl) cl.onclick = () => {
+    const n = d.waiting.length + d.called.length;
+    if (confirm(n ? `Закрыть комнату? ${n} студ. в очереди получат отмену.` : 'Закрыть комнату?')) patch({ status: 'closed' }, 'Комната закрыта');
+  };
 }
 
 /* --- преподаватель: расписание --- */
@@ -641,7 +970,7 @@ async function viewTSchedule() {
     const subs = await api('/teacher/subjects');
     const pb = document.getElementById('pagebody');
     if (!subs.items.length) {
-      pb.innerHTML = `<div class="card next-empty">Сначала добавьте предмет в разделе «Зачёты».</div>`;
+      pb.innerHTML = `<div class="card next-empty">Сначала откройте комнату в «Электронной очереди» — предмет создастся автоматически.</div>`;
       return;
     }
     pb.innerHTML = `
@@ -695,7 +1024,7 @@ async function viewTGrades() {
   app.innerHTML = `${miniHead('Выставить оценки')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
   try {
     const subs = await api('/teacher/subjects');
-    if (!subs.items.length) return (document.getElementById('pagebody').innerHTML = `<div class="card next-empty">Сначала добавьте предмет в разделе «Зачёты».</div>`);
+    if (!subs.items.length) return (document.getElementById('pagebody').innerHTML = `<div class="card next-empty">Сначала откройте комнату в «Электронной очереди» — предмет создастся автоматически.</div>`);
     document.getElementById('pagebody').innerHTML = `
       <div class="card">
         <label class="lbl">Предмет</label>
@@ -749,14 +1078,14 @@ function viewProfile() {
         <div class="pf-sub">${esc(u.email)}</div>
       </div>
     </div>
-    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div>📋 Мои зачёты и очередь</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Запись на зачёт</div><div class="chev">${svg('chev')}</div></a>`}
+    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div>📋 Электронная очередь (комнаты)</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Электронная очередь</div><div class="chev">${svg('chev')}</div></a>`}
     <a class="card lstrow" style="display:flex" href="#/ai"><div>🤖 AI-помощник</div><div class="chev">${svg('chev')}</div></a>
     <div style="margin:10px 14px"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
     <div class="tx" style="text-align:center;margin-top:14px">KU Portal v1.0 · Kozybayev University</div>
     ${navHTML('profile')}`;
   document.getElementById('outBtn').onclick = async () => {
     try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
-    localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
+    Live.stop(); closeCallAlert(); localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
   };
 }
 
@@ -779,9 +1108,15 @@ function route() {
     case 'schedule': return viewSchedule();
     case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
     case 'rating': return viewRating();
-    case 'exam': return parts[1] ? viewExamDetail(parts[1]) : viewExamList();
+    case 'exam':
+      if (S.user.role === 'teacher') return viewTQueue();
+      if (parts[1] === 'tab') return viewExamList(parts[2]);
+      return parts[1] ? viewExamDetail(parts[1]) : viewExamList();
     case 'ai': return viewAI();
-    case 't': return parts[1] === 'schedule' ? viewTSchedule() : parts[1] === 'grades' ? viewTGrades() : viewTQueue();
+    case 't':
+      if (S.user.role !== 'teacher') return viewHome();
+      if (parts[1] === 'room' && parts[2]) return viewTRoom(parts[2]);
+      return parts[1] === 'schedule' ? viewTSchedule() : parts[1] === 'grades' ? viewTGrades() : viewTQueue();
     case 'profile': return viewProfile();
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
@@ -790,7 +1125,7 @@ function route() {
 window.addEventListener('hashchange', route);
 (async function init() {
   if (S.token) {
-    try { S.user = (await api('/me')).user; }
+    try { S.user = (await api('/me')).user; Live.start(); }
     catch { S.token = null; localStorage.removeItem('ku_token'); }
   }
   if (!location.hash) location.hash = '#/';

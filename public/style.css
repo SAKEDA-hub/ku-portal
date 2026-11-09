@@ -283,3 +283,125 @@ label.lbl { color: var(--muted); font-size: 13.5px; display: block; margin: 8px 
   font-size: 14.5px; z-index: 99; max-width: 380px; box-shadow: 0 6px 30px rgba(0,0,0,0.5);
 }
 .toast.err { border: 1px solid var(--danger); }
+
+/* Контент не уходит под фиксированную нижнюю навигацию */
+#pagebody { padding-bottom: 110px; }
+
+/* ---------- Электронная очередь ---------- */
+:root { --lv1: #6fcf97; --lv2: #57c2e8; --lv3: #f2c94c; --lv4: #eb5757; }
+.qtabs {
+  display: flex; gap: 8px; overflow-x: auto; padding: 2px 14px 10px; margin-bottom: 2px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity;
+}
+.qtabs::-webkit-scrollbar { display: none; }
+.qtab {
+  flex-shrink: 0; scroll-snap-align: start; padding: 10px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  font-size: 14.5px; cursor: pointer; display: inline-flex; gap: 7px; align-items: center; white-space: nowrap;
+}
+.qtab.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.qcnt { background: var(--accent); color: var(--accent-ink); border-radius: 999px; font-size: 11.5px; padding: 1px 7px; }
+.qhead { font-size: 19px; font-weight: 700; padding: 4px 16px 10px; }
+
+.lvfilter { display: flex; gap: 6px; overflow-x: auto; padding: 0 14px 10px; scrollbar-width: none; }
+.lvfilter::-webkit-scrollbar { display: none; }
+.lvf {
+  flex-shrink: 0; padding: 7px 11px; border-radius: 10px; border: 0; background: #1d1d20;
+  color: var(--muted); font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.lvf.on { color: var(--accent-ink); background: var(--accent); font-weight: 700; }
+.lvf1.on { background: var(--lv1); } .lvf3.on { background: var(--lv3); } .lvf4.on { background: var(--lv4); color: #fff; }
+
+.lvb {
+  display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px;
+  font-size: 12.5px; font-weight: 700; background: #1d1d20;
+}
+.lvb i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.lvb.lv1 { color: var(--lv1); } .lvb.lv2 { color: var(--lv2); } .lvb.lv3 { color: var(--lv3); } .lvb.lv4 { color: var(--lv4); }
+.stb { border-radius: 999px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
+.st-open { background: rgba(76, 175, 80, 0.16); color: #7bd47b; }
+.st-paused { background: rgba(242, 201, 76, 0.16); color: var(--yellow); }
+.st-closed { background: #1d1d20; color: var(--muted); }
+.badge.ok { background: rgba(76, 175, 80, 0.18); color: #7bd47b; }
+
+.room {
+  display: block; width: calc(100% - 28px); text-align: left; border: 0; color: var(--text);
+  cursor: pointer; border-left: 7px solid var(--lv2); font-family: inherit;
+}
+.room.dim { opacity: 0.6; }
+.lvbord1 { border-left-color: var(--lv1) !important; } .lvbord2 { border-left-color: var(--lv2) !important; }
+.lvbord3 { border-left-color: var(--lv3) !important; } .lvbord4 { border-left-color: var(--lv4) !important; }
+.room-top { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.room-meta { display: flex; gap: 12px; flex-wrap: wrap; color: #cfd3d8; font-size: 13.5px; margin-top: 8px; }
+
+.mystrip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 14px 12px; scrollbar-width: none; }
+.mystrip::-webkit-scrollbar { display: none; }
+.mycard {
+  flex-shrink: 0; min-width: 170px; background: var(--card); border: 1px solid var(--accent);
+  border-radius: 16px; padding: 12px 14px; text-align: left; color: var(--text); cursor: pointer;
+}
+.mycard.called { border-color: var(--yellow); animation: glow 1.4s infinite; }
+.mc-top { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.mc-big { font-size: 22px; font-weight: 800; color: var(--accent); margin: 4px 0 2px; }
+.mycard.called .mc-big { color: var(--yellow); }
+@keyframes glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(242, 201, 76, 0.5); } 50% { box-shadow: 0 0 0 6px rgba(242, 201, 76, 0); } }
+
+.progress { height: 8px; background: #1d1d20; border-radius: 99px; overflow: hidden; margin: 4px 6px 0; }
+.progress i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width 0.4s; }
+.calledbox { border: 2px solid var(--yellow); }
+.calledbox .qnum { color: var(--yellow); }
+.callroom { font-size: 22px; font-weight: 700; margin: 6px 0; }
+.lstrow.called { outline: 1.5px solid var(--yellow); }
+
+/* Форма новой комнаты */
+.newroom summary { cursor: pointer; list-style: none; }
+.newroom summary::-webkit-details-marker { display: none; }
+.newroom[open] summary { margin-bottom: 8px; }
+.discgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 6px; }
+.dchip {
+  padding: 11px 8px; border-radius: 12px; border: 1px solid var(--line); background: #1d1d20;
+  color: var(--muted); font-size: 14px; cursor: pointer;
+}
+.dchip.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); font-weight: 700; }
+.lvpick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.lvopt {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 4px;
+  border-radius: 12px; border: 1.5px solid var(--line); background: #1d1d20; color: var(--muted); cursor: pointer;
+  font-size: 11.5px; line-height: 1.2; text-align: center;
+}
+.lvopt b { font-size: 18px; }
+.lvopt1.on { border-color: var(--lv1); color: var(--lv1); background: rgba(111, 207, 151, 0.12); }
+.lvopt2.on { border-color: var(--lv2); color: var(--lv2); background: rgba(87, 194, 232, 0.12); }
+.lvopt3.on { border-color: var(--lv3); color: var(--lv3); background: rgba(242, 201, 76, 0.12); }
+.lvopt4.on { border-color: var(--lv4); color: var(--lv4); background: rgba(235, 87, 87, 0.12); }
+
+/* Пульт преподавателя */
+.actrow { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.actrow .inp.sc { width: 66px; margin: 0; padding: 8px; font-size: 14px; }
+.abtn {
+  border: 0; border-radius: 10px; padding: 8px 11px; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--accent-dim); color: var(--accent);
+}
+.abtn.ok { background: rgba(76, 175, 80, 0.2); color: #7bd47b; }
+.abtn.bad { background: rgba(229, 115, 115, 0.15); color: var(--danger); }
+
+/* Оверлей вызова */
+.callov {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72); z-index: 200;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.callbox {
+  width: 100%; max-width: 380px; background: var(--card); border-radius: 22px; padding: 24px 20px;
+  text-align: center; border-top: 8px solid var(--lv2);
+}
+.callbox.lvbord1 { border-top-color: var(--lv1); } .callbox.lvbord2 { border-top-color: var(--lv2); }
+.callbox.lvbord3 { border-top-color: var(--lv3); } .callbox.lvbord4 { border-top-color: var(--lv4); }
+.callpulse {
+  width: 64px; height: 64px; margin: 0 auto 10px; border-radius: 50%; background: var(--accent-dim); color: var(--accent);
+  display: flex; align-items: center; justify-content: center; animation: pulse 1.2s infinite;
+}
+.callpulse svg { width: 32px; height: 32px; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(87, 194, 232, 0.6); } 100% { box-shadow: 0 0 0 18px rgba(87, 194, 232, 0); } }
+.calltitle { font-size: 21px; font-weight: 800; }
+.callsub { color: var(--muted); margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .callpulse, .mycard.called { animation: none; } }
