@@ -85,7 +85,7 @@ function pubUser(u) {
   return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '' };
 }
 
-const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 function hhmm(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
 function fmtDate(d) { return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}, ${WEEKDAYS[(d.getDay() + 6) % 7]}`; }
@@ -294,6 +294,68 @@ function subjectForDiscipline(u, disc) {
   return sub;
 }
 
+/* ------------------------------ Демо-данные ------------------------------ */
+/*
+ * Тестовые аккаунты создаются при старте, если их ещё нет (идемпотентно).
+ * Отключить: DEMO=0. На бесплатном Render база сбрасывается при рестарте —
+ * демо-данные просто создаются заново.
+ */
+const DEMO_ON = process.env.DEMO !== '0';
+const DEMO_PASS = '1234';
+const DEMO_GROUP = 'ИСУ-26-2-а';
+const DEMO_ACCOUNTS = [
+  { role: 'teacher', email: 'teacher@demo.kz', lastName: 'Ахметова', firstName: 'Айгерим', middleName: 'Сериковна' },
+  { role: 'student', email: 'student@demo.kz', lastName: 'Иванов', firstName: 'Данияр', middleName: '', group: DEMO_GROUP },
+  { role: 'student', email: 'student2@demo.kz', lastName: 'Каримова', firstName: 'Алина', middleName: '', group: DEMO_GROUP },
+];
+function seedDemo() {
+  if (!DEMO_ON || db.users.some((x) => x.email === DEMO_ACCOUNTS[0].email)) return;
+  const made = {};
+  for (const a of DEMO_ACCOUNTS) {
+    const salt = crypto.randomBytes(8).toString('hex');
+    const u = {
+      id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role,
+      fio: [a.lastName, a.firstName, a.middleName].filter(Boolean).join(' '), firstName: a.firstName,
+      email: a.email, salt, passHash: hash(DEMO_PASS, salt), group: a.group || '', createdAt: Date.now(), demo: true,
+    };
+    db.users.push(u);
+    made[a.email] = u;
+  }
+  const t = made['teacher@demo.kz'];
+  const sub = (disc) => subjectForDiscipline(t, disc);
+  const today = new Date();
+  const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const room = (disc, level, title, roomNo, time) => {
+    const s = {
+      id: nid('ex'), subjectId: sub(disc).id, teacherId: t.id, discipline: disc, level, title,
+      date: ymd, time, room: roomNo, group: '', status: 'open', slotMin: 7, capacity: 0, rev: 1, createdAt: Date.now(), demo: true,
+    };
+    db.examSessions.push(s);
+    return s;
+  };
+  const en3 = room('english', 3, 'Speaking: Travel and Tourism', '301', '10:00');
+  room('english', 1, 'Speaking: About Myself', '305', '11:30');
+  room('math', 2, 'Защита РГР: пределы и производные', '214', '13:00');
+  room('politology', 4, 'Итоговый коллоквиум', '118', '14:30');
+  // Вторая студентка уже стоит в очереди — преподавателю есть кого вызвать сразу
+  const now = Date.now();
+  db.queue.push({ id: nid('q'), sessionId: en3.id, studentId: made['student2@demo.kz'].id, ts: now, ord: now, status: 'waiting' });
+  // Немного расписания и оценок, чтобы виджеты на главной не были пустыми
+  const lessons = [
+    ['english', 'Практ.', 0, '08:30', '09:50', '301'], ['math', 'Лек.', 0, '10:00', '11:20', '214'],
+    ['politology', 'Лек.', 2, '11:30', '12:50', '118'], ['english', 'Практ.', 3, '08:30', '09:50', '301'],
+    ['math', 'Практ.', 4, '10:00', '11:20', '214'],
+  ];
+  for (const [disc, type, day, start, end, rm] of lessons) {
+    db.schedule.push({ id: nid('sc'), subjectId: sub(disc).id, teacherId: t.id, type, group: DEMO_GROUP, day, start, end, room: rm });
+  }
+  const g = (email, disc, score) => db.grades.push({ id: nid('gr'), studentId: made[email].id, subjectId: sub(disc).id, teacherId: t.id, score, date: ymd });
+  g('student@demo.kz', 'english', 88); g('student@demo.kz', 'math', 76); g('student@demo.kz', 'politology', 91);
+  g('student2@demo.kz', 'english', 94); g('student2@demo.kz', 'math', 82);
+  saveDB();
+  console.log(`[DEMO] Созданы тестовые аккаунты (пароль ${DEMO_PASS}): ${DEMO_ACCOUNTS.map((a) => a.email).join(', ')}`);
+}
+
 /* ------------------------- Контекст с сайта KU ---------------------------- */
 
 const kuCtx = { chunks: [], updated: 0 };
@@ -459,7 +521,7 @@ async function ollamaChat(messages) {
 async function aiReply(q, history) {
   const ctx = relevantChunks(q).map((c) => c.text).join('\n---\n');
   const system =
-    'Ты — AI-помощник портала Kozybayev University (KU), г. Костанай, Казахстан. ' +
+    'Ты — AI-помощник портала Kozybayev University (KU), г. Петропавловск, Казахстан. ' +
     'Отвечай кратко и дружелюбно на русском языке (если вопрос на другом языке — на языке вопроса). ' +
     'Опирайся ТОЛЬКО на справочный контекст ниже, собранный с официального сайта ku.edu.kz. ' +
     'Если ответа в контексте нет — честно скажи, что такой информации нет на сайте, и предложи обратиться в приёмную комиссию или деканат. ' +
@@ -504,6 +566,8 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 };
 function serveStatic(req, res, url) {
   let p = url.pathname === '/' ? '/index.html' : url.pathname;
@@ -513,7 +577,8 @@ function serveStatic(req, res, url) {
   fs.readFile(file, (e, buf) => {
     if (e) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('404'); return; }
     const mime = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-    const noCache = /\.(html|js|css)$/i.test(file) ? { 'Cache-Control': 'no-cache' } : {};
+    const noCache = /\.(html|js|css)$/i.test(file) ? { 'Cache-Control': 'no-cache' }
+      : /\.woff2$/i.test(file) ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : {};
     res.writeHead(200, Object.assign({ 'Content-Type': mime }, noCache));
     res.end(buf);
   });
@@ -577,6 +642,12 @@ const server = http.createServer(async (req, res) => {
       sessions.delete(t);
       dropSession(t);
       return ok(res);
+    }
+
+    if (p === '/api/demo' && req.method === 'GET') {
+      return ok(res, DEMO_ON
+        ? { enabled: true, password: DEMO_PASS, accounts: DEMO_ACCOUNTS.map((x) => ({ role: x.role, email: x.email, fio: x.lastName + ' ' + x.firstName })) }
+        : { enabled: false });
     }
 
     if (p === '/api/ai/status' && req.method === 'GET') {
@@ -954,6 +1025,7 @@ const server = http.createServer(async (req, res) => {
 /* -------------------------------- Старт ---------------------------------- */
 
 loadDB();
+seedDemo();
 loadSessions();
 loadCtxCache();
 server.listen(PORT, () => console.log(`KU Portal: http://localhost:${PORT}`));

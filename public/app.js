@@ -24,7 +24,18 @@ const I = {
   logo: '<path d="M7 19V5h2.6v6.2L15 5h3.1l-5.4 6.6L18.6 19h-3.2l-5.8-6.4V19H7z" fill="currentColor" stroke="none"/>',
   back: '<path d="M14.5 5.5 8 12l6.5 6.5"/>',
   info: '<circle cx="12" cy="12" r="8.6"/><path d="M12 11v5"/><path d="M12 8v.01"/>',
+  door: '<path d="M6 20.5V4.8c0-.7.5-1.3 1.2-1.3h9.6c.7 0 1.2.6 1.2 1.3v15.7M4 20.5h16"/><path d="M14.5 12.2v.6"/>',
+  users: '<circle cx="9" cy="8.4" r="3.3"/><path d="M3.4 19.5a5.6 5.6 0 0 1 11.2 0"/><path d="M15.6 5.4a3.2 3.2 0 0 1 0 6.1M17.4 14.3a5.5 5.5 0 0 1 3.2 5.2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+  undo: '<path d="M9 14 4.5 9.5 9 5"/><path d="M4.5 9.5h9.5a5.5 5.5 0 0 1 0 11H11"/>',
+  pause: '<path d="M9 5.5v13M15 5.5v13"/>',
+  play: '<path d="M7.5 5.2v13.6L18.5 12z"/>',
+  speaker: '<path d="M4 10v4h3.5l5 4.5v-13L7.5 10z"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.6 6.5a7.8 7.8 0 0 1 0 11"/>',
+  cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
 };
+function mi(icon, text) { return `<span class="mi">${svg(icon)}${text}</span>`; }
 function svg(name, cls) {
   return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[name]}</svg>`;
 }
@@ -34,7 +45,7 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function tm(ts) { return new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
-const RU_M = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const RU_M = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 function dstr(s) {
   const m = /^\d{4}-\d{2}-\d{2}$/.exec(String(s || ''));
   if (!m) return s;
@@ -110,8 +121,10 @@ function viewAuth(msg) {
     </div>
     <div id="authform"></div>
     <div class="err" id="autherr">${msg ? esc(msg) : ''}</div>
+    <div id="demoBox"></div>
   </div>`;
   renderAuthForm();
+  renderDemoBox();
   document.getElementById('tabLogin').onclick = () => { authTab = 'login'; viewAuth(); };
   document.getElementById('tabReg').onclick = () => { authTab = 'reg'; viewAuth(); };
 }
@@ -142,6 +155,31 @@ function renderAuthForm() {
     document.getElementById('chTeach').onclick = () => { authRole = 'teacher'; renderAuthForm(); };
     document.getElementById('rBtn').onclick = doRegister;
   }
+}
+/* Блок быстрого входа в тестовые аккаунты (если сервер запущен с демо-данными) */
+let demoInfo = null;
+async function renderDemoBox() {
+  try { if (!demoInfo) demoInfo = await api('/demo'); } catch { return; }
+  const box = document.getElementById('demoBox');
+  if (!box || !demoInfo.enabled) return;
+  const t = demoInfo.accounts.find((a) => a.role === 'teacher');
+  const st = demoInfo.accounts.find((a) => a.role === 'student');
+  box.innerHTML = `
+    <div class="demo-box">
+      <b>Тестовый вход</b>
+      <div class="tx">Пароль у всех демо-аккаунтов: ${esc(demoInfo.password)}. Для проверки очереди откройте второй аккаунт в окне инкогнито.</div>
+      <div class="row2">
+        <button class="btn ghost" data-demo="${esc(t.email)}">Преподаватель</button>
+        <button class="btn ghost" data-demo="${esc(st.email)}">Студент</button>
+      </div>
+    </div>`;
+  box.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = async () => {
+    authErr('');
+    try {
+      const d = await api('/auth/login', { method: 'POST', body: { email: b.dataset.demo, password: demoInfo.password } });
+      S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; Live.start(); goHome();
+    } catch (e) { authErr(e.message); }
+  }));
 }
 function authErr(m) { const e = document.getElementById('autherr'); if (e) e.textContent = m; }
 function goHome() { if (location.hash === '#/' || !location.hash) route(); else location.hash = '#/'; }
@@ -227,8 +265,8 @@ function ringSVG(score) {
   const r = 33, c = 2 * Math.PI * r;
   const val = score == null ? 0 : Math.max(0, Math.min(100, score));
   return `<svg width="84" height="84" viewBox="0 0 84 84">
-    <circle cx="42" cy="42" r="${r}" fill="none" stroke="#3d372a" stroke-width="9"/>
-    <circle cx="42" cy="42" r="${r}" fill="none" stroke="var(--yellow)" stroke-width="9" stroke-linecap="round"
+    <circle cx="42" cy="42" r="${r}" fill="none" stroke="var(--ring-track)" stroke-width="8"/>
+    <circle cx="42" cy="42" r="${r}" fill="none" stroke="var(--accent)" stroke-width="8" stroke-linecap="round"
       stroke-dasharray="${(c * val) / 100} ${c}" transform="rotate(-90 42 42)"/>
     <text x="42" y="49" text-anchor="middle" class="ring-val ${score == null ? 'ring-val-null' : ''}">${score == null ? '—' : score}</text>
   </svg>`;
@@ -261,7 +299,7 @@ async function viewHomeT() {
           <span class="pill">Кабинет преподавателя</span>
         </div>
         <div class="ring-wrap" style="text-align:center">
-          <div style="font-size:34px;font-weight:800;color:var(--accent)">${totalWaiting}</div>
+          <div style="font-size:32px;font-weight:800;color:var(--accent-deep)">${totalWaiting}</div>
           <div class="tx">в очереди</div>
         </div>
       </div>
@@ -331,7 +369,7 @@ async function viewGrades() {
         ${d.items.length ? d.items.map((g) => `
           <div class="lstrow" style="cursor:default">
             <div>${esc(g.subject)}<div class="tx">${esc(g.teacher)} · ${esc(g.date)}</div></div>
-            <div class="r" style="color:var(--yellow);font-weight:700">${g.score}</div>
+            <div class="r" style="color:var(--accent-deep);font-weight:700">${g.score}</div>
           </div>`).join('') : '<div class="next-empty">Оценки появятся, когда преподаватель выставит их.</div>'}
       </div>`;
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
@@ -348,7 +386,7 @@ async function viewRating() {
         ${d.rows.length ? d.rows.map((r, i) => `
           <div class="lstrow ${r.id === S.user.id ? 'me' : ''}" style="cursor:default">
             <div>${i + 1}. ${esc(r.fio)}</div>
-            <div class="r" style="color:var(--yellow);font-weight:700">${r.avg == null ? '—' : r.avg}</div>
+            <div class="r" style="color:var(--accent-deep);font-weight:700">${r.avg == null ? '—' : r.avg}</div>
           </div>`).join('') : '<div class="next-empty">В группе пока нет студентов.</div>'}
       </div>`;
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
@@ -428,7 +466,7 @@ const Live = {
 function onGlobalEvent(ev) {
   if (!S.user || S.user.role !== 'student') return;
   if (ev.type === 'called') showCallAlert(ev);
-  else if (ev.type === 'done') { closeCallAlert(); toast(ev.score != null ? `Ответ принят. Балл: ${ev.score}` : 'Ответ принят ✓'); }
+  else if (ev.type === 'done') { closeCallAlert(); toast(ev.score != null ? `Ответ принят. Балл: ${ev.score}` : 'Ответ принят'); }
   else if (ev.type === 'absent') { closeCallAlert(); toast('Вас отметили как отсутствующего', true); }
   else if (ev.type === 'requeue') { closeCallAlert(); toast('Вас вернули в очередь'); }
   else if (ev.type === 'removed') { closeCallAlert(); toast('Преподаватель убрал вас из очереди', true); }
@@ -450,7 +488,8 @@ function beep() {
     setTimeout(() => ctx.close(), 1200);
   } catch { }
 }
-function showCallAlert(ev) {
+async function showCallAlert(ev) {
+  try { await meta(); } catch { } // справочник уровней нужен для бейджа на любом экране
   closeCallAlert();
   const where = ev.room ? 'Аудитория ' + ev.room : 'Подойдите к преподавателю';
   const el = document.createElement('div');
@@ -458,12 +497,12 @@ function showCallAlert(ev) {
   el.innerHTML = `
     <div class="callbox lvbord${ev.level}">
       <div class="callpulse">${svg('bell')}</div>
-      <div class="calltitle">Вас вызывают на спикинг!</div>
+      <div class="calltitle">Вас вызывают на спикинг</div>
       <div class="callsub">${esc(ev.discipline)}${ev.title ? ' · ' + esc(ev.title) : ''}</div>
       <div class="callroom">${esc(where)}</div>
       <div style="margin:10px 0 4px">${lvlBadge(ev.level, ev.disciplineId)}</div>
       <div class="tx">${esc(ev.teacher)}</div>
-      <button class="btn pri big" id="callAck" style="margin-top:16px">Иду ✓</button>
+      <button class="btn pri big" id="callAck" style="margin-top:16px">Иду</button>
       <button class="btn ghost" id="callOpen" style="margin-top:8px">Открыть комнату</button>
     </div>`;
   document.body.appendChild(el);
@@ -480,7 +519,7 @@ function showCallAlert(ev) {
   const orig = document.title;
   let f = false;
   clearInterval(titleBlink);
-  titleBlink = setInterval(() => { document.title = (f = !f) ? '🔔 ВАС ВЫЗЫВАЮТ' : orig; }, 900);
+  titleBlink = setInterval(() => { document.title = (f = !f) ? '● Вас вызывают' : orig; }, 900);
   el.dataset.title = orig;
 }
 function closeCallAlert() {
@@ -524,7 +563,7 @@ async function paintExamList(silent) {
     ${d.my.length ? `<div class="mystrip">${d.my.map((m) => `
       <button class="mycard ${m.status === 'called' ? 'called' : ''}" data-open="${m.session.id}">
         <div class="mc-top">${esc(discShort(m.session.discipline))} ${lvlBadge(m.session.level, m.session.discipline)}</div>
-        <div class="mc-big">${m.status === 'called' ? '🔔 Вас вызвали' : '№ ' + m.pos}</div>
+        <div class="mc-big">${m.status === 'called' ? 'Вас вызвали' : '№ ' + m.pos}</div>
         <div class="tx">${m.status === 'called' ? (m.session.room ? 'Ауд. ' + esc(m.session.room) : 'Подойдите к преподавателю') : etaText(m.etaMin)}</div>
       </button>`).join('')}</div>` : ''}
     <div class="qtabs" id="qtabs" role="tablist">
@@ -560,15 +599,15 @@ function roomCardStudent(s) {
     <button class="card room lvbord${s.level} ${s.status !== 'open' ? 'dim' : ''}" data-open="${s.id}">
       <div class="room-top">
         ${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)}
-        ${s.my ? `<span class="badge ok">${s.my.status === 'called' ? 'Вызваны 🔔' : 'Вы № ' + s.my.pos}</span>` : ''}
+        ${s.my ? `<span class="badge ok">${s.my.status === 'called' ? 'Вас вызвали' : 'Вы № ' + s.my.pos}</span>` : ''}
       </div>
       <div class="stud-fio" style="font-size:18px;margin-top:8px">${esc(s.title || s.subject)}</div>
       <div class="stud-group" style="margin:4px 0 6px">${esc(s.teacher)}</div>
       <div class="tx">${esc(l.hint)}</div>
       <div class="room-meta">
-        <span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span>
-        <span>👥 ${s.waiting}${s.capacity ? '/' + s.capacity : ''}</span>
-        ${s.status === 'open' && !s.my ? `<span>⏱ ${etaText(s.etaMin)}</span>` : ''}
+        ${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}
+        ${mi('users', s.waiting + (s.capacity ? '/' + s.capacity : ''))}
+        ${s.status === 'open' && !s.my ? mi('clock', etaText(s.etaMin)) : ''}
       </div>
     </button>`;
 }
@@ -603,11 +642,11 @@ async function renderExamDetail(id, silent, force) {
       <div class="stud-fio" style="font-size:20px;margin-top:8px">${esc(s.title || s.subject)}</div>
       <div class="stud-group" style="margin:4px 0 6px">${esc(s.disciplineName)} · ${esc(s.teacher)}</div>
       <div class="tx">${esc(l.hint)}</div>
-      <div class="room-meta"><span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span><span>👥 ${d.waiting}${s.capacity ? '/' + s.capacity : ''}</span></div>
+      <div class="room-meta">${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}${mi('users', d.waiting + (s.capacity ? '/' + s.capacity : ''))}</div>
     </div>`;
   const list = `
     <div class="card">
-      ${d.calledNow.length ? `<div class="tx" style="margin-bottom:8px">Сейчас отвечают:</div>${d.calledNow.map((c) => `<div class="lstrow called ${c.me ? 'me' : ''}" style="cursor:default"><div>🎤 ${esc(c.fio)} ${c.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${minsAgo(c.calledAt)}</div></div>`).join('')}` : ''}
+      ${d.calledNow.length ? `<div class="tx" style="margin-bottom:8px">Сейчас отвечают:</div>${d.calledNow.map((c) => `<div class="lstrow called ${c.me ? 'me' : ''}" style="cursor:default"><div>${esc(c.fio)} ${c.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${minsAgo(c.calledAt)}</div></div>`).join('')}` : ''}
       <div class="tx" style="margin:6px 0 10px">В очереди (${d.waiting}):</div>
       ${d.queue.length ? d.queue.map((q) => `<div class="lstrow ${q.me ? 'me' : ''}" style="cursor:default"><div>${q.pos}. ${esc(q.fio)} ${q.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${tm(q.ts)}</div></div>`).join('') : '<div class="tx">Очередь пуста.</div>'}
     </div>`;
@@ -615,10 +654,10 @@ async function renderExamDetail(id, silent, force) {
   if (me && me.status === 'called') {
     main = `
       <div class="card exhead calledbox">
-        <div class="qnum" style="font-size:30px">🔔 Вас вызвали!</div>
+        <div class="qnum" style="font-size:30px">Вас вызвали</div>
         <div class="callroom">${s.room ? 'Аудитория ' + esc(s.room) : 'Подойдите к преподавателю'}</div>
         <div class="qcap">${minsAgo(me.calledAt)}${me.ackAt ? ' · вы подтвердили' : ''}</div>
-        ${me.ackAt ? '' : '<button class="btn pri big" id="ackBtn">Иду ✓</button>'}
+        ${me.ackAt ? '' : '<button class="btn pri big" id="ackBtn">Иду</button>'}
       </div>`;
   } else if (me) {
     main = `
@@ -627,7 +666,7 @@ async function renderExamDetail(id, silent, force) {
         <div class="qcap">Ваша позиция · ожидание ${etaText(me.etaMin)}</div>
         <div class="progress"><i style="width:${Math.max(6, 100 - ((me.pos - 1) / Math.max(1, d.waiting)) * 100)}%"></i></div>
         ${s.status === 'paused' ? '<div class="tx" style="margin-top:10px;color:var(--yellow)">Преподаватель поставил комнату на паузу — ваше место сохранено.</div>' : ''}
-        ${'Notification' in window && Notification.permission === 'default' ? '<button class="btn ghost" id="notifBtn" style="margin-top:12px">🔔 Включить уведомления о вызове</button>' : ''}
+        ${'Notification' in window && Notification.permission === 'default' ? '<button class="btn ghost" id="notifBtn" style="margin-top:12px">' + svg('bell') + 'Включить уведомления о вызове</button>' : ''}
       </div>`;
   } else if (s.status === 'open') {
     const full = s.capacity && d.waiting >= s.capacity;
@@ -669,7 +708,7 @@ async function renderExamDetail(id, silent, force) {
 }
 
 /* ============================ AI-помощник ============================ */
-const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я AI-помощник Kozybayev University 🎓\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.' }];
+const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я AI-помощник Kozybayev University.\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.' }];
 let aiHistory = null;
 async function viewAI() {
   stopPoll();
@@ -744,7 +783,7 @@ async function viewTQueue() {
   const pb = document.getElementById('pagebody');
   pb.innerHTML = `
     <details class="card newroom" id="newRoom">
-      <summary><span class="stud-fio" style="font-size:17px">＋ Новая комната для спикинга</span></summary>
+      <summary>${svg('plus')}Новая комната для спикинга</summary>
       <label class="lbl">Предмет (вкладка у студентов)</label>
       <div class="discgrid" id="nrDisc"></div>
       <label class="lbl">Серьёзность комнаты</label>
@@ -828,7 +867,7 @@ async function renderTList(silent) {
     <button class="card room lvbord${s.level} ${s.status === 'closed' ? 'dim' : ''}" data-room="${s.id}">
       <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)} <span class="badge">${esc(discShort(s.discipline))}</span></div>
       <div class="stud-fio" style="font-size:17.5px;margin-top:8px">${esc(s.title || s.subject)}</div>
-      <div class="room-meta"><span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span>${s.group ? `<span>👥 ${esc(s.group)}</span>` : ''}</div>
+      <div class="room-meta">${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}${s.group ? mi('users', esc(s.group)) : ''}</div>
       <div class="room-meta"><span class="badge">${s.waiting} ждут</span>${s.called ? `<span class="badge warn">${s.called} вызван(о)</span>` : ''}<span class="badge ok">${s.done} принято</span></div>
       ${s.calledFio ? `<div class="tx" style="margin-top:6px">Отвечает: <b style="color:var(--accent)">${esc(s.calledFio)}</b></div>` : ''}
     </button>`).join('')
@@ -864,11 +903,11 @@ async function paintTRoom(id, silent, force) {
   const closed = s.status === 'closed';
   const calledRow = (r) => `
     <div class="lstrow called" style="cursor:default;flex-wrap:wrap">
-      <div style="flex:1;min-width:150px">🎤 <b>${esc(r.fio)}</b><div class="tx">${esc(r.group)} · вызван ${minsAgo(r.calledAt)} ${r.ackAt ? '· <span style="color:#7bd47b">идёт ✓</span>' : '· <span style="color:var(--yellow)">не подтвердил</span>'}</div></div>
+      <div style="flex:1;min-width:150px"><b>${esc(r.fio)}</b><div class="tx">${esc(r.group)} · вызван ${minsAgo(r.calledAt)} ${r.ackAt ? '· <span style="color:var(--ok)">идёт</span>' : '· <span style="color:var(--yellow)">не подтвердил</span>'}</div></div>
       <div class="actrow">
         <input class="inp small sc" data-sc="${r.id}" type="number" min="0" max="100" placeholder="балл">
         <button class="abtn ok" data-acc="${r.id}" title="Принять (балл необязателен)">Принять</button>
-        <button class="abtn" data-rq="${r.id}" data-front="1" title="Вернуть в начало очереди">↩︎</button>
+        <button class="abtn" data-rq="${r.id}" data-front="1" title="Вернуть в начало очереди" aria-label="Вернуть в начало очереди">${svg('undo')}</button>
         <button class="abtn bad" data-abs="${r.id}" title="Не пришёл">Нет</button>
       </div>
     </div>`;
@@ -877,23 +916,23 @@ async function paintTRoom(id, silent, force) {
       <div><b>${r.pos}.</b> ${esc(r.fio)}<div class="tx">${esc(r.group)} · в ${tm(r.ts)}</div></div>
       <div class="actrow">
         ${closed ? '' : `<button class="abtn" data-call="${r.id}">Вызвать</button>`}
-        <button class="abtn bad" data-rm="${r.id}" title="Убрать из очереди">✕</button>
+        <button class="abtn bad" data-rm="${r.id}" title="Убрать из очереди" aria-label="Убрать из очереди">${svg('x')}</button>
       </div>
     </div>`;
   pb.innerHTML = `
     <div class="card room lvbord${s.level}" style="cursor:default">
       <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)} <span class="badge">${esc(discShort(s.discipline))}</span></div>
       <div class="stud-fio" style="font-size:19px;margin-top:8px">${esc(s.title || s.subject)}</div>
-      <div class="room-meta"><span>🚪 ${esc(s.room || '—')}</span><span>📅 ${esc(dstr(s.date))} · ${esc(s.time)}</span>${s.group ? `<span>👥 ${esc(s.group)}</span>` : ''}</div>
-      <div class="room-meta"><span class="badge">${d.waiting.length} ждут</span><span class="badge ok">${d.done.length} принято</span><span class="badge">⌀ ${d.stats.avgMin} мин</span></div>
+      <div class="room-meta">${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}${s.group ? mi('users', esc(s.group)) : ''}</div>
+      <div class="room-meta"><span class="badge">${d.waiting.length} ждут</span><span class="badge ok">${d.done.length} принято</span><span class="badge">в среднем ${d.stats.avgMin} мин</span></div>
       ${closed ? '' : `
       <label class="lbl">Серьёзность — меняется на лету, студенты увидят сразу</label>
       <div class="lvpick" id="lvLive">${META.levels.map((l) => `<button class="lvopt lvopt${l.id} ${s.level === l.id ? 'on' : ''}" data-setlv="${l.id}"><b>${l.id}</b><span>${esc(lvlLabel(l.id, s.discipline))}</span></button>`).join('')}</div>`}
     </div>
     ${closed ? '' : `
     <div style="margin:0 14px 12px">
-      <button class="btn pri big" id="callNext" ${d.waiting.length ? '' : 'disabled'}>${d.waiting.length ? '📣 Вызвать следующего: ' + esc(d.waiting[0].fio.split(' ').slice(0, 2).join(' ')) : 'Очередь пуста'}</button>
-      ${d.called.length ? '<div class="tx" style="text-align:center;margin-top:6px;color:var(--yellow)">Внимание: уже есть вызванный студент</div>' : ''}
+      <button class="btn pri big" id="callNext" ${d.waiting.length ? '' : 'disabled'}>${d.waiting.length ? svg('speaker') + 'Вызвать: ' + esc(d.waiting[0].fio.split(' ').slice(0, 2).join(' ')) : 'Очередь пуста'}</button>
+      ${d.called.length && d.waiting.length ? '<div class="warn-note">Уже есть вызванный студент</div>' : ''}
     </div>`}
     ${d.called.length ? `<div class="card"><div class="tx" style="margin-bottom:8px">Сейчас отвечают:</div>${d.called.map(calledRow).join('')}</div>` : ''}
     <div class="card">
@@ -917,7 +956,7 @@ async function paintTRoom(id, silent, force) {
         <div style="display:flex;align-items:flex-end"><button class="btn ghost" id="edSave" style="margin-bottom:10px">Сохранить</button></div>
       </div>
       <div class="row2">
-        <button class="btn ghost" id="pauseBtn">${s.status === 'paused' ? '▶ Возобновить запись' : '⏸ Пауза записи'}</button>
+        <button class="btn ghost" id="pauseBtn">${s.status === 'paused' ? svg('play') + 'Возобновить' : svg('pause') + 'Пауза записи'}</button>
         <button class="btn danger-ghost" id="closeBtn">Закрыть комнату</button>
       </div>
     </div>`}`;
@@ -1059,7 +1098,7 @@ async function findStudents() {
     const val = box.querySelector('[data-sc="' + sid + '"]').value;
     try {
       await api('/teacher/grades', { method: 'POST', body: { studentId: sid, subjectId: v('gSubj'), score: Number(val) } });
-      toast('Оценка выставлена'); b.textContent = '✓'; b.disabled = true;
+      toast('Оценка выставлена'); b.textContent = 'Готово'; b.disabled = true;
     } catch (e) { toast(e.message, true); }
   }));
 }
@@ -1078,8 +1117,8 @@ function viewProfile() {
         <div class="pf-sub">${esc(u.email)}</div>
       </div>
     </div>
-    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div>📋 Электронная очередь (комнаты)</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Электронная очередь</div><div class="chev">${svg('chev')}</div></a>`}
-    <a class="card lstrow" style="display:flex" href="#/ai"><div>🤖 AI-помощник</div><div class="chev">${svg('chev')}</div></a>
+    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div class="lrow-ic">${svg('clipboard')}Электронная очередь</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div class="lrow-ic">${svg('clipboard')}Электронная очередь</div><div class="chev">${svg('chev')}</div></a>`}
+    <a class="card lstrow" style="display:flex" href="#/ai"><div class="lrow-ic">${svg('msg')}AI-помощник</div><div class="chev">${svg('chev')}</div></a>
     <div style="margin:10px 14px"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
     <div class="tx" style="text-align:center;margin-top:14px">KU Portal v1.0 · Kozybayev University</div>
     ${navHTML('profile')}`;
