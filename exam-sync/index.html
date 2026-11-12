@@ -5,16 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1C1C1E">
 <meta name="color-scheme" content="dark">
-<script>/* Тема = цвет × режим.
-   Цвет: incampus (Kozybayev University) | intl (University of Arizona). Режим: auto (родной: inCampus — тёмный,
-   Arizona — светлый) | light | dark | system. Из KU Portal приходят ?from=ku-portal&theme=<цвет>&mode=<режим> —
-   хранятся на сессию вкладки (sessionStorage), иначе — выбор пользователя (localStorage edu-theme / edu-mode).
-   Итог в data-theme: incampus | incampus-light | intl | intl-dark. */
-window.eduThemeOf=function(c,m){var d=m==='dark'||(m==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)||(m!=='light'&&m!=='system'&&m!=='dark'&&c!=='intl');return c==='intl'?(d?'intl-dark':'intl'):(d?'incampus':'incampus-light')};
-try{var q=new URLSearchParams(location.search),t=q.get('theme'),md=q.get('mode');
-if(q.get('from')==='ku-portal'){if(t==='intl'||t==='incampus')sessionStorage.setItem('edu-theme-ku',t);if(md==='light'||md==='dark'||md==='system')sessionStorage.setItem('edu-mode-ku',md);else sessionStorage.removeItem('edu-mode-ku')}
+<script>/* Тема = цвет × режим (+ размер текста, «меньше анимации», контраст).
+   Цвет: incampus (Kozybayev University) | intl (University of Arizona) | emerald | violet | coral | graphite
+   (последние четыре — палитры KU Portal). Режим: auto (родной: inCampus — тёмный, остальные — светлые) | light | dark | system.
+   Из KU Portal приходят ?from=ku-portal&theme=<цвет>&mode=<режим>&fs=<sm|md|lg|xl>&still=<0|1> — хранятся на сессию
+   вкладки (sessionStorage edu-*-ku), иначе — выбор пользователя (localStorage edu-theme / edu-mode, edu-prefs:<id>).
+   Итог: data-theme = incampus | incampus-light | intl | intl-dark; для палитр портала ещё data-accent=<цвет>. */
+window.EDU_COLORS=['incampus','intl','emerald','violet','coral','graphite'];
+window.eduThemeOf=function(c,m){var sd=!!(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var d=m==='dark'||(m==='system'&&sd)||(m!=='light'&&m!=='system'&&m!=='dark'&&c==='incampus');return c==='intl'?(d?'intl-dark':'intl'):(d?'incampus':'incampus-light')};
+window.eduPaint=function(c,m){var r=document.documentElement;if(EDU_COLORS.indexOf(c)<0)c='incampus';r.dataset.theme=eduThemeOf(c,m);if(c==='incampus'||c==='intl')delete r.dataset.accent;else r.dataset.accent=c};
+try{var q=new URLSearchParams(location.search),t=q.get('theme'),md=q.get('mode'),fs=q.get('fs'),st=q.get('still');
+if(q.get('from')==='ku-portal'){if(EDU_COLORS.indexOf(t)>=0)sessionStorage.setItem('edu-theme-ku',t);if(md==='light'||md==='dark'||md==='system')sessionStorage.setItem('edu-mode-ku',md);else sessionStorage.removeItem('edu-mode-ku');
+if(['sm','md','lg','xl'].indexOf(fs)>=0)sessionStorage.setItem('edu-fs-ku',fs);if(st==='0'||st==='1')sessionStorage.setItem('edu-still-ku',st)}
 var c=sessionStorage.getItem('edu-theme-ku')||localStorage.getItem('edu-theme'),m=sessionStorage.getItem('edu-mode-ku')||localStorage.getItem('edu-mode')||'auto';
-document.documentElement.dataset.theme=eduThemeOf(c==='intl'?'intl':'incampus',m)}catch(e){document.documentElement.dataset.theme='incampus'}</script>
+eduPaint(c,m);var f=sessionStorage.getItem('edu-fs-ku');if(f&&f!=='md')document.documentElement.dataset.fs=f;if(sessionStorage.getItem('edu-still-ku')==='1')document.documentElement.dataset.still=''}catch(e){document.documentElement.dataset.theme='incampus'}</script>
 <title>Онлайн-экзамен</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%2305a4ba'/><path d='M3 10l9-4.5 9 4.5-9 4.5z M7 12v4c2.5 1.8 7.5 1.8 10 0v-4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -94,6 +98,34 @@ document.documentElement.dataset.theme=eduThemeOf(c==='intl'?'intl':'incampus',m
   --chip-mid-bg:#FFF1D6;--chip-mid-tx:#A86F00;--chip-mid-bd:#FFF1D6;
   --locked:#18283F;--called-bg:rgba(242,184,75,.08);--toast-bg:#E8EEF7;--toast-tx:#0A1424;
 }}
+/* ===== Палитры KU Portal (data-accent): изумрудный, фиолетовый, коралловый, графит.
+   Основа — светлая (incampus-light) или тёмная (incampus) тема, меняются только акцентные цвета. ===== */
+:root[data-accent="emerald"]{--acc:#1f9d6b;--acc-deep:#0f6b47;--acc-l:#3cc18c}
+:root[data-accent="violet"]{--acc:#6d4bd8;--acc-deep:#452c9c;--acc-l:#9b82ee}
+:root[data-accent="coral"]{--acc:#e0603f;--acc-deep:#a23d23;--acc-l:#f08a6d}
+:root[data-accent="graphite"]{--acc:#3f4a56;--acc-deep:#262d35;--acc-l:#8d9bab}
+@media screen{:root[data-accent][data-theme]{
+  --ac:var(--acc);--ac-h:var(--acc-deep);--ac-d:color-mix(in srgb,var(--acc) 10%,transparent);--ac-dd:color-mix(in srgb,var(--acc) 7%,#fff);--on-ac:#FFFFFF;
+  --navy:var(--acc-deep);--bar:var(--acc);--avatar:var(--acc);
+  --ac-20:color-mix(in srgb,var(--acc) 20%,transparent);--ac-25:color-mix(in srgb,var(--acc) 25%,transparent);--ac-35:color-mix(in srgb,var(--acc) 35%,transparent);--ac-40:color-mix(in srgb,var(--acc) 40%,transparent);
+  --brand-bg:var(--acc);--brand-fg:#FFFFFF;--brand-tx:var(--acc-deep);--badge-bg:var(--acc);--avatar-t:var(--acc-deep);
+}
+:root[data-accent][data-theme="incampus"]{
+  --ac:var(--acc-l);--ac-h:color-mix(in srgb,var(--acc-l) 75%,#fff);--ac-d:color-mix(in srgb,var(--acc-l) 14%,transparent);--ac-dd:color-mix(in srgb,var(--acc-l) 16%,transparent);--on-ac:#0E1114;
+  --navy:#2B2B2D;--bar:var(--acc-l);--avatar:var(--acc-l);--ok:#3FB27F;--ok-d:rgba(63,178,127,.14);--ok-40:rgba(63,178,127,.45);
+  --ac-20:color-mix(in srgb,var(--acc-l) 20%,transparent);--ac-25:color-mix(in srgb,var(--acc-l) 30%,transparent);--ac-35:color-mix(in srgb,var(--acc-l) 40%,transparent);--ac-40:color-mix(in srgb,var(--acc-l) 45%,transparent);
+  --nav-on-tx:var(--acc-l);--nav-ind:var(--acc-l);--brand-bg:#2E2E30;--brand-fg:var(--acc-l);--brand-tx:#FFFFFF;--badge-bg:var(--acc-l);--badge-fg:#0E1114;--avatar-t:var(--acc-l);--avatar-t-tx:#0E1114;
+}}
+/* ===== Доступность: размер текста (data-fs), высокая контрастность (data-contrast), меньше анимации (data-still) ===== */
+:root[data-fs="sm"] body{zoom:.92}
+:root[data-fs="lg"] body{zoom:1.12}
+:root[data-fs="xl"] body{zoom:1.25}
+@media screen{:root[data-contrast]{--tx2:var(--tx);--tx3:var(--tx);--line:var(--line2);--line2:var(--tx3c,#6E7477)}
+:root[data-contrast][data-theme="incampus"],:root[data-contrast][data-theme="intl-dark"]{--tx3c:#C9CDD3}
+:root[data-contrast] .btn,:root[data-contrast] .field,:root[data-contrast] .opt{border-width:2px}
+:root[data-contrast] a,:root[data-contrast] .btn.ghost{text-decoration:underline}}
+:root[data-still] *,:root[data-still] *::before,:root[data-still] *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+.tm.hid,.tm.hid+.muted{visibility:hidden}
 *{box-sizing:border-box}
 body{overflow-x:clip}
 html,body{margin:0;background:var(--bg);color:var(--tx);font:17px/1.5 var(--font);-webkit-tap-highlight-color:transparent;-webkit-font-smoothing:antialiased}
@@ -596,6 +628,13 @@ button.me{border:0;background:none;padding:0;margin:0;color:inherit;text-align:l
 .st-prev i{display:block;height:7px;border-radius:4px}.st-prev i:first-child{width:50%}.st-prev i:nth-child(2){width:85%}.st-prev i:nth-child(3){width:65%}
 .st-prev-incampus{background:#1C1C1E}.st-prev-incampus i:first-child{background:#19A9BD}.st-prev-incampus i:not(:first-child){background:#4A4A4D}
 .st-prev-intl{background:#F6F7F8;border-top:10px solid #0C234B}.st-prev-intl i:first-child{background:#006FBF}.st-prev-intl i:not(:first-child){background:#CDD5DC}
+.st-prev-emerald,.st-prev-violet,.st-prev-coral,.st-prev-graphite{background:#F6F7F8}.st-prev-emerald i:not(:first-child),.st-prev-violet i:not(:first-child),.st-prev-coral i:not(:first-child),.st-prev-graphite i:not(:first-child){background:#CDD5DC}
+.st-prev-emerald{border-top:10px solid #0f6b47}.st-prev-emerald i:first-child{background:#1f9d6b}
+.st-prev-violet{border-top:10px solid #452c9c}.st-prev-violet i:first-child{background:#6d4bd8}
+.st-prev-coral{border-top:10px solid #a23d23}.st-prev-coral i:first-child{background:#e0603f}
+.st-prev-graphite{border-top:10px solid #262d35}.st-prev-graphite i:first-child{background:#3f4a56}
+.st-themes.six{grid-template-columns:repeat(3,1fr)}
+@media (max-width:420px){.st-themes.six{grid-template-columns:1fr 1fr}}
 .st-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:var(--s2);border:1px solid var(--line);border-radius:var(--r)}
 .st-seg.three{grid-template-columns:repeat(3,1fr);margin:4px 0 10px}
 .st-seg button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border:0;border-radius:var(--rs);background:none;color:var(--tx2);font-size:12.5px;font-weight:700;line-height:1.2;text-align:center}
@@ -856,19 +895,37 @@ function setLang(l){
   applyLang(); render();
   const b = document.querySelector(`.lang [data-l="${l}"]`); if(b) b.focus({preventScroll:true});
 }
-/* ---------- оформление: цвет (inCampus / Arizona) × режим (авто / светлый / тёмный / системный) ---------- */
-const THEME_KEY = 'edu-theme', MODE_KEY = 'edu-mode', THEMES = ['incampus', 'intl'], MODES = ['auto', 'light', 'dark', 'system'];
+/* ---------- оформление: цвет (inCampus / Arizona / палитры портала) × режим (авто / светлый / тёмный / системный) ---------- */
+const THEME_KEY = 'edu-theme', MODE_KEY = 'edu-mode', THEMES = window.EDU_COLORS, MODES = ['auto', 'light', 'dark', 'system'];
+const FSIZES = ['sm', 'md', 'lg', 'xl'];
 const ssGet = k => { try{ return sessionStorage.getItem(k); }catch(e){ return null; } };
 const lsGet = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
-let COLOR = (ssGet('edu-theme-ku') || lsGet(THEME_KEY)) === 'intl' ? 'intl' : 'incampus';
+const ssDel = k => { try{ sessionStorage.removeItem(k); }catch(e){} };
+const colorOf = v => THEMES.includes(v) ? v : 'incampus';
+let COLOR = colorOf(ssGet('edu-theme-ku') || lsGet(THEME_KEY));
 let MODE = (() => { const m = ssGet('edu-mode-ku') || lsGet(MODE_KEY); return MODES.includes(m) ? m : 'auto'; })();
 let THEME = document.documentElement.dataset.theme || 'incampus'; // итоговая тема: incampus | incampus-light | intl | intl-dark
-const themeName = t => t === 'intl' ? L('University of Arizona', 'University of Arizona', 'University of Arizona') : 'inCampus · Kozybayev';
+const COLOR_INFO = {
+  incampus: ['inCampus · Kozybayev', () => 'Kozybayev University'],
+  intl: ['University of Arizona', () => L('Международный кампус', 'International Campus', 'Халықаралық кампус')],
+  emerald: [() => L('Изумрудный', 'Emerald', 'Изумруд'), () => 'KU Portal'],
+  violet: [() => L('Фиолетовый', 'Violet', 'Күлгін'), () => 'KU Portal'],
+  coral: [() => L('Коралловый', 'Coral', 'Маржан'), () => 'KU Portal'],
+  graphite: [() => L('Графит', 'Graphite', 'Графит'), () => 'KU Portal'],
+};
+const callv = v => typeof v === 'function' ? v() : v;
+const themeName = t => callv((COLOR_INFO[t] || COLOR_INFO.incampus)[0]);
 const modeName = m => ({ auto: L('Авто', 'Auto', 'Авто'), light: L('Светлая', 'Light', 'Ашық'), dark: L('Тёмная', 'Dark', 'Қараңғы'), system: L('Как в системе', 'System', 'Жүйедегідей') })[m];
 const isDark = () => THEME === 'incampus' || THEME === 'intl-dark';
+/* размер текста и «меньше анимации»: значение из портала (на вкладку) важнее, пока пользователь не выберет своё */
+function effFs(){ const s = ssGet('edu-fs-ku'); if(FSIZES.includes(s)) return s; const p = prefsGet().fs; return FSIZES.includes(p) ? p : 'md'; }
+function effStill(){ const s = ssGet('edu-still-ku'); if(s === '0' || s === '1') return s === '1'; return !!prefsGet().lessMotion; }
 function applyTheme(){
-  THEME = window.eduThemeOf(COLOR, MODE);
-  const r = document.documentElement; r.dataset.theme = THEME;
+  window.eduPaint(COLOR, MODE);
+  const r = document.documentElement; THEME = r.dataset.theme;
+  const fs = effFs(); if(fs !== 'md') r.dataset.fs = fs; else delete r.dataset.fs;
+  if(effStill()) r.dataset.still = ''; else delete r.dataset.still;
+  if(prefsGet().contrast) r.dataset.contrast = ''; else delete r.dataset.contrast;
   const tc = document.querySelector('meta[name="theme-color"]'), cs = document.querySelector('meta[name="color-scheme"]');
   if(tc) tc.content = getComputedStyle(r).getPropertyValue('--top-bg').trim() || '#FFFFFF';
   if(cs) cs.content = isDark() ? 'dark' : 'light';
@@ -876,33 +933,116 @@ function applyTheme(){
 /* ручной выбор важнее темы, пришедшей из портала */
 function setTheme(t){
   if(!THEMES.includes(t) || t === COLOR) return;
-  COLOR = t; try{ localStorage.setItem(THEME_KEY, t); sessionStorage.removeItem('edu-theme-ku'); }catch(e){}
+  COLOR = t; try{ localStorage.setItem(THEME_KEY, t); }catch(e){} ssDel('edu-theme-ku');
   applyTheme(); render(); refreshSettings();
 }
 function setMode(m){
   if(!MODES.includes(m) || m === MODE) return;
-  MODE = m; try{ localStorage.setItem(MODE_KEY, m); sessionStorage.removeItem('edu-mode-ku'); }catch(e){}
+  MODE = m; try{ localStorage.setItem(MODE_KEY, m); }catch(e){} ssDel('edu-mode-ku');
   applyTheme(); render(); refreshSettings();
 }
 if(window.matchMedia){ const mq = matchMedia('(prefers-color-scheme: dark)'); const f = () => { if(MODE === 'system'){ applyTheme(); render(); refreshSettings(); } }; mq.addEventListener ? mq.addEventListener('change', f) : mq.addListener && mq.addListener(f); }
 
 /* ---------- настройки (панель по клику на аватар) ----------
-   Работают: цвет, режим, язык, выход. Остальные переключатели запоминаются для пользователя в этом браузере,
-   но пока ни на что не влияют — это заготовки. */
-const PREF_DEF = { sndCall:true, remindStart:true, mailResults:false, showTimer:true, confirmSubmit:true, autosave:true, bigText:false, contrast:false, lessMotion:false };
+   Все пункты работают: цвет, режим, размер текста, контраст, меньше анимации, язык; уведомления о вызове на speaking
+   и об открытии экзамена (звук, вибрация, уведомление браузера), таймер, подтверждение отправки, смена пароля, выход.
+   Настройки хранятся для пользователя в этом браузере (localStorage edu-prefs:<id>). */
+const PREF_DEF = { fs:'md', contrast:false, lessMotion:false, sndCall:true, notifyOpen:true, sysNotif:false, showTimer:true, confirmSubmit:true, autosave:true };
 const prefKey = () => 'edu-prefs:' + (ME ? ME.id : 'guest');
-function prefsGet(){ try{ return Object.assign({}, PREF_DEF, JSON.parse(localStorage.getItem(prefKey()) || '{}')); }catch(e){ return Object.assign({}, PREF_DEF); } }
-function prefSet(k, v){ const p = prefsGet(); p[k] = v; try{ localStorage.setItem(prefKey(), JSON.stringify(p)); }catch(e){} }
+function prefsGet(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(prefKey()) || '{}') || {};
+    const p = Object.assign({}, PREF_DEF, raw);
+    if(raw.bigText === true && !raw.fs) p.fs = 'lg'; // старый переключатель «Крупный шрифт»
+    return p;
+  }catch(e){ return Object.assign({}, PREF_DEF); }
+}
+function prefSet(k, v){ const p = prefsGet(); p[k] = v; delete p.bigText; try{ localStorage.setItem(prefKey(), JSON.stringify(p)); }catch(e){} }
+
+/* ---------- уведомления: звук, вибрация, уведомление браузера ---------- */
+let AUDIO = null;
+function beep(times = 2){
+  try{
+    AUDIO = AUDIO || new (window.AudioContext || window.webkitAudioContext)();
+    if(AUDIO.state === 'suspended') AUDIO.resume();
+    for(let i = 0; i < times; i++){
+      const o = AUDIO.createOscillator(), g = AUDIO.createGain(), t0 = AUDIO.currentTime + i * .32;
+      o.type = 'sine'; o.frequency.value = i % 2 ? 660 : 880; o.connect(g); g.connect(AUDIO.destination);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + .02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + .26);
+      o.start(t0); o.stop(t0 + .28);
+    }
+  }catch(e){}
+}
+function sysNotify(title, body){
+  try{
+    if(!prefsGet().sysNotif || !('Notification' in window) || Notification.permission !== 'granted') return;
+    if(document.visibilityState === 'visible' && document.hasFocus()) return; // вкладка на экране — хватит тоста и звука
+    const n = new Notification(title, { body, tag:'edu-' + title, renotify:true });
+    n.onclick = () => { window.focus(); n.close(); };
+  }catch(e){}
+}
+function notifyUser(title, body, o = {}){
+  toast(body ? title + ' — ' + body : title);
+  if(o.sound){ beep(3); try{ navigator.vibrate && navigator.vibrate([200, 100, 200]); }catch(e){} }
+  sysNotify(title, body || '');
+}
+/* сравнение состояния до и после синхронизации: вызов на speaking и открытие экзамена (только для студента) */
+function notifyDiff(prev, next){
+  if(!ME || ME.role !== 'student' || !prev || !next) return;
+  const p = prefsGet();
+  if(p.sndCall){
+    const was = new Set((prev.queue || []).filter(q => q.userId === ME.id && q.status === 'called').map(q => q.roomId));
+    (next.queue || []).filter(q => q.userId === ME.id && q.status === 'called' && !was.has(q.roomId)).forEach(q => {
+      const r = (next.rooms || []).find(x => x.id === q.roomId);
+      notifyUser(L('Вас вызывают на speaking', 'You are called to speaking', 'Сізді speaking-ке шақырады'), r ? r.title : '', { sound:true });
+    });
+  }
+  if(p.notifyOpen){
+    const wasOpen = new Set((prev.rooms || []).filter(r => r.open).map(r => r.id));
+    (next.rooms || []).filter(r => r.open && !wasOpen.has(r.id))
+      .forEach(r => notifyUser(L('Экзамен открыт', 'Exam is open', 'Емтихан ашылды'), r.title, { sound:p.sndCall }));
+  }
+}
+async function askNotifPermission(){
+  if(!('Notification' in window)){ toast(L('Браузер не поддерживает уведомления', 'This browser does not support notifications', 'Браузер хабарландыруларды қолдамайды')); return false; }
+  if(Notification.permission === 'granted') return true;
+  if(Notification.permission === 'denied'){ toast(L('Уведомления запрещены в настройках браузера для этого сайта', 'Notifications are blocked for this site in browser settings', 'Бұл сайт үшін хабарландырулар браузерде тыйым салынған')); return false; }
+  const r = await Notification.requestPermission();
+  if(r !== 'granted') toast(L('Разрешение не выдано', 'Permission not granted', 'Рұқсат берілмеді'));
+  return r === 'granted';
+}
+function changePassword(){
+  if(!ME) return;
+  formModal(L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту'), [
+    { k:'old', label:L('Текущий пароль', 'Current password', 'Ағымдағы құпиясөз'), type:'password', ac:'current-password' },
+    { k:'pw', label:L('Новый пароль', 'New password', 'Жаңа құпиясөз'), type:'password', ac:'new-password' },
+    { k:'pw2', label:L('Повторите новый пароль', 'Repeat new password', 'Жаңа құпиясөзді қайталаңыз'), type:'password', ac:'new-password' }], {}, v => {
+    const u = userById(ME.id);
+    if(!u || v.old !== u.password) return L('Неверный текущий пароль', 'Wrong current password', 'Ағымдағы құпиясөз қате');
+    if(!v.pw) return L('Введите новый пароль', 'Enter a new password', 'Жаңа құпиясөзді енгізіңіз');
+    if(v.pw !== v.pw2) return L('Пароли не совпадают', 'Passwords do not match', 'Құпиясөздер сәйкес емес');
+    if(v.pw === v.old) return L('Новый пароль совпадает с текущим', 'The new password is the same as the current one', 'Жаңа құпиясөз ағымдағымен бірдей');
+    u.password = v.pw; ME = u; persist();
+    toast(L('Пароль изменён', 'Password changed', 'Құпиясөз өзгертілді'));
+  }, { ok:L('Сохранить', 'Save', 'Сақтау') });
+}
+
 let SET_OV = null;
 function setRowSw(k, icon, title, sub, o = {}){
-  const on = !!prefsGet()[k];
+  const on = o.locked ? true : !!prefsGet()[k];
   return `<div class="st-row"><span class="st-ic">${ico(icon)}</span><span class="st-t"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
     <button class="st-sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(title)}" data-sw="${k}" ${o.locked ? 'disabled' : ''}><i></i></button></div>`;
 }
 function settingsHTML(){
-  const u = ME;
-  const colorCard = (t, sw, sub) => `<button class="st-theme ${COLOR === t ? 'on' : ''}" data-color="${t}" role="radio" aria-checked="${COLOR === t}">
-      <span class="st-prev st-prev-${t}"><i></i><i></i><i></i></span><b>${esc(themeName(t))}</b><small>${esc(sub)}</small></button>`;
+  const u = ME, fs = effFs(), still = effStill();
+  const colorCard = t => `<button class="st-theme ${COLOR === t ? 'on' : ''}" data-color="${t}" role="radio" aria-checked="${COLOR === t}">
+      <span class="st-prev st-prev-${t}"><i></i><i></i><i></i></span><b>${esc(themeName(t))}</b><small>${esc(callv(COLOR_INFO[t][1]))}</small></button>`;
+  const fromKu = ssGet('edu-theme-ku') || ssGet('edu-mode-ku') || ssGet('edu-fs-ku') || ssGet('edu-still-ku');
+  const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+  const sysSub = perm === 'granted' ? L('Разрешено в браузере', 'Allowed in the browser', 'Браузерде рұқсат етілген')
+    : perm === 'denied' ? L('Запрещено в настройках браузера', 'Blocked in browser settings', 'Браузер баптауларында тыйым салынған')
+    : perm === 'unsupported' ? L('Браузер не поддерживает', 'Not supported by this browser', 'Браузер қолдамайды')
+    : L('Когда вкладка свёрнута', 'When the tab is in the background', 'Қойынды жасырын болғанда');
   return `<div class="setp-b" role="dialog" aria-modal="true" aria-labelledby="st-h">
     <div class="ov-h"><button class="xclose" data-close aria-label="${L('Закрыть', 'Close', 'Жабу')}">${ico('backc')}</button><h3 id="st-h">${L('Настройки', 'Settings', 'Баптаулар')}</h3></div>
     <div class="setp-scroll">
@@ -910,13 +1050,15 @@ function settingsHTML(){
 
       <section class="st-sec"><h4>${ico('palette')}${L('Оформление', 'Appearance', 'Безендіру')}</h4>
         <div class="st-lbl">${L('Цвет', 'Color', 'Түс')}</div>
-        <div class="st-themes" role="radiogroup">${colorCard('incampus', '#19A9BD', 'Kozybayev University')}${colorCard('intl', '#0C234B', L('Международный кампус', 'International Campus', 'Халықаралық кампус'))}</div>
+        <div class="st-themes six" role="radiogroup">${THEMES.map(colorCard).join('')}</div>
         <div class="st-lbl">${L('Тема', 'Mode', 'Тақырып')}</div>
         <div class="st-seg" role="radiogroup">${MODES.map(m => `<button class="${MODE === m ? 'on' : ''}" data-mode="${m}" role="radio" aria-checked="${MODE === m}">${ico(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : m === 'system' ? 'monitor' : 'palette')}<span>${esc(modeName(m))}</span></button>`).join('')}</div>
-        <p class="st-note">${L('«Авто» — родная тема цвета: inCampus тёмная, University of Arizona светлая.', '“Auto” uses the native look: inCampus is dark, University of Arizona is light.', '«Авто» — түстің өз тақырыбы: inCampus қараңғы, University of Arizona ашық.')}</p>
-        ${setRowSw('bigText', 'txt', L('Крупный шрифт', 'Larger text', 'Үлкен қаріп'), '')}
-        ${setRowSw('contrast', 'contrast', L('Высокая контрастность', 'High contrast', 'Жоғары контраст'), '')}
-        ${setRowSw('lessMotion', 'motion', L('Меньше анимации', 'Reduce motion', 'Анимацияны азайту'), '')}
+        <p class="st-note">${L('«Авто» — родная тема цвета: inCampus тёмная, остальные светлые.', '“Auto” uses the native look: inCampus is dark, the others are light.', '«Авто» — түстің өз тақырыбы: inCampus қараңғы, қалғандары ашық.')}${fromKu ? ' ' + L('Сейчас применено оформление из KU Portal — выбор здесь его заменит.', 'The KU Portal look is applied now — choosing here replaces it.', 'Қазір KU Portal безендіруі қолданылған — мұнда таңдау оны ауыстырады.') : ''}</p>
+        <div class="st-lbl">${L('Размер текста', 'Text size', 'Мәтін өлшемі')}</div>
+        <div class="st-seg" role="radiogroup">${[['sm', L('Мелкий', 'Small', 'Кіші')], ['md', L('Обычный', 'Normal', 'Қалыпты')], ['lg', L('Крупный', 'Large', 'Үлкен')], ['xl', L('Очень крупный', 'Extra large', 'Өте үлкен')]].map(([k, n]) => `<button class="${fs === k ? 'on' : ''}" data-fs="${k}" role="radio" aria-checked="${fs === k}">${ico('txt')}<span>${n}</span></button>`).join('')}</div>
+        ${setRowSw('contrast', 'contrast', L('Высокая контрастность', 'High contrast', 'Жоғары контраст'), L('Темнее текст и рамки', 'Darker text and borders', 'Мәтін мен жиектер қоюырақ'))}
+        <div class="st-row"><span class="st-ic">${ico('motion')}</span><span class="st-t"><b>${L('Меньше анимации', 'Reduce motion', 'Анимацияны азайту')}</b><small>${L('Без плавных переходов', 'No smooth transitions', 'Біркелкі ауысуларсыз')}</small></span>
+          <button class="st-sw ${still ? 'on' : ''}" role="switch" aria-checked="${still}" aria-label="${L('Меньше анимации', 'Reduce motion', 'Анимацияны азайту')}" data-still><i></i></button></div>
       </section>
 
       <section class="st-sec"><h4>${ico('globe')}${L('Язык', 'Language', 'Тіл')}</h4>
@@ -925,18 +1067,19 @@ function settingsHTML(){
 
       <section class="st-sec"><h4>${ico('bell')}${L('Уведомления', 'Notifications', 'Хабарландырулар')}</h4>
         ${setRowSw('sndCall', 'mic', L('Звук при вызове на speaking', 'Sound when called to speaking', 'Speaking-ке шақырғанда дыбыс'), L('Сигнал и вибрация', 'Sound and vibration', 'Дыбыс пен діріл'))}
-        ${setRowSw('remindStart', 'clock', L('Напоминание о начале экзамена', 'Exam start reminder', 'Емтихан басталуы туралы еске салу'), L('За 15 минут', '15 minutes before', '15 минут бұрын'))}
-        ${setRowSw('mailResults', 'mail', L('Результаты на почту', 'Email results', 'Нәтижелер поштаға'), '')}
+        ${setRowSw('notifyOpen', 'clock', L('Когда экзамен открывается', 'When an exam opens', 'Емтихан ашылғанда'), L('Преподаватель открыл комнату экзамена', 'The teacher opened an exam room', 'Оқытушы емтихан бөлмесін ашты'))}
+        ${setRowSw('sysNotif', 'bell', L('Уведомления браузера', 'Browser notifications', 'Браузер хабарландырулары'), sysSub)}
+        <button class="st-row link" data-st="test"><span class="st-ic">${ico('mic')}</span><span class="st-t"><b>${L('Проверить уведомление', 'Test notification', 'Хабарландыруды тексеру')}</b></span>${ico('chev')}</button>
       </section>
 
       <section class="st-sec"><h4>${ico('timer')}${L('Экзамен', 'Exam', 'Емтихан')}</h4>
-        ${setRowSw('showTimer', 'clock', L('Показывать таймер', 'Show timer', 'Таймерді көрсету'), L('Оставшееся время теста', 'Time left in the test', 'Тестке қалған уақыт'))}
-        ${setRowSw('confirmSubmit', 'check', L('Подтверждать отправку', 'Confirm before submitting', 'Жіберуді растау'), '')}
+        ${setRowSw('showTimer', 'clock', L('Показывать таймер', 'Show timer', 'Таймерді көрсету'), L('Если выключить — появится только в последнюю минуту', 'If off, it appears only in the last minute', 'Өшірсеңіз — тек соңғы минутта көрінеді'))}
+        ${setRowSw('confirmSubmit', 'check', L('Подтверждать отправку', 'Confirm before submitting', 'Жіберуді растау'), L('Спрашивать перед завершением теста', 'Ask before finishing a test', 'Тестті аяқтау алдында сұрау'))}
         ${setRowSw('autosave', 'save', L('Автосохранение ответов', 'Autosave answers', 'Жауаптарды автосақтау'), L('Всегда включено', 'Always on', 'Әрқашан қосулы'), { locked:true })}
       </section>
 
       <section class="st-sec"><h4>${ico('shield')}${L('Аккаунт', 'Account', 'Аккаунт')}</h4>
-        <button class="st-row link" data-st="soon"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту')}</b></span>${ico('chev')}</button>
+        <button class="st-row link" data-st="password"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту')}</b></span>${ico('chev')}</button>
         <button class="st-row link danger" data-st="logout"><span class="st-ic">${ico('logout')}</span><span class="st-t"><b>${L('Выйти', 'Log out', 'Шығу')}</b></span></button>
       </section>
     </div></div>`;
@@ -945,10 +1088,20 @@ function bindSettings(ov){
   ov.querySelectorAll('[data-color]').forEach(b => b.onclick = () => setTheme(b.dataset.color));
   ov.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   ov.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { setLang(b.dataset.lang); refreshSettings(); });
-  ov.querySelectorAll('[data-sw]').forEach(b => b.onclick = () => { const on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); prefSet(b.dataset.sw, on); });
+  ov.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { prefSet('fs', b.dataset.fs); ssDel('edu-fs-ku'); applyTheme(); refreshSettings(); });
+  ov.querySelectorAll('[data-still]').forEach(b => b.onclick = () => { prefSet('lessMotion', !effStill()); ssDel('edu-still-ku'); applyTheme(); refreshSettings(); });
+  ov.querySelectorAll('[data-sw]').forEach(b => b.onclick = async () => {
+    const k = b.dataset.sw, on = !b.classList.contains('on');
+    if(k === 'sysNotif' && on && !(await askNotifPermission())){ refreshSettings(); return; }
+    b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); prefSet(k, on);
+    if(k === 'contrast') applyTheme();
+    if(k === 'sysNotif') refreshSettings();
+  });
   ov.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
-    if(b.dataset.st === 'logout'){ ov._close(); setTimeout(() => ACT.logout(), 220); }
-    else toast(L('Скоро будет доступно', 'Coming soon', 'Жақында қолжетімді болады'));
+    const a = b.dataset.st;
+    if(a === 'logout'){ ov._close(); setTimeout(() => ACT.logout(), 220); }
+    else if(a === 'password'){ changePassword(); }
+    else if(a === 'test'){ const p = prefsGet(); notifyUser(L('Проверка уведомления', 'Test notification', 'Хабарландыруды тексеру'), L('Так будет выглядеть вызов на speaking', 'This is how a speaking call will look', 'Speaking-ке шақыру осылай көрінеді'), { sound:p.sndCall }); }
   });
 }
 function refreshSettings(){
@@ -1540,7 +1693,7 @@ const KU_BACK = (() => {
       fresh = true;
       const u = new URL(q.get('back') || '');
       if(/^https?:$/.test(u.protocol) && kuHostOk(u.hostname)){ back = u.href; sessionStorage.setItem(KU_BACK_KEY, back); }
-      q.delete('from'); q.delete('back'); q.delete('theme'); q.delete('lang');
+      q.delete('from'); q.delete('back'); q.delete('theme'); q.delete('mode'); q.delete('lang'); q.delete('fs'); q.delete('still');
       history.replaceState(history.state, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash);
     }
   }catch(e){}
@@ -1572,14 +1725,14 @@ function doLogin(){
   if(!lg || !pw){ err.textContent = L('Введите логин и пароль', 'Enter username and password', 'Логин мен құпиясөзді енгізіңіз'); return; }
   const u = D.users.find(x => x.login.toLowerCase() === lg && x.password === pw);
   if(!u){ err.textContent = L('Неверный логин или пароль', 'Wrong username or password', 'Логин немесе құпиясөз қате'); document.getElementById('lg-pass').select(); return; }
-  ME = u; sesSet(u.id);
+  ME = u; sesSet(u.id); applyTheme(); // личные настройки оформления пользователя
   const pr = loadRun(); S.pendingRun = pr && testById(pr.test.id) ? pr : null; if(!S.pendingRun) dropRunSave();
   go('exam', {}, {force:true, replace:true});
   toast(L('Вы вошли как ', 'Signed in as ', 'Сіз кірдіңіз: ') + u.name);
 }
 function doLogout(){
   stopTimer(); S.run = null; S.draft = null; S.rdraft = null; S.pendingRun = null; S.quiz = null; S.fc = null;
-  ME = null; sesSet(null);
+  ME = null; sesSet(null); applyTheme();
   go('login', {}, {force:true, replace:true});
 }
 
@@ -1708,7 +1861,8 @@ function cleanTest(t){
 /* ---------- прохождение ---------- */
 let timerId = null;
 function stopTimer(){ clearInterval(timerId); timerId = null; }
-function startTimer(){ stopTimer(); timerId = setInterval(updateTimer, 250); }
+let SHOW_TIMER = true; // настройка «Показывать таймер» (если выключено — таймер виден только в последнюю минуту)
+function startTimer(){ stopTimer(); SHOW_TIMER = !!prefsGet().showTimer; timerId = setInterval(updateTimer, 250); updateTimer(); }
 function startTest(id, o = {}){
   const src = testById(id), room = roomById(o.roomId); if(!src || !src.questions.length || !room) return;
   if(!room.open){ toast(L('Экзамен закрыт', 'The exam is closed', 'Емтихан жабық')); return; }
@@ -1754,9 +1908,9 @@ function updateTimer(){
   const tm = document.getElementById('tm'); if(!tm) return;
   if(lim > 0){
     const left = lim - el, low = left < Math.min(60000, lim * .2);
-    tm.querySelector('b').textContent = fmtT(left); tm.classList.toggle('low', low);
+    tm.querySelector('b').textContent = fmtT(left); tm.classList.toggle('low', low); tm.classList.toggle('hid', !SHOW_TIMER && left > 60000);
     const tl = document.getElementById('tline'); if(tl){ tl.firstElementChild.style.width = (left / lim * 100) + '%'; tl.classList.toggle('low', low); }
-  } else tm.querySelector('b').textContent = fmtT(el);
+  } else { tm.querySelector('b').textContent = fmtT(el); tm.classList.toggle('hid', !SHOW_TIMER); }
 }
 function answerUI(q, i, a, aux){
   switch(q.type){
@@ -1806,6 +1960,7 @@ function vRun(){
 }
 function finishAsk(){
   const r = S.run; if(!r) return; const left = r.order.length - answeredCount(r);
+  if(!prefsGet().confirmSubmit) return finish(false); // настройка «Подтверждать отправку» выключена
   if(left) ask(L('Завершить тест?', 'Finish the test?', 'Тестті аяқтау керек пе?'), L(`Без ответа ${left} ${pl(left, 'задание', 'задания', 'заданий', 'question', 'questions', 'тапсырма')}. Их можно вернуться и заполнить.`, `${left} ${left === 1 ? 'question is' : 'questions are'} unanswered. You can go back and answer them.`, `Жауапсыз қалған тапсырмалар: ${left}. Оларға қайтып оралып, толтыруға болады.`), L('Завершить', 'Finish', 'Аяқтау'), () => finish(false), {cancel:L('Вернуться', 'Go back', 'Қайту')});
   else ask(L('Завершить тест?', 'Finish the test?', 'Тестті аяқтау керек пе?'), L('Все задания отвечены. Изменить ответы после завершения будет нельзя.', 'All questions are answered. You won’t be able to change your answers after finishing.', 'Барлық тапсырмаға жауап берілді. Аяқтағаннан кейін жауаптарды өзгерту мүмкін болмайды.'), L('Завершить', 'Finish', 'Аяқтау'), () => finish(false));
 }
@@ -2643,10 +2798,10 @@ const LIVE = { exam:1, room:1, grade:1, scores:1, results:1, learn:1, editorList
 const fieldFocused = () => { const a = document.activeElement; return !!a && app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio'; };
 window.addEventListener('storage', e => {
   if(e.key === LS_KEY){
-    const d = loadDB(); if(!d) return; D = d;
+    const d = loadDB(); if(!d) return; notifyDiff(D, d); D = d;
     if(ME){ const u = userById(ME.id); if(!u){ doLogout(); toast(L('Ваш аккаунт удалён', 'Your account was deleted', 'Сіздің аккаунтыңыз жойылды')); return; } ME = u; }
     if(LIVE[S.view] || S.view === 'login'){ if(fieldFocused() || document.querySelector('.ov')) S.syncPending = true; else render(); }
-  } else if((e.key === THEME_KEY || e.key === MODE_KEY) && !ssGet('edu-theme-ku') && !ssGet('edu-mode-ku')){ COLOR = lsGet(THEME_KEY) === 'intl' ? 'intl' : 'incampus'; const m = lsGet(MODE_KEY); MODE = MODES.includes(m) ? m : 'auto'; applyTheme(); render(); refreshSettings(); }
+  } else if((e.key === THEME_KEY || e.key === MODE_KEY) && !ssGet('edu-theme-ku') && !ssGet('edu-mode-ku')){ COLOR = colorOf(lsGet(THEME_KEY)); const m = lsGet(MODE_KEY); MODE = MODES.includes(m) ? m : 'auto'; applyTheme(); render(); refreshSettings(); }
   else if(e.key === GA_KEY && S.view === 'grade' && !document.querySelector('.ov')) render();
 });
 setInterval(() => { tick(); if(S.syncPending && !fieldFocused() && !document.querySelector('.ov')) render(); }, 1000);
@@ -2672,6 +2827,7 @@ async function syncPush(){
 }
 function syncApply(db, force){
   if(!force && syncSig(syncSnapOf(db)) === syncSig(syncSnapOf(D))) return;
+  if(!force) notifyDiff(D, db); // вызов на speaking, открытие экзамена
   const d = Object.assign({}, D); SYNC_COLS.forEach(c => { d[c] = db[c] || []; });
   D = normDB(d); SYNC.last = syncSnapOf(D);
   try{ localStorage.setItem(LS_KEY, JSON.stringify(D)); }catch(e){}
@@ -2694,6 +2850,7 @@ async function syncStart(){
   D = loadDB();
   if(!D){ D = freshDB(); persist(); } // первый заход: создаются аккаунты user/1 и teacher/admin и пробный экзамен
   const sid = sesGet(); ME = sid ? userById(sid) || null : null;
+  if(ME) applyTheme(); // настройки пользователя (размер текста, контраст, анимация)
   if(ME){ const pr = loadRun(); S.pendingRun = pr && testById(pr.test.id) ? pr : null; }
   let hs = null; try{ hs = history.state; }catch(e){}
   const VIEWS = ['exam','room','result','results','learn','editorList','editor','roomEditor','scores','grade'];

@@ -64,17 +64,92 @@ function loadSessions() {
     if (user) sessions.set(tok, user);
   }
 }
-function saveSession(token, user) {
+/* Метаданные сеанса (для «Активных сеансов»): db.sessMeta[token] = { sid, uid, created, lastSeen, ua, ip }.
+   Наружу отдаётся только sid — сам токен никогда не показывается. */
+const reqToken = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || '';
+function saveSession(token, user, req) {
   db.sessions = db.sessions || {};
   db.sessions[token] = user.id;
+  db.sessMeta = db.sessMeta || {};
+  db.sessMeta[token] = {
+    sid: crypto.randomBytes(6).toString('hex'), uid: user.id, created: Date.now(), lastSeen: Date.now(),
+    ua: req ? String(req.headers['user-agent'] || '').slice(0, 200) : '', ip: req ? clientIp(req) : '',
+  };
   saveDB();
 }
 function dropSession(token) {
-  if (db.sessions) { delete db.sessions[token]; saveDB(); }
+  sessions.delete(token);
+  if (db.sessions) delete db.sessions[token];
+  if (db.sessMeta) delete db.sessMeta[token];
+  saveDB();
 }
+/* «Был в сети» обновляется в памяти, на диск — не чаще раза в 30 секунд */
+let dbDirty = false;
+setInterval(() => { if (dbDirty) { dbDirty = false; saveDB(); } }, 30000).unref();
 function userOf(req) {
-  const t = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  return sessions.get(t) || null;
+  const t = reqToken(req);
+  const u = sessions.get(t) || null;
+  if (u) {
+    const now = Date.now();
+    if (!u.lastSeen || now - u.lastSeen > 15000) { u.lastSeen = now; dbDirty = true; }
+    const m = db.sessMeta && db.sessMeta[t];
+    if (m && now - (m.lastSeen || 0) > 15000) { m.lastSeen = now; dbDirty = true; }
+  }
+  return u;
+}
+
+/* ------------------- Настройки пользователя (на сервере) ------------------- */
+const SETTING_DEFAULTS = { showInRating: true, showOnline: true, loginAlerts: true };
+const settingsOf = (u) => Object.assign({}, SETTING_DEFAULTS, u.settings || {});
+const ONLINE_MS = 2 * 60 * 1000;
+const isOnline = (u) => settingsOf(u).showOnline && !!u.lastSeen && Date.now() - u.lastSeen < ONLINE_MS;
+
+/* Уведомления (входящие): новая оценка, изменение расписания, вход с нового устройства.
+   Хранятся структурно — текст собирает клиент на языке интерфейса. */
+function pushInbox(user, item) {
+  user.inbox = user.inbox || [];
+  user.inbox.unshift(Object.assign({ id: crypto.randomBytes(5).toString('hex'), at: Date.now(), read: false }, item));
+  if (user.inbox.length > 50) user.inbox.length = 50;
+}
+
+/* ------------- Двухфакторная аутентификация: TOTP (RFC 6238), без зависимостей -------------
+   Совместима с Google Authenticator, Microsoft Authenticator, Aegis и т.п.: SHA-1, 6 цифр, шаг 30 с. */
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function b32enc(buf) {
+  let bits = 0, val = 0, out = '';
+  for (const b of buf) { val = (val << 8) | b; bits += 8; while (bits >= 5) { out += B32[(val >>> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits > 0) out += B32[(val << (5 - bits)) & 31];
+  return out;
+}
+function b32dec(str) {
+  let bits = 0, val = 0; const out = [];
+  for (const c of String(str).toUpperCase().replace(/[^A-Z2-7]/g, '')) { val = (val << 5) | B32.indexOf(c); bits += 5; if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; } }
+  return Buffer.from(out);
+}
+function totp(secret, step) {
+  const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(step));
+  const h = crypto.createHmac('sha1', b32dec(secret)).update(msg).digest();
+  const o = h[h.length - 1] & 15;
+  return String(((h.readUInt32BE(o) & 0x7fffffff) % 1e6)).padStart(6, '0');
+}
+function totpOk(secret, code) {
+  const c = String(code || '').replace(/\s/g, '');
+  if (!/^\d{6}$/.test(c)) return false;
+  const step = Math.floor(Date.now() / 30000);
+  return [-1, 0, 1].some((d) => crypto.timingSafeEqual(Buffer.from(totp(secret, step + d)), Buffer.from(c)));
+}
+/* Ограничение попыток ввода кода: 5 ошибок за 5 минут на пользователя */
+const codeFails = new Map();
+function codeBlocked(uid) { const f = codeFails.get(uid); return !!f && f.n >= 5 && Date.now() - f.t < 300000; }
+function codeFail(uid) { const f = codeFails.get(uid); if (!f || Date.now() - f.t >= 300000) codeFails.set(uid, { n: 1, t: Date.now() }); else f.n++; }
+
+/* Определение устройства по User-Agent — только для подписи в списке сеансов */
+function deviceLabel(ua) {
+  ua = String(ua || '');
+  const os = /Windows/i.test(ua) ? 'Windows' : /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iOS/i.test(ua) ? 'iOS' : /Mac OS X|Macintosh/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '';
+  const br = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /YaBrowser/.test(ua) ? 'Yandex' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+  return [br, os].filter(Boolean).join(', ') || (ua ? ua.slice(0, 40) : '');
 }
 /* Программа (университет) пользователя — от неё зависят цвета портала и онлайн-экзамена */
 const PROGRAMS = ['ku', 'arizona'];
@@ -467,10 +542,11 @@ const server = http.createServer(async (req, res) => {
         program,
         createdAt: Date.now(),
       };
+      if (body.deviceId) user.devices = [String(body.deviceId).slice(0, 64)];
       db.users.push(user); saveDB();
       const token = crypto.randomBytes(24).toString('hex');
       sessions.set(token, user);
-      saveSession(token, user);
+      saveSession(token, user, req);
       return ok(res, { token, user: pubUser(user) });
     }
 
@@ -478,9 +554,25 @@ const server = http.createServer(async (req, res) => {
       const { email = '', password = '' } = body;
       const user = db.users.find((x) => x.email === String(email).trim().toLowerCase());
       if (!user || user.passHash !== hash(String(password), user.salt)) return bad(res, 401, 'Неверный email или пароль');
+      // Двухфакторная аутентификация: сначала пароль, затем код из приложения
+      if (user.totp && user.totp.enabled) {
+        if (!body.code) return ok(res, { need2fa: true });
+        if (codeBlocked(user.id)) return bad(res, 429, 'Слишком много попыток. Попробуйте через 5 минут');
+        if (!totpOk(user.totp.secret, body.code)) { codeFail(user.id); return bad(res, 401, 'Неверный код подтверждения'); }
+        codeFails.delete(user.id);
+      }
+      // Оповещение о входе с нового устройства (идентификатор устройства хранится в браузере)
+      const dev = String(body.deviceId || '').slice(0, 64);
+      if (dev) {
+        user.devices = user.devices || [];
+        if (!user.devices.includes(dev)) {
+          if (user.devices.length && settingsOf(user).loginAlerts) pushInbox(user, { type: 'login', device: deviceLabel(req.headers['user-agent']), ip: clientIp(req) });
+          user.devices.push(dev); if (user.devices.length > 20) user.devices.shift();
+        }
+      }
       const token = crypto.randomBytes(24).toString('hex');
       sessions.set(token, user);
-      saveSession(token, user);
+      saveSession(token, user, req);
       return ok(res, { token, user: pubUser(user) });
     }
 
@@ -490,9 +582,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/auth/logout' && req.method === 'POST') {
-      const t = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-      sessions.delete(t);
-      dropSession(t);
+      dropSession(reqToken(req));
       return ok(res);
     }
 
@@ -508,6 +598,119 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!u) return bad(res, 401, 'Не авторизован');
+
+    /* ---------- Настройки: конфиденциальность и оповещения ---------- */
+    if (p === '/api/settings' && req.method === 'GET') {
+      return ok(res, { settings: settingsOf(u), twoFactor: !!(u.totp && u.totp.enabled), passChangedAt: u.passChangedAt || null, demo: !!u.demo });
+    }
+    if (p === '/api/settings' && req.method === 'POST') {
+      u.settings = settingsOf(u);
+      for (const k of Object.keys(SETTING_DEFAULTS)) if (typeof body[k] === 'boolean') u.settings[k] = body[k];
+      saveDB();
+      return ok(res, { settings: u.settings });
+    }
+
+    /* ---------- Уведомления ---------- */
+    if (p === '/api/inbox' && req.method === 'GET') {
+      const items = (u.inbox || []).slice(0, 30);
+      return ok(res, { items, unread: (u.inbox || []).filter((x) => !x.read).length });
+    }
+    if (p === '/api/inbox/read' && req.method === 'POST') {
+      (u.inbox || []).forEach((x) => { x.read = true; });
+      saveDB();
+      return ok(res);
+    }
+
+    /* ---------- Безопасность ---------- */
+    if ((p === '/api/auth/password' || p === '/api/2fa/setup' || p === '/api/2fa/enable') && req.method === 'POST' && u.demo) {
+      return bad(res, 400, 'Для тестового аккаунта это недоступно — он общий для всех'); // иначе демо-вход сломается у остальных
+    }
+    if (p === '/api/auth/password' && req.method === 'POST') {
+      const cur = String(body.current || ''), nx = String(body.next || '');
+      if (u.passHash !== hash(cur, u.salt)) return bad(res, 400, 'Неверный текущий пароль');
+      if (nx.length < 4) return bad(res, 400, 'Пароль — минимум 4 символа');
+      if (nx === cur) return bad(res, 400, 'Новый пароль совпадает с текущим');
+      u.salt = crypto.randomBytes(8).toString('hex');
+      u.passHash = hash(nx, u.salt);
+      u.passChangedAt = Date.now();
+      // выходим на всех остальных устройствах
+      const me = reqToken(req);
+      for (const [tok, uid] of Object.entries(db.sessions || {})) if (uid === u.id && tok !== me) dropSession(tok);
+      saveDB();
+      return ok(res, { passChangedAt: u.passChangedAt });
+    }
+    if (p === '/api/2fa/setup' && req.method === 'POST') {
+      if (u.totp && u.totp.enabled) return bad(res, 400, 'Двухфакторная аутентификация уже включена');
+      const secret = b32enc(crypto.randomBytes(20));
+      u.totp = { secret, enabled: false };
+      saveDB();
+      const label = encodeURIComponent('KU Portal:' + u.email);
+      return ok(res, { secret, uri: `otpauth://totp/${label}?secret=${secret}&issuer=KU%20Portal&digits=6&period=30` });
+    }
+    if (p === '/api/2fa/enable' && req.method === 'POST') {
+      if (!u.totp || !u.totp.secret) return bad(res, 400, 'Сначала получите ключ');
+      if (codeBlocked(u.id)) return bad(res, 429, 'Слишком много попыток. Попробуйте через 5 минут');
+      if (!totpOk(u.totp.secret, body.code)) { codeFail(u.id); return bad(res, 400, 'Неверный код подтверждения'); }
+      u.totp.enabled = true; codeFails.delete(u.id); saveDB();
+      return ok(res, { twoFactor: true });
+    }
+    if (p === '/api/2fa/disable' && req.method === 'POST') {
+      if (u.passHash !== hash(String(body.password || ''), u.salt)) return bad(res, 400, 'Неверный пароль');
+      delete u.totp; saveDB();
+      return ok(res, { twoFactor: false });
+    }
+    if (p === '/api/sessions' && req.method === 'GET') {
+      const me = reqToken(req);
+      const items = Object.entries(db.sessMeta || {}).filter(([, m]) => m.uid === u.id)
+        .map(([tok, m]) => ({ sid: m.sid, current: tok === me, created: m.created, lastSeen: m.lastSeen, device: deviceLabel(m.ua), ip: m.ip }))
+        .sort((a, b) => (b.current - a.current) || (b.lastSeen - a.lastSeen));
+      // сеансы, созданные до появления метаданных
+      const legacy = Object.entries(db.sessions || {}).filter(([tok, uid]) => uid === u.id && !(db.sessMeta || {})[tok]).length;
+      return ok(res, { items, legacy });
+    }
+    if (p === '/api/sessions/revoke' && req.method === 'POST') {
+      const me = reqToken(req);
+      let n = 0;
+      for (const [tok, uid] of Object.entries(db.sessions || {})) {
+        if (uid !== u.id || tok === me) continue;
+        const m = (db.sessMeta || {})[tok];
+        if (body.all || (m && m.sid === body.sid)) { dropSession(tok); n++; }
+      }
+      return ok(res, { revoked: n });
+    }
+
+    /* ---------- Мои данные и удаление аккаунта ---------- */
+    if (p === '/api/export' && req.method === 'GET') {
+      const data = {
+        exportedAt: new Date().toISOString(),
+        profile: Object.assign(pubUser(u), { createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : null }),
+        settings: settingsOf(u), twoFactor: !!(u.totp && u.totp.enabled),
+        grades: u.role === 'student'
+          ? db.grades.filter((g) => g.studentId === u.id).map((g) => ({ subject: subjName(g.subjectId), teacher: teacherFio(g.teacherId), score: g.score, date: g.date }))
+          : db.grades.filter((g) => g.teacherId === u.id).map((g) => ({ student: teacherFio(g.studentId), subject: subjName(g.subjectId), score: g.score, date: g.date })),
+        schedule: (u.role === 'student' ? db.schedule.filter((x) => x.group === u.group) : db.schedule.filter((x) => x.teacherId === u.id))
+          .map((r) => ({ day: WEEKDAYS[r.day], start: r.start, end: r.end, subject: subjName(r.subjectId), type: r.type, room: r.room, group: r.group })),
+        subjects: u.role === 'teacher' ? db.subjects.filter((x) => x.teacherId === u.id).map((x) => x.name) : undefined,
+        sessions: Object.values(db.sessMeta || {}).filter((m) => m.uid === u.id).map((m) => ({ device: deviceLabel(m.ua), ip: m.ip, created: new Date(m.created).toISOString(), lastSeen: new Date(m.lastSeen).toISOString() })),
+        notifications: u.inbox || [],
+      };
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="ku-portal-${u.id}.json"`,
+        'Cache-Control': 'no-store',
+      });
+      return res.end(JSON.stringify(data, null, 2));
+    }
+    if (p === '/api/account/delete' && req.method === 'POST') {
+      if (u.demo) return bad(res, 400, 'Тестовый аккаунт удалить нельзя');
+      if (u.passHash !== hash(String(body.password || ''), u.salt)) return bad(res, 400, 'Неверный пароль');
+      for (const [tok, uid] of Object.entries(db.sessions || {})) if (uid === u.id) dropSession(tok);
+      db.users = db.users.filter((x) => x.id !== u.id);
+      if (u.role === 'student') db.grades = db.grades.filter((g) => g.studentId !== u.id);
+      else db.schedule = db.schedule.filter((x) => x.teacherId !== u.id); // оценки студентов сохраняются, расписание преподавателя удаляется
+      saveDB();
+      return ok(res);
+    }
 
     /* ---------- Студент ---------- */
     if (p === '/api/student/dashboard' && u.role === 'student') {
@@ -537,8 +740,11 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/rating' && u.role === 'student') {
       const mates = db.users.filter((x) => x.role === 'student' && x.group === u.group);
-      const rows = mates.map((m) => ({ id: m.id, fio: m.fio, avg: avgOf(m.id) }))
-        .sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
+      // «Показывать меня в рейтинге» выключено — одногруппники видят строку без имени; себя студент видит всегда
+      const rows = mates.map((m) => {
+        const hidden = m.id !== u.id && !settingsOf(m).showInRating;
+        return { id: hidden ? 'hidden_' + crypto.createHash('sha1').update(m.id).digest('hex').slice(0, 8) : m.id, fio: hidden ? null : m.fio, hidden, online: !hidden && m.id !== u.id && isOnline(m), avg: avgOf(m.id) };
+      }).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
       const self = rows.find((r) => r.id === u.id);
       return ok(res, { group: u.group, selfPos: self ? rows.indexOf(self) + 1 : null, selfAvg: self ? self.avg : null, rows });
     }
@@ -558,7 +764,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/teacher/students' && req.method === 'GET' && u.role === 'teacher') {
       const g = String(url.searchParams.get('group') || '').trim();
       const items = db.users.filter((x) => x.role === 'student' && (!g || x.group === g))
-        .map((x) => ({ id: x.id, fio: x.fio, group: x.group }));
+        .map((x) => ({ id: x.id, fio: x.fio, group: x.group, online: isOnline(x) }));
       return ok(res, { items });
     }
 
@@ -571,7 +777,9 @@ const server = http.createServer(async (req, res) => {
       if (!sub) return bad(res, 400, 'Выберите свой предмет');
       if (!(sc >= 0 && sc <= 100)) return bad(res, 400, 'Балл — число от 0 до 100');
       const g = { id: nid('gr'), studentId, subjectId, teacherId: u.id, score: sc, date: new Date().toISOString().slice(0, 10) };
-      db.grades.push(g); saveDB();
+      db.grades.push(g);
+      pushInbox(st, { type: 'grade', subject: sub.name, score: sc });
+      saveDB();
       return ok(res, { id: g.id });
     }
 
@@ -586,7 +794,10 @@ const server = http.createServer(async (req, res) => {
         group: String(group).trim(), day: Math.max(0, Math.min(6, Number(day))),
         start: String(startTime), end: String(endTime), room: String(room || '').trim(),
       };
-      db.schedule.push(e); saveDB();
+      db.schedule.push(e);
+      db.users.filter((x) => x.role === 'student' && x.group === e.group)
+        .forEach((x) => pushInbox(x, { type: 'schedule', subject: sub.name, day: e.day, start: e.start, end: e.end, room: e.room, lessonType: e.type }));
+      saveDB();
       return ok(res, { id: e.id });
     }
 
