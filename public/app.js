@@ -102,8 +102,8 @@ const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как �
 /* Настройки хранятся в браузере отдельно для каждого пользователя */
 const PREF_DEFAULTS = {
   palette: 'auto', mode: 'light', fontSize: 'md', reduceMotion: false, compact: false,
-  notifPush: true, notifGrades: true, notifSchedule: true, notifExam: true, notifEmail: false, notifSound: true,
-  twoFactor: false, showInRating: true, showOnline: true, loginAlerts: true,
+  // уведомления (см. NOTIF); конфиденциальность, 2FA и оповещения о входе хранятся на сервере (/api/settings)
+  notifPush: false, notifGrades: true, notifSchedule: true, notifExam: true, notifSound: true,
 };
 const prefsKey = () => 'ku_prefs:' + (S.user ? S.user.id : 'guest');
 function getPrefs() {
@@ -144,6 +144,132 @@ if (window.matchMedia) {
   if (mq.addEventListener) mq.addEventListener('change', onSys); else if (mq.addListener) mq.addListener(onSys);
 }
 
+/* ------------------------------ Модальное окно ------------------------------ */
+function modal(title, bodyHTML, onMount) {
+  const ov = document.createElement('div');
+  ov.className = 'mdl-ov';
+  ov.innerHTML = `<div class="mdl" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="mdl-h"><b>${esc(title)}</b><button class="mdl-x" data-x aria-label="${t('Закрыть')}">${svg('x')}</button></div>
+    <div class="mdl-b">${bodyHTML}</div></div>`;
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  ov.addEventListener('click', (e) => { if (e.target === ov || e.target.closest('[data-x]')) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(ov);
+  const f = ov.querySelector('input'); if (f) setTimeout(() => f.focus(), 30);
+  if (onMount) onMount(ov.querySelector('.mdl-b'), close);
+  return close;
+}
+function fmtWhen(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts), loc = { en: 'en-GB', kk: 'kk-KZ' }[getLang()] || 'ru-RU';
+  return d.toLocaleString(loc, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+/* ------------------------------ Уведомления ------------------------------
+   Источник — сервер (/api/inbox): новые оценки, изменения расписания, вход с нового устройства.
+   Плюс открытие экзамена в «Онлайн-экзамене» (/exam-sync/api/state). Опрос раз в 30 с, пока пользователь вошёл.
+   Как показывать — по настройкам «Уведомления»: тост в портале всегда, звук (notifSound),
+   системное уведомление браузера (notifPush, нужно разрешение), фильтры по типам (notifGrades / notifSchedule / notifExam). */
+const NOTIF = { unread: 0, items: [], seen: null, timer: null, examOpen: null };
+const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam' };
+function notifText(n) {
+  if (n.type === 'grade') return { title: t('Новая оценка'), body: `${tv(n.subject)} — ${n.score}` };
+  if (n.type === 'schedule') return { title: t('Изменение в расписании'), body: `${tv(n.subject)} · ${weekdayName(n.day)} ${n.start}${n.room ? ' · ' + t('ауд.') + ' ' + n.room : ''}` };
+  if (n.type === 'login') return { title: t('Новый вход в аккаунт'), body: [n.device, n.ip].filter(Boolean).join(' · ') };
+  if (n.type === 'exam') return { title: t('Экзамен открыт'), body: n.title || '' };
+  return { title: t('Уведомление'), body: '' };
+}
+let audioCtx = null;
+function chime() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    [880, 660].forEach((f, i) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t0 = audioCtx.currentTime + i * 0.18;
+      o.frequency.value = f; o.connect(g); g.connect(audioCtx.destination);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.2, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+      o.start(t0); o.stop(t0 + 0.17);
+    });
+  } catch { }
+}
+function deliver(n) {
+  const p = getPrefs();
+  if (notifTypePref[n.type] && !p[notifTypePref[n.type]]) return; // этот тип уведомлений выключен
+  const { title, body } = notifText(n);
+  toast(body ? `${title}: ${body}` : title);
+  if (p.notifSound) chime();
+  if (p.notifPush && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+    try { const x = new Notification(title, { body, tag: 'ku-' + (n.id || n.type) }); x.onclick = () => { window.focus(); x.close(); }; } catch { }
+  }
+}
+function paintBell() {
+  const b = document.getElementById('bell'); if (!b) return;
+  const old = b.querySelector('.bell-n'); if (old) old.remove();
+  if (NOTIF.unread) { const sp = document.createElement('span'); sp.className = 'bell-n'; sp.textContent = NOTIF.unread > 9 ? '9+' : NOTIF.unread; b.appendChild(sp); }
+}
+async function pollInbox() {
+  if (!S.user) return;
+  try {
+    const d = await api('/inbox');
+    const fresh = NOTIF.seen ? d.items.filter((x) => !x.read && !NOTIF.seen.has(x.id)) : [];
+    NOTIF.items = d.items; NOTIF.unread = d.unread;
+    NOTIF.seen = new Set(d.items.map((x) => x.id));
+    fresh.reverse().forEach(deliver); // при первом опросе после входа — только счётчик, без всплывающих
+    paintBell();
+  } catch { }
+}
+/* Открытие экзамена: комнаты «Онлайн-экзамена», которые стали открытыми с прошлой проверки */
+async function pollExams() {
+  if (!S.user || !getPrefs().notifExam) return;
+  try {
+    const r = await fetch(EXAM_SYNC_PATH + 'api/state', { cache: 'no-store' });
+    if (!r.ok) return;
+    const rooms = ((await r.json()).db || {}).rooms || [];
+    const open = rooms.filter((x) => x.open);
+    const key = 'ku_exam_open:' + S.user.id;
+    let known = NOTIF.examOpen;
+    if (!known) { try { known = new Set(JSON.parse(localStorage.getItem(key) || 'null') || open.map((x) => x.id)); } catch { known = new Set(open.map((x) => x.id)); } }
+    open.filter((x) => !known.has(x.id)).forEach((x) => deliver({ type: 'exam', id: 'exam-' + x.id, title: x.title }));
+    NOTIF.examOpen = new Set(open.map((x) => x.id));
+    try { localStorage.setItem(key, JSON.stringify([...NOTIF.examOpen])); } catch { }
+  } catch { }
+}
+function startNotif() {
+  if (NOTIF.timer || !S.user) return;
+  pollInbox(); pollExams();
+  NOTIF.timer = setInterval(() => { pollInbox(); pollExams(); }, 30000);
+}
+function stopNotif() {
+  if (NOTIF.timer) clearInterval(NOTIF.timer);
+  Object.assign(NOTIF, { unread: 0, items: [], seen: null, timer: null, examOpen: null });
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.user) pollInbox(); });
+function openInbox() {
+  const list = NOTIF.items;
+  modal(t('Уведомления'), list.length
+    ? `<div class="inbox">${list.map((n) => { const x = notifText(n); return `<div class="inbox-it ${n.read ? '' : 'new'}"><b>${esc(x.title)}</b>${x.body ? `<span>${esc(x.body)}</span>` : ''}<small>${esc(fmtWhen(n.at))}</small></div>`; }).join('')}</div>`
+    : `<div class="next-empty">${t('Новых уведомлений нет')}</div>`);
+  if (NOTIF.unread) {
+    api('/inbox/read', { method: 'POST', body: {} }).then(() => { NOTIF.unread = 0; NOTIF.items.forEach((x) => { x.read = true; }); paintBell(); }).catch(() => { });
+  }
+}
+/* Проверка: тост + звук (если включён) + уведомление браузера (если включено и разрешено) — сразу, без ожидания */
+function testNotif() {
+  const p = getPrefs(), body = t('Так будут выглядеть уведомления KU Portal');
+  toast(t('Уведомление') + ': ' + body);
+  if (p.notifSound) chime();
+  if (p.notifPush && 'Notification' in window && Notification.permission === 'granted') { try { new Notification(t('Уведомление'), { body, tag: 'ku-test' }); } catch { } }
+}
+async function askNotifPermission() {
+  if (!('Notification' in window)) { toast(t('Браузер не поддерживает уведомления'), true); return false; }
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') { toast(t('Уведомления запрещены в настройках браузера для этого сайта'), true); return false; }
+  const r = await Notification.requestPermission();
+  if (r !== 'granted') toast(t('Разрешение не выдано'), true);
+  return r === 'granted';
+}
+
 /* ------------------------------ Общие блоки ------------------------------ */
 function navHTML(active) {
   const it = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
@@ -163,7 +289,7 @@ function headHTML() {
       <div class="nm">${esc(u.firstName)}</div>
     </div>
     <div class="nicons">
-      <button class="bell" id="bell" title="${t('Уведомления')}">${svg('bell')}</button>
+      <button class="bell" id="bell" title="${t('Уведомления')}">${svg('bell')}${NOTIF.unread ? `<span class="bell-n">${NOTIF.unread > 9 ? '9+' : NOTIF.unread}</span>` : ''}</button>
       <button class="avatar" id="goProfile" title="${t('Кабинет')}">${esc(u.firstName.charAt(0).toUpperCase())}</button>
     </div>
   </div>
@@ -264,20 +390,43 @@ async function renderDemoBox() {
     </div>`;
   box.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = async () => {
     authErr('');
-    try {
-      const d = await api('/auth/login', { method: 'POST', body: { email: b.dataset.demo, password: demoInfo.password } });
-      S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
-    } catch (e) { authErr(e.message); }
+    try { await loginWith(b.dataset.demo, demoInfo.password); } catch (e) { authErr(e.message); }
   }));
 }
 function authErr(m) { const e = document.getElementById('autherr'); if (e) e.textContent = m; }
+/* Идентификатор устройства (для оповещения о входе с нового устройства) — случайный, хранится в браузере */
+function deviceId() {
+  try {
+    let d = localStorage.getItem('ku_device');
+    if (!d) { d = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('ku_device', d); }
+    return d;
+  } catch { return ''; }
+}
+/* Вход: пароль → (если включена двухфакторная аутентификация) код из приложения-аутентификатора */
+async function loginWith(email, password, code) {
+  const d = await api('/auth/login', { method: 'POST', body: { email, password, code, deviceId: deviceId() } });
+  if (d.need2fa) return showCodeStep(email, password);
+  S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
+}
+function showCodeStep(email, password) {
+  const box = document.getElementById('authform');
+  if (!box) return;
+  authErr('');
+  box.innerHTML = `
+    <div class="tx code-hint">${t('Введите 6-значный код из приложения-аутентификатора')}</div>
+    <input class="inp" id="liCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+    <button class="btn pri" id="liCodeBtn">${t('Подтвердить')}</button>
+    <button class="btn ghost" id="liCodeBack" style="margin-top:8px">${t('Назад')}</button>`;
+  const go = async () => { authErr(''); try { await loginWith(email, password, v('liCode')); } catch (e) { authErr(e.message); } };
+  document.getElementById('liCodeBtn').onclick = go;
+  document.getElementById('liCode').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  document.getElementById('liCodeBack').onclick = () => viewAuth();
+  document.getElementById('liCode').focus();
+}
 function goHome() { if (location.hash === '#/' || !location.hash) route(); else location.hash = '#/'; }
 async function doLogin() {
   authErr('');
-  try {
-    const d = await api('/auth/login', { method: 'POST', body: { email: v('liEmail'), password: v('liPass') } });
-    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
-  } catch (e) { authErr(e.message); }
+  try { await loginWith(v('liEmail'), v('liPass')); } catch (e) { authErr(e.message); }
 }
 async function doRegister() {
   authErr('');
@@ -287,6 +436,7 @@ async function doRegister() {
       body: {
         lastName: v('rLast'), firstName: v('rFirst'), middleName: v('rMid'),
         email: v('rEmail'), password: v('rPass'), role: authRole, program: authProgram, group: authRole === 'student' ? v('rGroup') : '',
+        deviceId: deviceId(),
       },
     });
     S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
@@ -363,7 +513,7 @@ function ringSVG(score) {
 }
 function bindHead() {
   const b = document.getElementById('bell');
-  if (b) b.onclick = () => toast(t('Новых уведомлений нет'));
+  if (b) b.onclick = openInbox;
   const p = document.getElementById('goProfile');
   if (p) p.onclick = () => { location.hash = '#/profile'; };
 }
@@ -468,7 +618,7 @@ async function viewRating() {
       <div class="card">
         ${d.rows.length ? d.rows.map((r, i) => `
           <div class="lstrow ${r.id === S.user.id ? 'me' : ''}" style="cursor:default">
-            <div>${i + 1}. ${esc(r.fio)}</div>
+            <div>${i + 1}. ${r.hidden ? `<span class="tx">${t('Студент скрыл себя в рейтинге')}</span>` : esc(r.fio)}${r.online ? `<span class="online-dot" title="${t('В сети')}"></span>` : ''}</div>
             <div class="r" style="color:var(--accent-deep);font-weight:700">${r.avg == null ? '—' : r.avg}</div>
           </div>`).join('') : `<div class="next-empty">${t('В группе пока нет студентов.')}</div>`}
       </div>`;
@@ -498,13 +648,19 @@ const EXAM_FEATURES = {
     ['chart', 'Ведомость', 'Сводные баллы студентов по всем частям экзамена.'],
   ],
 };
+const EXAM_COLOR = { ku: 'incampus', arizona: 'intl' }; // палитра портала → цвет онлайн-экзамена
 function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
   u.searchParams.set('back', location.origin + '/#/exam');
   u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
-  u.searchParams.set('theme', programOf(S.user).examTheme); // цвета экзамена — по программе пользователя
-  const m = getPrefs().mode; if (m !== 'light') u.searchParams.set('mode', m); // светлая — исходный вид экзамена; тёмная/системная — передаём
+  // Оформление портала целиком: цвет (с учётом «Авто»), режим, размер текста, «меньше анимации».
+  // Kozybayev → inCampus, Arizona → «Международный кампус», остальные палитры в экзамене называются так же.
+  const th = resolvedTheme();
+  u.searchParams.set('theme', EXAM_COLOR[th.palette] || th.palette);
+  u.searchParams.set('mode', th.mode || 'light'); // всегда явно: иначе «Авто» в экзамене включит тёмный inCampus при светлом портале
+  u.searchParams.set('fs', th.fs || 'md');
+  u.searchParams.set('still', th.still ? '1' : '0');
   return u.href;
 }
 function examTransition(href) {
@@ -719,7 +875,7 @@ async function findStudents() {
   box.innerHTML = `<div class="ptitle" style="padding:2px 0 10px">${t('Студенты ({n})', { n: d.items.length })}</div>` + (d.items.length
     ? d.items.map((s) => `
       <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div><div style="font-size:calc(15.5px * var(--fs))">${esc(s.fio)}</div><div class="tx">${esc(s.group)}</div></div>
+        <div><div style="font-size:calc(15.5px * var(--fs))">${esc(s.fio)}${s.online ? `<span class="online-dot" title="${t('В сети')}"></span>` : ''}</div><div class="tx">${esc(s.group)}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
           <input class="inp small" style="margin:0;width:84px" placeholder="0-100" data-sc="${s.id}">
           <button class="badge" style="border:0;cursor:pointer;padding:9px 13px" data-put="${s.id}">${t('Выставить')}</button>
@@ -739,8 +895,11 @@ async function findStudents() {
 /* ============================ Личный кабинет = профиль + все настройки ============================ */
 /* Один экран: слева (на ноутбуке) карточка профиля и оглавление разделов, справа — разделы настроек.
    На телефоне оглавление — прокручиваемая строка чипов над разделами.
-   Работают: «Оформление» (тема, цвет, размер текста, компактный режим, меньше анимации) и язык.
-   Остальные переключатели только запоминаются в браузере — разделы помечены «в разработке». */
+   Все разделы работают:
+   - «Оформление», «Язык» — в браузере (ku_prefs:<id>, ku_lang), тема передаётся и в онлайн-экзамен;
+   - «Уведомления» — в браузере: тост, звук, уведомления браузера, фильтры по типам (см. NOTIF);
+   - «Безопасность», «Конфиденциальность», «Аккаунт» — на сервере (/api/settings, /api/auth/password, /api/2fa/*,
+     /api/sessions*, /api/export, /api/account/delete). */
 const CAB_SECTIONS = [
   ['appearance', 'palette', 'Оформление'],
   ['language', 'globe', 'Язык и регион'],
@@ -749,13 +908,21 @@ const CAB_SECTIONS = [
   ['privacy', 'eye', 'Конфиденциальность'],
   ['account', 'user', 'Аккаунт'],
 ];
-function swRow(key, icon, title, sub) {
-  const on = !!getPrefs()[key];
-  return `<div class="set-row"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b>${sub ? `<span class="tx">${tv(sub)}</span>` : ''}</div>
-    <button class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(t(title))}" data-sw="${key}"><i></i></button></div>`;
+const SRV_KEYS = ['showInRating', 'showOnline', 'loginAlerts']; // хранятся на сервере
+let SRV = null; // { settings, twoFactor, passChangedAt, demo }
+function prefVal(key) {
+  if (SRV_KEYS.includes(key)) return !!(SRV && SRV.settings[key]);
+  if (key === 'notifPush') return !!getPrefs().notifPush && 'Notification' in window && Notification.permission === 'granted';
+  return !!getPrefs()[key];
+}
+function swRow(key, icon, title, sub, o) {
+  o = o || {};
+  const on = o.locked !== undefined ? o.locked : prefVal(key);
+  return `<div class="set-row"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b>${sub ? `<span class="tx">${o.raw ? sub : tv(sub)}</span>` : ''}</div>
+    <button class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(t(title))}" data-sw="${key}" ${o.locked !== undefined ? 'disabled' : ''}><i></i></button></div>`;
 }
 function linkRow(icon, title, sub, act, cls) {
-  return `<button class="set-row link ${cls || ''}" data-act="${act}"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b>${sub ? `<span class="tx">${tv(sub)}</span>` : ''}</div><span class="chev">${svg('chev')}</span></button>`;
+  return `<button class="set-row link ${cls || ''}" data-act="${act}"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div><span class="chev">${svg('chev')}</span></button>`;
 }
 function segRow(key, icon, title, opts, cur) {
   if (cur === undefined) cur = getPrefs()[key];
@@ -767,14 +934,25 @@ function modePreview(m, cur) {
     <span class="mp mp-${m}"><i></i><i></i><i></i></span>
     <span class="mc-l">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}${t(MODES[m])}</span></button>`;
 }
-function secHead(id, title, soon) {
+function secHead(id, title) {
   const ic = CAB_SECTIONS.find((s) => s[0] === id)[1];
-  return `<h2>${svg(ic)}${t(title)}${soon ? `<span class="soon">${t('в разработке')}</span>` : ''}</h2>`;
+  return `<h2>${svg(ic)}${t(title)}</h2>`;
 }
-function viewProfile(section) {
+function permText() {
+  if (!('Notification' in window)) return t('Браузер не поддерживает уведомления');
+  if (Notification.permission === 'granted') return t('Разрешено в браузере · когда вкладка свёрнута');
+  if (Notification.permission === 'denied') return t('Запрещено в настройках браузера');
+  return t('Когда вкладка свёрнута · нужно разрешение браузера');
+}
+async function viewProfile(section) {
   stopPoll();
+  try { SRV = await api('/settings'); } catch { if (!S.user) return; }
+  paintProfile(section);
+}
+function paintProfile(section) {
   const u = S.user, p = getPrefs(), pr = programOf(u);
   const autoName = t(PALETTES[pr.palette].name);
+  const srv = SRV || { settings: {}, twoFactor: false, passChangedAt: null, demo: false };
   app.innerHTML = `
     ${miniHead('Личный кабинет')}
     <div id="pagebody" class="cab">
@@ -802,7 +980,7 @@ function viewProfile(section) {
             <button class="swatch auto ${p.palette === 'auto' ? 'on' : ''}" data-pal="auto" role="radio" aria-checked="${p.palette === 'auto'}" title="${t('Авто')} · ${esc(autoName)}" style="--sw:${PALETTES[pr.palette].color}"><i></i><span>${t('Авто')}</span></button>
             ${Object.entries(PALETTES).map(([id, x]) => `<button class="swatch ${p.palette === id ? 'on' : ''}" data-pal="${id}" role="radio" aria-checked="${p.palette === id}" title="${esc(t(x.name))}" style="--sw:${x.color}"><i></i><span>${esc(t(x.name))}</span></button>`).join('')}
           </div>
-          <div class="tx set-note">${esc(t('«Авто» — цвет вашей программы ({p}). Тема и цвет применяются и в онлайн-экзамене.', { p: pr.name }))}</div>
+          <div class="tx set-note">${esc(t('«Авто» — цвет вашей программы ({p}). Тема, цвет, размер текста и «меньше анимации» применяются и в онлайн-экзамене.', { p: pr.name }))}</div>
           ${segRow('fontSize', 'type', 'Размер текста', [['sm', t('Мелкий')], ['md', t('Обычный')], ['lg', t('Крупный')], ['xl', t('Очень крупный')]])}
           ${swRow('compact', 'device', 'Компактный режим', 'Плотнее карточки и списки')}
           ${swRow('reduceMotion', 'play', 'Меньше анимации', 'Отключить плавные переходы')}
@@ -816,34 +994,35 @@ function viewProfile(section) {
         </section>
 
         <section class="card set-sec" id="set-notifications">
-          ${secHead('notifications', 'Уведомления', true)}
-          ${swRow('notifPush', 'bell', 'Push-уведомления', 'На телефоне и в браузере')}
-          ${swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл')}
-          ${swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Перенос и отмена занятий')}
-          ${swRow('notifExam', 'clipboard', 'Экзамены', 'Напоминание за день и за час')}
+          ${secHead('notifications', 'Уведомления')}
+          ${swRow('notifPush', 'bell', 'Уведомления браузера', esc(permText()), { raw: true })}
+          ${u.role === 'student' ? swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл') : ''}
+          ${u.role === 'student' ? swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Новые занятия вашей группы') : ''}
+          ${swRow('notifExam', 'clipboard', 'Экзамены', 'Когда в онлайн-экзамене открывается комната')}
           ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
-          ${swRow('notifEmail', 'send', 'Email-рассылка', esc(u.email))}
+          ${linkRow('bell', 'Проверить уведомление', esc(t('Показать тестовое уведомление')), 'testNotif')}
+          ${swRow('notifEmail', 'send', 'Email-рассылка', esc(t('Недоступно: на сервере не настроена отправка почты')), { locked: false, raw: true })}
         </section>
 
         <section class="card set-sec" id="set-security">
-          ${secHead('security', 'Безопасность', true)}
-          ${linkRow('lock', 'Сменить пароль', 'Последнее изменение: при регистрации', 'soon')}
-          ${swRow('twoFactor', 'shield', 'Двухфакторная аутентификация', 'Код подтверждения при входе')}
-          ${swRow('loginAlerts', 'bell', 'Оповещать о новом входе', 'Письмо при входе с нового устройства')}
-          ${linkRow('device', 'Активные сеансы', 'Это устройство · сейчас', 'soon')}
+          ${secHead('security', 'Безопасность')}
+          ${linkRow('lock', 'Сменить пароль', esc(srv.passChangedAt ? t('Последнее изменение: {d}', { d: fmtWhen(srv.passChangedAt) }) : t('Последнее изменение: при регистрации')), 'password')}
+          ${linkRow('shield', 'Двухфакторная аутентификация', esc(srv.twoFactor ? t('Включена · код из приложения при входе') : t('Выключена · код из приложения при входе')), 'twofa')}
+          ${swRow('loginAlerts', 'bell', 'Оповещать о новом входе', 'Уведомление в портале при входе с нового устройства')}
+          ${linkRow('device', 'Активные сеансы', esc(t('Устройства, где выполнен вход')), 'sessions')}
         </section>
 
         <section class="card set-sec" id="set-privacy">
-          ${secHead('privacy', 'Конфиденциальность', true)}
-          ${swRow('showInRating', 'chart', 'Показывать меня в рейтинге группы', 'Одногруппники видят ваше место')}
-          ${swRow('showOnline', 'users', 'Статус «в сети»', 'Видно преподавателям и группе')}
-          ${linkRow('download', 'Скачать мои данные', 'Оценки, расписание, профиль', 'soon')}
+          ${secHead('privacy', 'Конфиденциальность')}
+          ${u.role === 'student' ? swRow('showInRating', 'chart', 'Показывать меня в рейтинге группы', 'Если выключить — одногруппники увидят строку без имени') : ''}
+          ${swRow('showOnline', 'users', 'Статус «в сети»', u.role === 'student' ? 'Видно преподавателям и группе' : 'Видно в списках портала')}
+          ${linkRow('download', 'Скачать мои данные', esc(t('Оценки, расписание, профиль')) + ' · JSON', 'export')}
         </section>
 
         <section class="card set-sec" id="set-account">
           ${secHead('account', 'Аккаунт')}
-          ${linkRow('info', 'О приложении', 'KU Portal v1.2', 'about')}
-          ${linkRow('trash', 'Удалить аккаунт', 'Обратитесь в деканат', 'soon', 'danger')}
+          ${linkRow('info', 'О приложении', 'KU Portal v1.3', 'about')}
+          ${linkRow('trash', 'Удалить аккаунт', esc(srv.demo ? t('Тестовый аккаунт удалить нельзя') : t('Безвозвратно, с подтверждением паролем')), 'delete', 'danger')}
           <button class="btn danger-ghost cab-out" id="outBtn">${t('Выйти из аккаунта')}</button>
         </section>
       </div>
@@ -851,7 +1030,7 @@ function viewProfile(section) {
     ${navHTML('profile')}`;
 
   const pb = document.getElementById('pagebody');
-  const rerender = () => { const y = window.scrollY; viewProfile(); window.scrollTo(0, y); };
+  const rerender = () => { const y = window.scrollY; paintProfile(); window.scrollTo(0, y); };
   pb.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { setPref('mode', b.dataset.mode); rerender(); }));
   pb.querySelectorAll('[data-pal]').forEach((b) => (b.onclick = () => { setPref('palette', b.dataset.pal); rerender(); }));
   pb.querySelectorAll('[data-seg]').forEach((b) => (b.onclick = () => {
@@ -859,15 +1038,30 @@ function viewProfile(section) {
     else setPref(b.dataset.seg, b.dataset.v);
     rerender();
   }));
-  pb.querySelectorAll('[data-sw]').forEach((b) => (b.onclick = () => {
-    const on = !b.classList.contains('on');
-    b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
-    setPref(b.dataset.sw, on);
+  pb.querySelectorAll('[data-sw]').forEach((b) => (b.onclick = async () => {
+    if (b.disabled) return;
+    const key = b.dataset.sw, on = !b.classList.contains('on');
+    const paint = (v) => { b.classList.toggle('on', v); b.setAttribute('aria-checked', String(v)); };
+    if (key === 'notifPush' && on && !(await askNotifPermission())) { rerender(); return; }
+    paint(on);
+    if (SRV_KEYS.includes(key)) {
+      try { SRV.settings = (await api('/settings', { method: 'POST', body: { [key]: on } })).settings; }
+      catch (e) { paint(!on); toast(e.message, true); }
+    } else {
+      setPref(key, on);
+      if (key === 'notifPush') rerender();
+      if (key === 'notifExam' && on) { NOTIF.examOpen = null; pollExams(); }
+    }
   }));
   pb.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     const a = b.dataset.act;
-    if (a === 'about') toast('KU Portal v1.2 · ' + pr.name);
-    else toast(t('Скоро будет доступно'));
+    if (a === 'about') toast('KU Portal v1.3 · ' + pr.name);
+    else if (a === 'testNotif') testNotif();
+    else if (a === 'password') changePasswordDlg(rerender);
+    else if (a === 'twofa') twoFactorDlg(rerender);
+    else if (a === 'sessions') sessionsDlg();
+    else if (a === 'export') exportData();
+    else if (a === 'delete') deleteAccountDlg();
   }));
   // оглавление: плавный переход к разделу без перерисовки страницы
   pb.querySelectorAll('[data-sec]').forEach((a) => (a.onclick = (e) => {
@@ -882,9 +1076,118 @@ function viewProfile(section) {
   document.getElementById('outBtn').onclick = logout;
   if (section) { const el = document.getElementById('set-' + section); if (el) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); }
 }
+
+/* ---------- Диалоги раздела «Безопасность» / «Конфиденциальность» / «Аккаунт» ---------- */
+const formErr = (box, m) => { const e = box.querySelector('.err'); if (e) e.textContent = m || ''; };
+function changePasswordDlg(done) {
+  modal(t('Сменить пароль'), `
+    <input class="inp" id="pwCur" type="password" autocomplete="current-password" placeholder="${t('Текущий пароль')}">
+    <input class="inp" id="pwNew" type="password" autocomplete="new-password" placeholder="${t('Новый пароль (мин. 4 символа)')}">
+    <input class="inp" id="pwNew2" type="password" autocomplete="new-password" placeholder="${t('Повторите новый пароль')}">
+    <div class="tx">${t('После смены пароля вход на других устройствах будет завершён.')}</div>
+    <div class="err"></div>
+    <button class="btn pri" id="pwSave">${t('Сохранить')}</button>`, (box, close) => {
+    box.querySelector('#pwSave').onclick = async () => {
+      const cur = box.querySelector('#pwCur').value, nx = box.querySelector('#pwNew').value;
+      if (nx !== box.querySelector('#pwNew2').value) return formErr(box, t('Пароли не совпадают'));
+      try {
+        const d = await api('/auth/password', { method: 'POST', body: { current: cur, next: nx } });
+        if (SRV) SRV.passChangedAt = d.passChangedAt;
+        close(); toast(t('Пароль изменён')); done && done();
+      } catch (e) { formErr(box, e.message); }
+    };
+  });
+}
+function twoFactorDlg(done) {
+  if (SRV && SRV.twoFactor) {
+    return modal(t('Двухфакторная аутентификация'), `
+      <div class="tx">${t('Чтобы выключить, введите пароль от аккаунта.')}</div>
+      <input class="inp" id="tfPass" type="password" autocomplete="current-password" placeholder="${t('Пароль')}">
+      <div class="err"></div>
+      <button class="btn danger-ghost" id="tfOff">${t('Выключить')}</button>`, (box, close) => {
+      box.querySelector('#tfOff').onclick = async () => {
+        try { await api('/2fa/disable', { method: 'POST', body: { password: box.querySelector('#tfPass').value } }); SRV.twoFactor = false; close(); toast(t('Двухфакторная аутентификация выключена')); done && done(); }
+        catch (e) { formErr(box, e.message); }
+      };
+    });
+  }
+  modal(t('Двухфакторная аутентификация'), `<div class="load">${t('Загрузка…')}</div>`, async (box, close) => {
+    try {
+      const d = await api('/2fa/setup', { method: 'POST', body: {} });
+      box.innerHTML = `
+        <ol class="tf-steps">
+          <li>${t('Установите приложение-аутентификатор: Google Authenticator, Microsoft Authenticator, Aegis и т.п.')}</li>
+          <li>${t('Добавьте аккаунт по ключу (ввести вручную) или откройте ссылку на телефоне:')}
+            <div class="tf-key" id="tfKey">${esc(d.secret.replace(/(.{4})/g, '$1 ').trim())}</div>
+            <div class="row2"><button class="btn ghost" id="tfCopy">${t('Скопировать ключ')}</button><a class="btn ghost" href="${esc(d.uri)}">${t('Открыть в приложении')}</a></div></li>
+          <li>${t('Введите 6-значный код из приложения:')}</li>
+        </ol>
+        <input class="inp" id="tfCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+        <div class="err"></div>
+        <button class="btn pri" id="tfOn">${t('Включить')}</button>`;
+      box.querySelector('#tfCopy').onclick = () => { try { navigator.clipboard.writeText(d.secret); toast(t('Ключ скопирован')); } catch { } };
+      const on = async () => {
+        try { await api('/2fa/enable', { method: 'POST', body: { code: box.querySelector('#tfCode').value } }); SRV.twoFactor = true; close(); toast(t('Двухфакторная аутентификация включена')); done && done(); }
+        catch (e) { formErr(box, e.message); }
+      };
+      box.querySelector('#tfOn').onclick = on;
+      box.querySelector('#tfCode').onkeydown = (e) => { if (e.key === 'Enter') on(); };
+    } catch (e) { box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  });
+}
+function sessionsDlg() {
+  modal(t('Активные сеансы'), `<div class="load">${t('Загрузка…')}</div>`, async function paint(box) {
+    try {
+      const d = await api('/sessions');
+      const others = d.items.filter((x) => !x.current).length + (d.legacy || 0);
+      box.innerHTML = `<div class="sess">${d.items.map((x) => `
+        <div class="sess-it">
+          <span class="sr-ic">${svg('device')}</span>
+          <div class="sr-t"><b>${esc(x.device || t('Неизвестное устройство'))}${x.current ? ` <span class="pill">${t('Это устройство')}</span>` : ''}</b>
+            <span class="tx">${esc([x.ip, t('активность: {d}', { d: fmtWhen(x.lastSeen) })].filter(Boolean).join(' · '))}</span></div>
+          ${x.current ? '' : `<button class="btn ghost sm" data-rv="${esc(x.sid)}">${t('Завершить')}</button>`}
+        </div>`).join('')}</div>
+        ${d.legacy ? `<div class="tx">${t('Ещё сеансов без сведений об устройстве: {n}', { n: d.legacy })}</div>` : ''}
+        ${others ? `<button class="btn danger-ghost" id="rvAll" style="margin-top:10px">${t('Завершить все другие сеансы')}</button>` : `<div class="tx" style="margin-top:8px">${t('Других активных сеансов нет.')}</div>`}`;
+      box.querySelectorAll('[data-rv]').forEach((b) => (b.onclick = async () => { try { await api('/sessions/revoke', { method: 'POST', body: { sid: b.dataset.rv } }); toast(t('Сеанс завершён')); paint(box); } catch (e) { toast(e.message, true); } }));
+      const all = box.querySelector('#rvAll');
+      if (all) all.onclick = async () => { try { const r = await api('/sessions/revoke', { method: 'POST', body: { all: true } }); toast(t('Завершено сеансов: {n}', { n: r.revoked })); paint(box); } catch (e) { toast(e.message, true); } };
+    } catch (e) { box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  });
+}
+async function exportData() {
+  try {
+    const r = await fetch('/api/export', { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!r.ok) throw new Error(t('Не удалось скачать данные'));
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `ku-portal-${S.user.id}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast(t('Файл с данными скачан'));
+  } catch (e) { toast(e.message, true); }
+}
+function deleteAccountDlg() {
+  if (SRV && SRV.demo) return toast(t('Тестовый аккаунт удалить нельзя'), true);
+  modal(t('Удалить аккаунт'), `
+    <div class="tx">${t('Аккаунт, оценки и настройки будут удалены безвозвратно. Для подтверждения введите пароль.')}</div>
+    <input class="inp" id="delPass" type="password" autocomplete="current-password" placeholder="${t('Пароль')}">
+    <div class="err"></div>
+    <button class="btn danger-ghost" id="delGo">${t('Удалить навсегда')}</button>`, (box, close) => {
+    box.querySelector('#delGo').onclick = async () => {
+      try {
+        await api('/account/delete', { method: 'POST', body: { password: box.querySelector('#delPass').value } });
+        close();
+        try { localStorage.removeItem(prefsKey()); localStorage.removeItem('ku_theme'); } catch { }
+        localStorage.removeItem('ku_token'); S.token = null; S.user = null; SRV = null; stopNotif();
+        toast(t('Аккаунт удалён')); goHome();
+      } catch (e) { formErr(box, e.message); }
+    };
+  });
+}
 async function logout() {
   try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
-  localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
+  localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; stopNotif(); goHome();
 }
 
 /* ============================ Заглушки ============================ */
@@ -899,7 +1202,8 @@ function viewStub(name) {
 function route() {
   stopPoll();
   applyTheme(); // цвета пользователя; до входа и после выхода — KU
-  if (!S.user) return viewAuth();
+  if (!S.user) { stopNotif(); return viewAuth(); }
+  startNotif();
   const h = location.hash.replace(/^#\/?/, '');
   const parts = h.split('/').filter(Boolean);
   switch (parts[0]) {
