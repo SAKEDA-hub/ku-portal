@@ -18,11 +18,13 @@
 - Переход портал → экзамены: `/exam-sync/?from=ku-portal&back=<адрес портала>/#/exam`. Сайт экзаменов запоминает `back` на сессию вкладки, убирает параметры из адреса и показывает кнопку «KU Portal». `back` принимается только http(s) и только с того же хоста, хостов портала на Render, localhost или локальной сети (`KU_HOSTS`, `kuHostOk` в `exam-sync/index.html`).
 - Вход в онлайн-экзамен отдельный от портала (свои аккаунты exam-sync).
 
-## Цвета университета (программа пользователя)
+## Темы и настройки
 
-- `user.program` — `'ku'` (по умолчанию) или `'arizona'`; задаётся при регистрации, отдаётся в `pubUser`. Демо-преподаватель — `arizona` (`DEMO_ACCOUNTS`, `syncDemoPrograms()` проставляет и в старой базе).
-- Фронтенд: `PROGRAMS`, `programOf()`, `applyProgramTheme()` в `public/app.js` (вызывается в `route()`), палитра `:root[data-theme="arizona"]` в `public/style.css`. Новые цвета — только через переменные, обе палитры должны их определять.
-- Онлайн-экзамен получает `theme=intl|incampus` в адресе перехода и хранит её в `sessionStorage` (`edu-theme-ku`), чтобы вкладки разных пользователей в одном браузере не перекрашивали друг друга.
+- Портал: `PALETTES`, `MODES`, `getPrefs()/setPref()` (localStorage `ku_prefs:<userId>`), `resolvedTheme()`, `applyTheme()` (вызывается в `route()`), экраны `viewProfile()` (личный кабинет с плитками) и `viewSettings(section)` (`#/settings`, `#/settings/<раздел>`). На `<html>`: `data-palette` (кроме `ku`) и `data-mode="dark"`. Палитры и тёмный режим — блоки `:root[data-palette=…]` и `:root[data-mode="dark"]` в `public/style.css`; новые цвета — только через переменные (включая `--nav-bg`, `--tab-bg`, `--toast-bg` и т.п.). Ранний скрипт в `index.html` применяет тему до загрузки app.js.
+- «Авто» = палитра программы: `user.program` — `'ku'` (по умолчанию) или `'arizona'`; задаётся при регистрации, отдаётся в `pubUser`. Демо-преподаватель — `arizona` (`DEMO_ACCOUNTS`, `syncDemoPrograms()`).
+- Онлайн-экзамен: тема = цвет (`incampus` | `intl`) × режим (`auto` | `light` | `dark` | `system`), итог в `data-theme`: `incampus`, `incampus-light`, `intl`, `intl-dark` (`eduThemeOf()` в раннем скрипте, `applyTheme()/setTheme()/setMode()`). Из портала приходят `theme=` и `mode=` (sessionStorage `edu-theme-ku`/`edu-mode-ku` — на вкладку), ручной выбор — localStorage `edu-theme`/`edu-mode`. Панель настроек — `accountSheet()` → `settingsHTML()`.
+- Переключатели-заглушки (уведомления, безопасность и т.п.) только запоминаются — не выдавать их за работающие.
+- Адаптив портала: `--app-max` 440 → 720 (≥640px) → 1120 (≥1024px, верхнее меню `.bnav`, сетки `.dash`, `.prof-page`, `.set-page`).
 
 ## Проверка после изменений
 

@@ -5,12 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1C1C1E">
 <meta name="color-scheme" content="dark">
-<script>/* Тема: из KU Portal приходит ?from=ku-portal&theme=intl|incampus (по программе пользователя) — хранится на сессию вкладки;
-   иначе — выбор пользователя из localStorage (edu-theme). */
-try{var q=new URLSearchParams(location.search),t=q.get('theme');
-if(q.get('from')==='ku-portal'&&(t==='intl'||t==='incampus'))sessionStorage.setItem('edu-theme-ku',t);
-var th=sessionStorage.getItem('edu-theme-ku')||localStorage.getItem('edu-theme');
-document.documentElement.dataset.theme=th==='intl'?'intl':'incampus'}catch(e){document.documentElement.dataset.theme='incampus'}</script>
+<script>/* Тема = цвет × режим.
+   Цвет: incampus (Kozybayev University) | intl (University of Arizona). Режим: auto (родной: inCampus — тёмный,
+   Arizona — светлый) | light | dark | system. Из KU Portal приходят ?from=ku-portal&theme=<цвет>&mode=<режим> —
+   хранятся на сессию вкладки (sessionStorage), иначе — выбор пользователя (localStorage edu-theme / edu-mode).
+   Итог в data-theme: incampus | incampus-light | intl | intl-dark. */
+window.eduThemeOf=function(c,m){var d=m==='dark'||(m==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)||(m!=='light'&&m!=='system'&&m!=='dark'&&c!=='intl');return c==='intl'?(d?'intl-dark':'intl'):(d?'incampus':'incampus-light')};
+try{var q=new URLSearchParams(location.search),t=q.get('theme'),md=q.get('mode');
+if(q.get('from')==='ku-portal'){if(t==='intl'||t==='incampus')sessionStorage.setItem('edu-theme-ku',t);if(md==='light'||md==='dark'||md==='system')sessionStorage.setItem('edu-mode-ku',md);else sessionStorage.removeItem('edu-mode-ku')}
+var c=sessionStorage.getItem('edu-theme-ku')||localStorage.getItem('edu-theme'),m=sessionStorage.getItem('edu-mode-ku')||localStorage.getItem('edu-mode')||'auto';
+document.documentElement.dataset.theme=eduThemeOf(c==='intl'?'intl':'incampus',m)}catch(e){document.documentElement.dataset.theme='incampus'}</script>
 <title>Онлайн-экзамен</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%2305a4ba'/><path d='M3 10l9-4.5 9 4.5-9 4.5z M7 12v4c2.5 1.8 7.5 1.8 10 0v-4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -64,6 +68,31 @@ document.documentElement.dataset.theme=th==='intl'?'intl':'incampus'}catch(e){do
   --ok-40:rgba(25,169,189,.45);--mid-25:rgba(246,198,25,.35);--low-25:rgba(239,75,81,.35);
   --chip-mid-bg:#FFF5D6;--chip-mid-tx:#B88A00;--chip-mid-bd:#FFF5D6;
   --locked:#323234;--called-bg:rgba(246,198,25,.08);--toast-bg:#F2F2F4;--toast-tx:#141414;
+}}
+/* ===== inCampus, светлый режим: светлая основа + бирюзовые акценты Kozybayev University ===== */
+@media screen{:root[data-theme="incampus-light"]{
+  --ac:#0A8FA2;--ac-h:#07707F;--ac-d:rgba(10,143,162,.10);--ac-dd:#EEF8FA;--on-ac:#FFFFFF;
+  --navy:#0E4F5A;--bar:#19A9BD;--avatar:#F07D00;
+  --ac-20:rgba(10,143,162,.2);--ac-25:rgba(10,143,162,.25);--ac-35:rgba(10,143,162,.35);--ac-40:rgba(10,143,162,.4);
+  --brand-bg:#19A9BD;--brand-fg:#FFFFFF;--brand-tx:#0E4F5A;--badge-bg:#0A8FA2;--avatar-t:#0A8FA2;
+}}
+/* ===== University of Arizona, тёмный режим: тёмно-синие поверхности + акценты Arizona ===== */
+@media screen{:root[data-theme="intl-dark"]{color-scheme:dark;
+  --bg:#0A1424;--s1:#14223A;--s2:#101C31;--s3:#22324D;--line:#22324D;--line2:#33476A;
+  --ac:#4A9FE8;--ac-h:#7AB9F0;--ac-d:rgba(74,159,232,.15);--ac-dd:rgba(74,159,232,.16);--on-ac:#06172E;
+  --navy:#0C234B;--bar:#4A9FE8;--avatar:#AB0520;
+  --tx:#F2F5FA;--tx2:#C5CFDD;--tx3:#93A1B5;
+  --ok:#3FB27F;--ok-d:rgba(63,178,127,.15);
+  --mid:#F2B84B;--mid-d:rgba(242,184,75,.15);
+  --low:#EF5B5F;--low-d:rgba(239,91,95,.15);
+  --top-bg:#0A1424;--nav-bg:#0C234B;--nav-tx:#D5DEEB;--nav-on-tx:#7AB9F0;--nav-ind:#7AB9F0;
+  --brand-bg:#0C234B;--brand-fg:#FFFFFF;--brand-tx:#FFFFFF;--badge-bg:#4A9FE8;--badge-fg:#06172E;
+  --avatar-tx:#FFFFFF;--avatar-t:#4A9FE8;--avatar-t-tx:#06172E;
+  --ctl:#101C31;--bar-bg:#0C234B;--sc-tx:#06172E;--low-h:#D94448;--track:#DCE6F2;--pass-mk:#93A1B5;
+  --ac-20:rgba(74,159,232,.2);--ac-25:rgba(74,159,232,.3);--ac-35:rgba(74,159,232,.4);--ac-40:rgba(74,159,232,.45);
+  --ok-40:rgba(63,178,127,.45);--mid-25:rgba(242,184,75,.35);--low-25:rgba(239,91,95,.35);
+  --chip-mid-bg:#FFF1D6;--chip-mid-tx:#A86F00;--chip-mid-bd:#FFF1D6;
+  --locked:#18283F;--called-bg:rgba(242,184,75,.08);--toast-bg:#E8EEF7;--toast-tx:#0A1424;
 }}
 *{box-sizing:border-box}
 body{overflow-x:clip}
@@ -544,6 +573,53 @@ button.me{border:0;background:none;padding:0;margin:0;color:inherit;text-align:l
 .avatar.sm{width:32px;height:32px;font-size:13px}
 @media (max-width:420px){.brand-t{display:none}.tb-in{gap:6px}}
 /* вход */
+/* ---------- панель настроек (accountSheet): шторка снизу на телефоне, боковая панель справа на ноутбуке ---------- */
+.ov.setp{align-items:flex-end;padding:0}
+.setp-b{background:var(--bg);width:100%;max-height:92vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;box-shadow:0 -6px 30px rgba(0,0,0,.25);transform:translateY(100%);transition:transform .25s cubic-bezier(.2,.8,.2,1)}
+.ov.setp.in .setp-b{transform:none}
+.setp-b>.ov-h{padding:12px 12px 6px;border-bottom:1px solid var(--line);margin:0}
+.setp-b>.ov-h h3{font-size:19px}
+.setp-scroll{overflow-y:auto;padding:12px 14px calc(18px + var(--safe));-webkit-overflow-scrolling:touch}
+.st-me{display:flex;align-items:center;gap:12px;padding:12px;background:var(--s1);border:1px solid var(--line);border-radius:var(--r);margin-bottom:12px}
+.st-me .avatar{width:46px;height:46px;font-size:17px}
+.st-me b{display:block;font-size:17px}.st-me small{color:var(--tx3);font-size:14px}
+.st-sec{background:var(--s1);border:1px solid var(--line);border-radius:var(--r);padding:4px 14px 6px;margin-bottom:12px}
+.st-sec h4{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font-size:16px}
+.st-sec h4 svg.i{width:19px;height:19px;color:var(--ac)}
+.st-lbl{font-size:12.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--tx3);margin:10px 0 8px}
+.st-note{font-size:13.5px;color:var(--tx3);margin:8px 0 2px;line-height:1.4}
+.st-themes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.st-theme{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:8px 8px 10px;border:2px solid var(--line);border-radius:var(--r);background:var(--s2);text-align:left}
+.st-theme b{font-size:14px;line-height:1.25}.st-theme small{font-size:12px;color:var(--tx3);line-height:1.25}
+.st-theme.on{border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-20)}
+.st-prev{display:flex;flex-direction:column;gap:4px;width:100%;height:52px;border-radius:6px;padding:7px;margin-bottom:5px;overflow:hidden}
+.st-prev i{display:block;height:7px;border-radius:4px}.st-prev i:first-child{width:50%}.st-prev i:nth-child(2){width:85%}.st-prev i:nth-child(3){width:65%}
+.st-prev-incampus{background:#1C1C1E}.st-prev-incampus i:first-child{background:#19A9BD}.st-prev-incampus i:not(:first-child){background:#4A4A4D}
+.st-prev-intl{background:#F6F7F8;border-top:10px solid #0C234B}.st-prev-intl i:first-child{background:#006FBF}.st-prev-intl i:not(:first-child){background:#CDD5DC}
+.st-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:var(--s2);border:1px solid var(--line);border-radius:var(--r)}
+.st-seg.three{grid-template-columns:repeat(3,1fr);margin:4px 0 10px}
+.st-seg button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border:0;border-radius:var(--rs);background:none;color:var(--tx2);font-size:12.5px;font-weight:700;line-height:1.2;text-align:center}
+.st-seg button svg.i{width:18px;height:18px}
+.st-seg button.on{background:var(--s1);color:var(--ac);box-shadow:0 1px 4px rgba(0,0,0,.15)}
+.st-row{display:flex;align-items:center;gap:12px;width:100%;padding:11px 0;border:0;border-top:1px solid var(--line);background:none;text-align:left}
+.st-sec h4+.st-row{border-top:0}
+.st-row.link svg.i:last-child{width:18px;height:18px;color:var(--tx3);flex:none}
+.st-row.danger b,.st-row.danger .st-ic{color:var(--low)}
+.st-ic{width:34px;height:34px;border-radius:9px;background:var(--s2);color:var(--tx2);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.st-ic svg.i{width:18px;height:18px}
+.st-t{flex:1;min-width:0;display:flex;flex-direction:column}
+.st-t b{font-size:15px;font-weight:700;line-height:1.3}.st-t small{font-size:13px;color:var(--tx3)}
+.st-sw{position:relative;width:46px;height:28px;border-radius:14px;border:0;background:var(--line2);flex:none;transition:background .2s}
+.st-sw i{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
+.st-sw.on{background:var(--ac)}.st-sw.on i{transform:translateX(18px)}
+.st-sw:disabled{opacity:.55;cursor:default}
+@media (hover:hover){.st-theme:hover{border-color:var(--line2)}.st-row.link:hover b{color:var(--ac)}}
+@media (min-width:700px){
+  .ov.setp{justify-content:flex-end;align-items:stretch}
+  .setp-b{width:440px;max-width:100%;max-height:none;height:100%;border-radius:0;transform:translateX(100%);box-shadow:-8px 0 32px rgba(0,0,0,.25)}
+}
+@media (max-width:360px){.st-seg button span{font-size:11px}.st-themes{gap:6px}}
+@media (prefers-reduced-motion:reduce){.setp-b,.st-sw i{transition:none}}
 /* возврат в KU Portal (см. KU_BACK) */
 .ku-back{display:inline-flex;align-items:center;gap:4px;height:36px;padding:0 10px 0 6px;border-radius:var(--rs);background:var(--ac-dd);color:var(--ac);font-weight:700;font-size:14px;text-decoration:none;white-space:nowrap;flex:none}
 .ku-back:hover{background:var(--ac-d);color:var(--ac-h)}
@@ -775,32 +851,126 @@ function setLang(l){
   applyLang(); render();
   const b = document.querySelector(`.lang [data-l="${l}"]`); if(b) b.focus({preventScroll:true});
 }
-/* ---------- оформление: «Международный кампус» / «inCampus» (меняются только цвета) ---------- */
-const THEME_KEY = 'edu-theme', THEMES = ['intl', 'incampus'];
-let THEME = document.documentElement.dataset.theme === 'intl' ? 'intl' : 'incampus'; // по умолчанию inCampus
-const themeName = t => t === 'intl' ? L('Международный кампус', 'International Campus', 'Халықаралық кампус') : 'inCampus';
+/* ---------- оформление: цвет (inCampus / Arizona) × режим (авто / светлый / тёмный / системный) ---------- */
+const THEME_KEY = 'edu-theme', MODE_KEY = 'edu-mode', THEMES = ['incampus', 'intl'], MODES = ['auto', 'light', 'dark', 'system'];
+const ssGet = k => { try{ return sessionStorage.getItem(k); }catch(e){ return null; } };
+const lsGet = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+let COLOR = (ssGet('edu-theme-ku') || lsGet(THEME_KEY)) === 'intl' ? 'intl' : 'incampus';
+let MODE = (() => { const m = ssGet('edu-mode-ku') || lsGet(MODE_KEY); return MODES.includes(m) ? m : 'auto'; })();
+let THEME = document.documentElement.dataset.theme || 'incampus'; // итоговая тема: incampus | incampus-light | intl | intl-dark
+const themeName = t => t === 'intl' ? L('University of Arizona', 'University of Arizona', 'University of Arizona') : 'inCampus · Kozybayev';
+const modeName = m => ({ auto: L('Авто', 'Auto', 'Авто'), light: L('Светлая', 'Light', 'Ашық'), dark: L('Тёмная', 'Dark', 'Қараңғы'), system: L('Как в системе', 'System', 'Жүйедегідей') })[m];
+const isDark = () => THEME === 'incampus' || THEME === 'intl-dark';
 function applyTheme(){
+  THEME = window.eduThemeOf(COLOR, MODE);
   const r = document.documentElement; r.dataset.theme = THEME;
   const tc = document.querySelector('meta[name="theme-color"]'), cs = document.querySelector('meta[name="color-scheme"]');
   if(tc) tc.content = getComputedStyle(r).getPropertyValue('--top-bg').trim() || '#FFFFFF';
-  if(cs) cs.content = THEME === 'incampus' ? 'dark' : 'light';
+  if(cs) cs.content = isDark() ? 'dark' : 'light';
 }
+/* ручной выбор важнее темы, пришедшей из портала */
 function setTheme(t){
-  if(!THEMES.includes(t) || t === THEME) return;
-  THEME = t; try{ localStorage.setItem(THEME_KEY, t); sessionStorage.removeItem('edu-theme-ku'); }catch(e){}
-  applyTheme(); render(); toast(L('Оформление: ', 'Theme: ', 'Безендіру: ') + themeName(t));
+  if(!THEMES.includes(t) || t === COLOR) return;
+  COLOR = t; try{ localStorage.setItem(THEME_KEY, t); sessionStorage.removeItem('edu-theme-ku'); }catch(e){}
+  applyTheme(); render(); refreshSettings();
 }
-function themeSheet(){
-  sheet(L('Сменить оформление', 'Change theme', 'Безендіруді өзгерту'), THEMES.map(t => ({ icon: t === THEME ? 'radio' : 'circle', label: themeName(t), fn: () => setTheme(t) })));
+function setMode(m){
+  if(!MODES.includes(m) || m === MODE) return;
+  MODE = m; try{ localStorage.setItem(MODE_KEY, m); sessionStorage.removeItem('edu-mode-ku'); }catch(e){}
+  applyTheme(); render(); refreshSettings();
+}
+if(window.matchMedia){ const mq = matchMedia('(prefers-color-scheme: dark)'); const f = () => { if(MODE === 'system'){ applyTheme(); render(); refreshSettings(); } }; mq.addEventListener ? mq.addEventListener('change', f) : mq.addListener && mq.addListener(f); }
+
+/* ---------- настройки (панель по клику на аватар) ----------
+   Работают: цвет, режим, язык, выход. Остальные переключатели запоминаются для пользователя в этом браузере,
+   но пока ни на что не влияют — это заготовки. */
+const PREF_DEF = { sndCall:true, remindStart:true, mailResults:false, showTimer:true, confirmSubmit:true, autosave:true, bigText:false, contrast:false, lessMotion:false };
+const prefKey = () => 'edu-prefs:' + (ME ? ME.id : 'guest');
+function prefsGet(){ try{ return Object.assign({}, PREF_DEF, JSON.parse(localStorage.getItem(prefKey()) || '{}')); }catch(e){ return Object.assign({}, PREF_DEF); } }
+function prefSet(k, v){ const p = prefsGet(); p[k] = v; try{ localStorage.setItem(prefKey(), JSON.stringify(p)); }catch(e){} }
+let SET_OV = null;
+function setRowSw(k, icon, title, sub, o = {}){
+  const on = !!prefsGet()[k];
+  return `<div class="st-row"><span class="st-ic">${ico(icon)}</span><span class="st-t"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
+    <button class="st-sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(title)}" data-sw="${k}" ${o.locked ? 'disabled' : ''}><i></i></button></div>`;
+}
+function settingsHTML(){
+  const u = ME;
+  const colorCard = (t, sw, sub) => `<button class="st-theme ${COLOR === t ? 'on' : ''}" data-color="${t}" role="radio" aria-checked="${COLOR === t}">
+      <span class="st-prev st-prev-${t}"><i></i><i></i><i></i></span><b>${esc(themeName(t))}</b><small>${esc(sub)}</small></button>`;
+  return `<div class="setp-b" role="dialog" aria-modal="true" aria-labelledby="st-h">
+    <div class="ov-h"><button class="xclose" data-close aria-label="${L('Закрыть', 'Close', 'Жабу')}">${ico('backc')}</button><h3 id="st-h">${L('Настройки', 'Settings', 'Баптаулар')}</h3></div>
+    <div class="setp-scroll">
+      <div class="st-me"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span><b>${esc(u.name)}</b><small>${roleName(u)} · ${esc(u.login)}</small></span></div>
+
+      <section class="st-sec"><h4>${ico('palette')}${L('Оформление', 'Appearance', 'Безендіру')}</h4>
+        <div class="st-lbl">${L('Цвет', 'Color', 'Түс')}</div>
+        <div class="st-themes" role="radiogroup">${colorCard('incampus', '#19A9BD', 'Kozybayev University')}${colorCard('intl', '#0C234B', L('Международный кампус', 'International Campus', 'Халықаралық кампус'))}</div>
+        <div class="st-lbl">${L('Тема', 'Mode', 'Тақырып')}</div>
+        <div class="st-seg" role="radiogroup">${MODES.map(m => `<button class="${MODE === m ? 'on' : ''}" data-mode="${m}" role="radio" aria-checked="${MODE === m}">${ico(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : m === 'system' ? 'monitor' : 'palette')}<span>${esc(modeName(m))}</span></button>`).join('')}</div>
+        <p class="st-note">${L('«Авто» — родная тема цвета: inCampus тёмная, University of Arizona светлая.', '“Auto” uses the native look: inCampus is dark, University of Arizona is light.', '«Авто» — түстің өз тақырыбы: inCampus қараңғы, University of Arizona ашық.')}</p>
+        ${setRowSw('bigText', 'txt', L('Крупный шрифт', 'Larger text', 'Үлкен қаріп'), '')}
+        ${setRowSw('contrast', 'contrast', L('Высокая контрастность', 'High contrast', 'Жоғары контраст'), '')}
+        ${setRowSw('lessMotion', 'motion', L('Меньше анимации', 'Reduce motion', 'Анимацияны азайту'), '')}
+      </section>
+
+      <section class="st-sec"><h4>${ico('globe')}${L('Язык', 'Language', 'Тіл')}</h4>
+        <div class="st-seg three" role="radiogroup">${[['ru', 'Русский'], ['en', 'English'], ['kk', 'Қазақша']].map(([k, n]) => `<button class="${LANG === k ? 'on' : ''}" data-lang="${k}" role="radio" aria-checked="${LANG === k}"><span>${n}</span></button>`).join('')}</div>
+      </section>
+
+      <section class="st-sec"><h4>${ico('bell')}${L('Уведомления', 'Notifications', 'Хабарландырулар')}</h4>
+        ${setRowSw('sndCall', 'mic', L('Звук при вызове на speaking', 'Sound when called to speaking', 'Speaking-ке шақырғанда дыбыс'), L('Сигнал и вибрация', 'Sound and vibration', 'Дыбыс пен діріл'))}
+        ${setRowSw('remindStart', 'clock', L('Напоминание о начале экзамена', 'Exam start reminder', 'Емтихан басталуы туралы еске салу'), L('За 15 минут', '15 minutes before', '15 минут бұрын'))}
+        ${setRowSw('mailResults', 'mail', L('Результаты на почту', 'Email results', 'Нәтижелер поштаға'), '')}
+      </section>
+
+      <section class="st-sec"><h4>${ico('timer')}${L('Экзамен', 'Exam', 'Емтихан')}</h4>
+        ${setRowSw('showTimer', 'clock', L('Показывать таймер', 'Show timer', 'Таймерді көрсету'), L('Оставшееся время теста', 'Time left in the test', 'Тестке қалған уақыт'))}
+        ${setRowSw('confirmSubmit', 'check', L('Подтверждать отправку', 'Confirm before submitting', 'Жіберуді растау'), '')}
+        ${setRowSw('autosave', 'save', L('Автосохранение ответов', 'Autosave answers', 'Жауаптарды автосақтау'), L('Всегда включено', 'Always on', 'Әрқашан қосулы'), { locked:true })}
+      </section>
+
+      <section class="st-sec"><h4>${ico('shield')}${L('Аккаунт', 'Account', 'Аккаунт')}</h4>
+        <button class="st-row link" data-st="soon"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту')}</b></span>${ico('chev')}</button>
+        <button class="st-row link danger" data-st="logout"><span class="st-ic">${ico('logout')}</span><span class="st-t"><b>${L('Выйти', 'Log out', 'Шығу')}</b></span></button>
+      </section>
+    </div></div>`;
+}
+function bindSettings(ov){
+  ov.querySelectorAll('[data-color]').forEach(b => b.onclick = () => setTheme(b.dataset.color));
+  ov.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  ov.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { setLang(b.dataset.lang); refreshSettings(); });
+  ov.querySelectorAll('[data-sw]').forEach(b => b.onclick = () => { const on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); prefSet(b.dataset.sw, on); });
+  ov.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
+    if(b.dataset.st === 'logout'){ ov._close(); setTimeout(() => ACT.logout(), 220); }
+    else toast(L('Скоро будет доступно', 'Coming soon', 'Жақында қолжетімді болады'));
+  });
+}
+function refreshSettings(){
+  if(!SET_OV || SET_OV._closed || !ME) return;
+  const sc = SET_OV.querySelector('.setp-scroll'), y = sc ? sc.scrollTop : 0;
+  SET_OV.innerHTML = settingsHTML(); bindSettings(SET_OV);
+  const sc2 = SET_OV.querySelector('.setp-scroll'); if(sc2) sc2.scrollTop = y;
 }
 function accountSheet(){
-  sheet(L('Настройки аккаунта', 'Account settings', 'Аккаунт баптаулары'), [
-    { icon:'palette', label:L('Сменить оформление', 'Change theme', 'Безендіруді өзгерту'), fn: () => setTimeout(themeSheet, 220) },
-    { icon:'logout', label:L('Выйти', 'Log out', 'Шығу'), fn: () => ACT.logout() }
-  ]);
+  if(!ME) return;
+  SET_OV = overlay(settingsHTML(), 'setp');
+  bindSettings(SET_OV);
+  setTimeout(() => { const f = SET_OV.querySelector('.st-theme.on'); if(f) f.focus({preventScroll:true}); }, 30);
 }
 /* ---------- иконки (outline) ---------- */
 const IC = {
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.4 7.4 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1 2-3.4z"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  moon:'<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  monitor:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>',
+  txt:'<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
+  contrast:'<circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/>',
+  motion:'<path d="M4 12h3M17 12h3M12 4v3M12 17v3"/><circle cx="12" cy="12" r="3"/>',
+  timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9.5 2.5h5"/>',
+  shield:'<path d="M12 3 5 6v5.5c0 4.4 3 8 7 9.5 4-1.5 7-5.1 7-9.5V6z"/>',
+  chev:'<path d="M9 5.5 15.5 12 9 18.5"/>',
   home:'<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
   tests:'<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8.5 10l1.5 1.5 3-3"/><path d="M8.5 16l1.5 1.5 3-3"/><path d="M15 10.5h1.5M15 16.5h1.5"/>',
   edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
@@ -1302,7 +1472,8 @@ function renderTop(){
     ${u ? `<button class="tb-ib" data-act="tab" data-v="exam" aria-label="${L('На главную', 'Home', 'Басты бетке')}" title="${L('На главную', 'Home', 'Басты бетке')}">${ico('home')}</button><span class="tb-sep" aria-hidden="true"></span>` : ''}
     <span class="brand"><span class="brand-ic">${ico('cap')}</span><span class="brand-t">${L('Онлайн-экзамен', 'Online Exam', 'Онлайн емтихан')}</span></span>
     <span class="grow"></span>${langSwitch()}
-    ${u ? `<span class="tb-sep hide-s" aria-hidden="true"></span><button class="me" data-act="account" title="${L('Настройки аккаунта', 'Account settings', 'Аккаунт баптаулары')}" aria-label="${L('Настройки аккаунта', 'Account settings', 'Аккаунт баптаулары')}: ${esc(u.name)} · ${roleName(u)}"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span class="me-t"><b>${esc(u.name)}</b><small>${roleName(u)}</small></span></button>
+    ${u ? `<span class="tb-sep hide-s" aria-hidden="true"></span><button class="me" data-act="account" title="${L('Личный кабинет и настройки', 'Profile and settings', 'Жеке кабинет және баптаулар')}" aria-label="${L('Личный кабинет и настройки', 'Profile and settings', 'Жеке кабинет және баптаулар')}: ${esc(u.name)} · ${roleName(u)}"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span class="me-t"><b>${esc(u.name)}</b><small>${roleName(u)}</small></span></button>
+      <button class="tb-ib" data-act="account" aria-label="${L('Настройки', 'Settings', 'Баптаулар')}" title="${L('Настройки', 'Settings', 'Баптаулар')}">${ico('gear')}</button>
       <button class="tb-ib" data-act="logout" aria-label="${L('Выйти', 'Log out', 'Шығу')}" title="${L('Выйти', 'Log out', 'Шығу')}">${ico('logout')}</button>` : ''}</div>`;
 }
 /* виджет в стиле Brightspace: белая панель с заголовком */
@@ -2470,7 +2641,7 @@ window.addEventListener('storage', e => {
     const d = loadDB(); if(!d) return; D = d;
     if(ME){ const u = userById(ME.id); if(!u){ doLogout(); toast(L('Ваш аккаунт удалён', 'Your account was deleted', 'Сіздің аккаунтыңыз жойылды')); return; } ME = u; }
     if(LIVE[S.view] || S.view === 'login'){ if(fieldFocused() || document.querySelector('.ov')) S.syncPending = true; else render(); }
-  } else if(e.key === THEME_KEY && !(()=>{ try{ return sessionStorage.getItem('edu-theme-ku'); }catch(x){ return null; } })()){ const t = e.newValue === 'intl' ? 'intl' : 'incampus'; if(t !== THEME){ THEME = t; applyTheme(); render(); } }
+  } else if((e.key === THEME_KEY || e.key === MODE_KEY) && !ssGet('edu-theme-ku') && !ssGet('edu-mode-ku')){ COLOR = lsGet(THEME_KEY) === 'intl' ? 'intl' : 'incampus'; const m = lsGet(MODE_KEY); MODE = MODES.includes(m) ? m : 'auto'; applyTheme(); render(); refreshSettings(); }
   else if(e.key === GA_KEY && S.view === 'grade' && !document.querySelector('.ov')) render();
 });
 setInterval(() => { tick(); if(S.syncPending && !fieldFocused() && !document.querySelector('.ov')) render(); }, 1000);

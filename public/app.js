@@ -33,6 +33,19 @@ const I = {
   pause: '<path d="M9 5.5v13M15 5.5v13"/>',
   play: '<path d="M7.5 5.2v13.6L18.5 12z"/>',
   speaker: '<path d="M4 10v4h3.5l5 4.5v-13L7.5 10z"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.6 6.5a7.8 7.8 0 0 1 0 11"/>',
+  gear: '<circle cx="12" cy="12" r="3.1"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.4 7.4 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1 2-3.4z"/>',
+  shield: '<path d="M12 3.2 5 6v5.6c0 4.3 3 7.9 7 9.2 4-1.3 7-4.9 7-9.2V6z"/><path d="m9 12 2.2 2.2L15.3 10"/>',
+  globe: '<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.3 2.4 3.4 5.3 3.4 8.6s-1.1 6.2-3.4 8.6c-2.3-2.4-3.4-5.3-3.4-8.6s1.1-6.2 3.4-8.6z"/>',
+  palette: '<path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.8 0-1 .8-1.6 1.8-1.6h2c2.2 0 3.9-1.7 3.9-3.9 0-3.9-3.8-7-8.5-7z"/><circle cx="7.6" cy="11.3" r="1.1"/><circle cx="10.4" cy="7.6" r="1.1"/><circle cx="15" cy="7.9" r="1.1"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.3 10.5V7.8a3.7 3.7 0 0 1 7.4 0v2.7"/>',
+  eye: '<path d="M2.8 12S6.2 5.8 12 5.8 21.2 12 21.2 12 17.8 18.2 12 18.2 2.8 12 2.8 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  help: '<circle cx="12" cy="12" r="8.6"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.6 2.3c-.8.4-1.2 1-1.2 1.9M12 16.6v.01"/>',
+  sun: '<circle cx="12" cy="12" r="3.8"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4"/>',
+  moon: '<path d="M19.5 14.6A7.6 7.6 0 0 1 9.4 4.5a7.6 7.6 0 1 0 10.1 10.1z"/>',
+  device: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/>',
+  type: '<path d="M4.5 6.5v-2h15v2M12 4.5v15M9 19.5h6"/>',
+  download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>',
+  trash: '<path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2c.1.8.7 1.3 1.5 1.3h6.2c.8 0 1.4-.5 1.5-1.3L17.5 7"/>',
   cap: '<path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.6v4.2c2.9 2.3 8.1 2.3 11 0v-4.2M21.5 9.5v5"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
 };
@@ -73,29 +86,74 @@ async function api(path, o) {
   return j;
 }
 
-/* ------------------------- Программа и цвета университета ------------------------- */
+/* ------------------------- Программа, цвета и тема ------------------------- */
 /* У пользователя есть программа: Kozybayev University или международная программа University of Arizona.
-   От неё автоматически зависят цвета портала (data-theme на <html>, палитры в style.css)
-   и тема онлайн-экзамена (inCampus / «Международный кампус»), см. examLaunchUrl(). */
+   Цвет сайта по умолчанию («Авто») берётся из программы; в «Настройках» можно выбрать другой цвет
+   и режим — светлый / тёмный / как в системе. На <html>: data-palette (палитра) и data-mode="dark".
+   Онлайн-экзамен получает цвет программы (inCampus / «Международный кампус») и выбранный режим, см. examLaunchUrl(). */
 const PROGRAMS = {
-  ku: { id: 'ku', name: 'Kozybayev University', short: 'Kozybayev University', icon: 'logo', theme: '', themeColor: '#05a4ba', examTheme: 'incampus' },
-  arizona: { id: 'arizona', name: 'University of Arizona', short: 'University of Arizona · международная программа', icon: 'cap', theme: 'arizona', themeColor: '#0C234B', examTheme: 'intl' },
+  ku: { id: 'ku', name: 'Kozybayev University', short: 'Kozybayev University', icon: 'logo', palette: 'ku', examTheme: 'incampus' },
+  arizona: { id: 'arizona', name: 'University of Arizona', short: 'University of Arizona · международная программа', icon: 'cap', palette: 'arizona', examTheme: 'intl' },
 };
 const programOf = (u) => PROGRAMS[(u && u.program) || 'ku'] || PROGRAMS.ku;
-function applyProgramTheme(u) {
-  const pr = programOf(u);
+const PALETTES = {
+  ku: { name: 'Kozybayev', color: '#05a4ba' },
+  arizona: { name: 'Arizona', color: '#0C234B' },
+  emerald: { name: 'Изумрудный', color: '#1f9d6b' },
+  violet: { name: 'Фиолетовый', color: '#6d4bd8' },
+  coral: { name: 'Коралловый', color: '#e0603f' },
+  graphite: { name: 'Графит', color: '#3f4a56' },
+};
+const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как в системе' };
+
+/* Настройки хранятся в браузере отдельно для каждого пользователя */
+const PREF_DEFAULTS = {
+  palette: 'auto', mode: 'light', fontSize: 'md', lang: 'ru', reduceMotion: false, compact: false,
+  notifPush: true, notifGrades: true, notifSchedule: true, notifExam: true, notifEmail: false, notifSound: true,
+  twoFactor: false, showInRating: true, showOnline: true, loginAlerts: true,
+};
+const prefsKey = () => 'ku_prefs:' + (S.user ? S.user.id : 'guest');
+function getPrefs() {
+  try { return Object.assign({}, PREF_DEFAULTS, JSON.parse(localStorage.getItem(prefsKey()) || '{}')); } catch { return Object.assign({}, PREF_DEFAULTS); }
+}
+function setPref(key, val) {
+  const p = getPrefs(); p[key] = val;
+  try { localStorage.setItem(prefsKey(), JSON.stringify(p)); } catch { }
+  if (key === 'palette' || key === 'mode') applyTheme();
+}
+const sysDark = () => !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+function resolvedTheme() {
+  if (!S.user) return { palette: 'ku', dark: false };
+  const p = getPrefs();
+  const palette = p.palette === 'auto' || !PALETTES[p.palette] ? programOf(S.user).palette : p.palette;
+  const dark = p.mode === 'dark' || (p.mode === 'system' && sysDark());
+  return { palette, dark, mode: p.mode };
+}
+function applyTheme() {
+  const t = resolvedTheme();
   const root = document.documentElement;
-  if (pr.theme) root.dataset.theme = pr.theme; else delete root.dataset.theme;
+  if (t.palette !== 'ku') root.dataset.palette = t.palette; else delete root.dataset.palette;
+  if (t.dark) root.dataset.mode = 'dark'; else delete root.dataset.mode;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = pr.themeColor;
-  try { if (pr.theme) localStorage.setItem('ku_theme', pr.theme); else localStorage.removeItem('ku_theme'); } catch { }
+  if (meta) meta.content = t.dark ? '#15181c' : PALETTES[t.palette].color;
+  // для скрипта в index.html: применить тему до загрузки app.js, без «мигания»
+  try { if (S.user) localStorage.setItem('ku_theme', JSON.stringify({ palette: t.palette, mode: t.mode })); else localStorage.removeItem('ku_theme'); } catch { }
+}
+if (window.matchMedia) {
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  const onSys = () => { if (S.user && getPrefs().mode === 'system') applyTheme(); };
+  if (mq.addEventListener) mq.addEventListener('change', onSys); else if (mq.addListener) mq.addListener(onSys);
 }
 
 /* ------------------------------ Общие блоки ------------------------------ */
 function navHTML(active) {
+  const it = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${label}</a>`;
   return `<nav class="bnav">
-    <a href="#/" class="${active === 'home' ? 'on' : ''}"><span class="ic">${svg('home')}</span>Главная</a>
-    <a href="#/profile" class="${active === 'profile' ? 'on' : ''}"><span class="ic">${svg('user')}</span>Профиль</a>
+    <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
+    ${it('#/', 'home', 'home', 'Главная')}
+    ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
+    ${it('#/profile', 'profile', 'user', 'Профиль')}
+    ${it('#/settings', 'settings', 'gear', 'Настройки')}
   </nav>`;
 }
 function headHTML() {
@@ -240,7 +298,7 @@ function v(id) { const el = document.getElementById(id); return el ? el.value.tr
 async function viewHome() {
   stopPoll();
   if (S.user.role === 'teacher') return viewHomeT();
-  app.innerHTML = `${headHTML()}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
+  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
   bindHead();
   try {
     const d = await api('/student/dashboard');
@@ -311,7 +369,7 @@ function bindHead() {
 
 /* ============================ Главная (преподаватель) ============================ */
 async function viewHomeT() {
-  app.innerHTML = `${headHTML()}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
+  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
   bindHead();
   try {
     const d = await api('/teacher/subjects');
@@ -444,6 +502,7 @@ function examLaunchUrl() {
   u.searchParams.set('from', 'ku-portal');
   u.searchParams.set('back', location.origin + '/#/exam');
   u.searchParams.set('theme', programOf(S.user).examTheme); // цвета экзамена — по программе пользователя
+  const m = getPrefs().mode; if (m !== 'light') u.searchParams.set('mode', m); // светлая — исходный вид экзамена; тёмная/системная — передаём
   return u.href;
 }
 function examTransition(href) {
@@ -489,7 +548,7 @@ function viewExam() {
       <div class="tx"><b>Вход на сайте экзаменов отдельный.</b> Используйте логин и пароль, которые выдал преподаватель.
         Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.</div>
     </div>
-  </div>${navHTML()}`;
+  </div>${navHTML('exam')}`;
 
   const st = document.getElementById('oeStatus');
   const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
@@ -671,30 +730,164 @@ async function findStudents() {
   }));
 }
 
-/* ============================ Профиль ============================ */
+/* ============================ Профиль (личный кабинет) ============================ */
+const SET_TILES = [
+  ['appearance', 'palette', 'Оформление', 'Тема и цвет сайта'],
+  ['notifications', 'bell', 'Уведомления', 'Оценки, расписание, экзамены'],
+  ['security', 'shield', 'Безопасность', 'Пароль, вход, сеансы'],
+  ['privacy', 'eye', 'Конфиденциальность', 'Рейтинг и видимость'],
+  ['language', 'globe', 'Язык и регион', 'Русский · UTC+5'],
+  ['about', 'help', 'Помощь', 'О приложении и поддержка'],
+];
 function viewProfile() {
   stopPoll();
-  const u = S.user;
+  const u = S.user, pr = programOf(u), t = resolvedTheme();
   app.innerHTML = `
-    ${miniHead('Профиль')}
-    <div class="card profcard">
-      <div class="avatar">${esc(u.firstName.charAt(0).toUpperCase())}</div>
-      <div>
-        <div class="pf-fio">${esc(u.fio)}</div>
-        <div class="pf-sub">${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}${u.group ? ' · ' + esc(u.group) : ''}</div>
-        <div class="pf-sub">${esc(programOf(u).short)}</div>
-        <div class="pf-sub">${esc(u.email)}</div>
+    ${miniHead('Личный кабинет')}
+    <div id="pagebody" class="prof-page">
+      <div class="card profcard">
+        <div class="avatar">${esc(u.firstName.charAt(0).toUpperCase())}</div>
+        <div class="pf-main">
+          <div class="pf-fio">${esc(u.fio)}</div>
+          <div class="pf-sub">${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}${u.group ? ' · ' + esc(u.group) : ''}</div>
+          <div class="pf-sub">${esc(u.email)}</div>
+          <span class="pill pf-uni">${svg(pr.icon)}${esc(pr.name)}</span>
+        </div>
       </div>
+      <div class="card quick-theme">
+        <div><b>Тема</b><div class="tx">${esc(MODES[t.mode] || MODES.light)} · ${esc(PALETTES[t.palette].name)}</div></div>
+        <div class="seg2" role="radiogroup" aria-label="Тема">
+          ${['light', 'dark', 'system'].map((m) => `<button role="radio" aria-checked="${t.mode === m}" class="${t.mode === m ? 'on' : ''}" data-mode="${m}" title="${MODES[m]}">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}</button>`).join('')}
+        </div>
+      </div>
+      <div class="section-label">Настройки</div>
+      <div class="set-tiles">
+        ${SET_TILES.map(([id, ic, title, sub]) => `<a class="set-tile" href="#/settings/${id}"><span class="st-ic">${svg(ic)}</span><b>${title}</b><span class="tx">${sub}</span></a>`).join('')}
+      </div>
+      <div class="section-label">Сервисы</div>
+      <div class="prof-links">
+        <a class="card lstrow" href="#/exam"><span class="lrow-ic">${svg('clipboard')}Экзамен</span><span class="chev">${svg('chev')}</span></a>
+        <a class="card lstrow" href="#/ai"><span class="lrow-ic">${svg('msg')}AI-помощник</span><span class="chev">${svg('chev')}</span></a>
+      </div>
+      <div class="prof-out"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
+      <div class="tx" style="text-align:center;margin:14px 0">KU Portal v1.1 · ${esc(pr.name)}</div>
     </div>
-    <a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Экзамен</div><div class="chev">${svg('chev')}</div></a>
-    <a class="card lstrow" style="display:flex" href="#/ai"><div>🤖 AI-помощник</div><div class="chev">${svg('chev')}</div></a>
-    <div style="margin:10px 14px"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
-    <div class="tx" style="text-align:center;margin-top:14px">KU Portal v1.0 · Kozybayev University</div>
     ${navHTML('profile')}`;
-  document.getElementById('outBtn').onclick = async () => {
-    try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
-    localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
-  };
+  app.querySelectorAll('.quick-theme [data-mode]').forEach((b) => (b.onclick = () => { setPref('mode', b.dataset.mode); viewProfile(); }));
+  document.getElementById('outBtn').onclick = logout;
+}
+async function logout() {
+  try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
+  localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
+}
+
+/* ============================ Настройки ============================ */
+/* «Оформление» работает (тема и цвет). Остальные переключатели запоминаются в браузере,
+   но пока ни на что не влияют — это заготовки разделов настроек. */
+function swRow(key, icon, title, sub) {
+  const on = !!getPrefs()[key];
+  return `<div class="set-row"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div>
+    <button class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(title)}" data-sw="${key}"><i></i></button></div>`;
+}
+function linkRow(icon, title, sub, act, cls) {
+  return `<button class="set-row link ${cls || ''}" data-act="${act}"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div><span class="chev">${svg('chev')}</span></button>`;
+}
+function segRow(key, icon, title, opts) {
+  const cur = getPrefs()[key];
+  return `<div class="set-row wrap"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b></div>
+    <div class="seg2 txt" role="radiogroup" aria-label="${esc(title)}">${opts.map(([v, l]) => `<button role="radio" aria-checked="${cur === v}" class="${cur === v ? 'on' : ''}" data-seg="${key}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+}
+function modePreview(m, cur) {
+  return `<button class="mode-card ${cur === m ? 'on' : ''}" data-mode="${m}" role="radio" aria-checked="${cur === m}">
+    <span class="mp mp-${m}"><i></i><i></i><i></i></span>
+    <span class="mc-l">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}${MODES[m]}</span></button>`;
+}
+function viewSettings(section) {
+  stopPoll();
+  const u = S.user, p = getPrefs(), pr = programOf(u);
+  const autoName = PALETTES[pr.palette].name;
+  app.innerHTML = `
+    <a class="back" href="#/profile">${svg('back')} Личный кабинет</a><h1 class="ptitle">Настройки</h1>
+    <div id="pagebody" class="set-page">
+      <section class="card set-sec" id="set-appearance">
+        <h2>${svg('palette')}Оформление</h2>
+        <div class="set-lbl">Тема</div>
+        <div class="mode-cards" role="radiogroup" aria-label="Тема">${['light', 'dark', 'system'].map((m) => modePreview(m, p.mode)).join('')}</div>
+        <div class="set-lbl">Цвет сайта</div>
+        <div class="swatches" role="radiogroup" aria-label="Цвет сайта">
+          <button class="swatch auto ${p.palette === 'auto' ? 'on' : ''}" data-pal="auto" role="radio" aria-checked="${p.palette === 'auto'}" style="--sw:${PALETTES[pr.palette].color}"><i></i><span>Авто<small>${esc(autoName)}</small></span></button>
+          ${Object.entries(PALETTES).map(([id, x]) => `<button class="swatch ${p.palette === id ? 'on' : ''}" data-pal="${id}" role="radio" aria-checked="${p.palette === id}" style="--sw:${x.color}"><i></i><span>${esc(x.name)}</span></button>`).join('')}
+        </div>
+        <div class="tx set-note">«Авто» — цвет вашей программы: ${esc(pr.name)}. Тема и цвет применяются и в онлайн-экзамене.</div>
+        ${segRow('fontSize', 'type', 'Размер текста', [['sm', 'Мелкий'], ['md', 'Обычный'], ['lg', 'Крупный']])}
+        ${swRow('compact', 'device', 'Компактный режим', 'Плотнее карточки и списки')}
+        ${swRow('reduceMotion', 'play', 'Меньше анимации', 'Отключить плавные переходы')}
+      </section>
+
+      <section class="card set-sec" id="set-notifications">
+        <h2>${svg('bell')}Уведомления</h2>
+        ${swRow('notifPush', 'bell', 'Push-уведомления', 'На телефоне и в браузере')}
+        ${swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл')}
+        ${swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Перенос и отмена занятий')}
+        ${swRow('notifExam', 'clipboard', 'Экзамены', 'Напоминание за день и за час')}
+        ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
+        ${swRow('notifEmail', 'send', 'Email-рассылка', esc(u.email))}
+      </section>
+
+      <section class="card set-sec" id="set-security">
+        <h2>${svg('shield')}Безопасность</h2>
+        ${linkRow('lock', 'Сменить пароль', 'Последнее изменение: при регистрации', 'soon')}
+        ${swRow('twoFactor', 'shield', 'Двухфакторная аутентификация', 'Код подтверждения при входе')}
+        ${swRow('loginAlerts', 'bell', 'Оповещать о новом входе', 'Письмо при входе с нового устройства')}
+        ${linkRow('device', 'Активные сеансы', 'Это устройство · сейчас', 'soon')}
+      </section>
+
+      <section class="card set-sec" id="set-privacy">
+        <h2>${svg('eye')}Конфиденциальность</h2>
+        ${swRow('showInRating', 'chart', 'Показывать меня в рейтинге группы', 'Одногруппники видят ваше место')}
+        ${swRow('showOnline', 'users', 'Статус «в сети»', 'Видно преподавателям и группе')}
+        ${linkRow('download', 'Скачать мои данные', 'Оценки, расписание, профиль', 'soon')}
+      </section>
+
+      <section class="card set-sec" id="set-language">
+        <h2>${svg('globe')}Язык и регион</h2>
+        ${segRow('lang', 'globe', 'Язык интерфейса', [['ru', 'Русский'], ['kk', 'Қазақша'], ['en', 'English']])}
+        <div class="set-row"><span class="sr-ic">${svg('clock')}</span><div class="sr-t"><b>Часовой пояс</b><span class="tx">Астана, Костанай (UTC+5)</span></div></div>
+        <div class="set-row"><span class="sr-ic">${svg('calendar')}</span><div class="sr-t"><b>Начало недели</b><span class="tx">Понедельник</span></div></div>
+      </section>
+
+      <section class="card set-sec" id="set-account">
+        <h2>${svg('user')}Аккаунт</h2>
+        <div class="set-row"><span class="sr-ic">${svg(pr.icon)}</span><div class="sr-t"><b>Программа</b><span class="tx">${esc(pr.short)}</span></div></div>
+        <div class="set-row"><span class="sr-ic">${svg('send')}</span><div class="sr-t"><b>Email</b><span class="tx">${esc(u.email)}</span></div></div>
+        ${linkRow('trash', 'Удалить аккаунт', 'Обратитесь в деканат', 'soon', 'danger')}
+      </section>
+
+      <section class="card set-sec" id="set-about">
+        <h2>${svg('help')}Помощь</h2>
+        ${linkRow('msg', 'Спросить AI-помощника', 'Вопросы о вузе', 'ai')}
+        ${linkRow('info', 'О приложении', 'KU Portal v1.1', 'about')}
+      </section>
+    </div>
+    ${navHTML('settings')}`;
+
+  const pb = document.getElementById('pagebody');
+  const rerender = () => { const y = window.scrollY; viewSettings(); window.scrollTo(0, y); };
+  pb.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { setPref('mode', b.dataset.mode); rerender(); }));
+  pb.querySelectorAll('[data-pal]').forEach((b) => (b.onclick = () => { setPref('palette', b.dataset.pal); rerender(); }));
+  pb.querySelectorAll('[data-seg]').forEach((b) => (b.onclick = () => { setPref(b.dataset.seg, b.dataset.v); rerender(); toast('Сохранено'); }));
+  pb.querySelectorAll('[data-sw]').forEach((b) => (b.onclick = () => {
+    const on = !b.classList.contains('on');
+    b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
+    setPref(b.dataset.sw, on);
+  }));
+  pb.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
+    const a = b.dataset.act;
+    if (a === 'ai') location.hash = '#/ai';
+    else if (a === 'about') toast('KU Portal v1.1 · Kozybayev University');
+    else toast('Скоро будет доступно');
+  }));
+  if (section) { const el = document.getElementById('set-' + section); if (el) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); }
 }
 
 /* ============================ Заглушки ============================ */
@@ -708,7 +901,7 @@ function viewStub(name) {
 /* ============================ Роутер ============================ */
 function route() {
   stopPoll();
-  applyProgramTheme(S.user); // до входа и после выхода — цвета KU
+  applyTheme(); // цвета пользователя; до входа и после выхода — KU
   if (!S.user) return viewAuth();
   const h = location.hash.replace(/^#\/?/, '');
   const parts = h.split('/').filter(Boolean);
@@ -725,6 +918,7 @@ function route() {
       if (parts[1] === 'grades') return viewTGrades();
       return viewExam(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile();
+    case 'settings': return viewSettings(parts[1]);
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
   }

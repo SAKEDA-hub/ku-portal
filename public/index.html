@@ -6,8 +6,8 @@
   <title>KU Portal — Kozybayev University</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%2305a4ba'/><text x='12' y='17' font-size='14' font-weight='bold' text-anchor='middle' fill='%23ffffff'>K</text></svg>">
   <meta name="theme-color" content="#05a4ba">
-  <!-- цвета университета до загрузки app.js (без «мигания» темы); дальше — applyProgramTheme() -->
-  <script>try{if(localStorage.getItem('ku_theme')==='arizona'&&localStorage.getItem('ku_token'))document.documentElement.dataset.theme='arizona'}catch(e){}</script>
+  <!-- тема пользователя до загрузки app.js (без «мигания»); дальше — applyTheme() в app.js -->
+  <script>try{var t=JSON.parse(localStorage.getItem('ku_theme')||'null');if(t&&localStorage.getItem('ku_token')){var r=document.documentElement;if(t.palette&&t.palette!=='ku')r.dataset.palette=t.palette;if(t.mode==='dark'||(t.mode==='system'&&matchMedia('(prefers-color-scheme: dark)').matches))r.dataset.mode='dark'}}catch(e){}</script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
