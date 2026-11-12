@@ -459,8 +459,9 @@ async function viewHome() {
     const srvs = [
       // «Экзамен» здесь не дублируем — он есть в главном меню
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
-      ['Общежитие', 'building', '#/stub/Общежитие'], ['Голосование', 'mic', '#/stub/Голосование'], ['Библиотека', 'chart', '#/stub/Библиотека'],
+      ['Запись на зачёт', 'clipboard', '#/credit'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/attendance'],
+      ['Общежитие', 'building', '#/dorm'], ['Голосование', 'mic', '#/voting'], ['Библиотека', 'chart', '#/library'],
+      // последние пять — демо-сервисы (public/services.js)
     ];
 
     document.getElementById('pagebody').innerHTML = `
@@ -1220,6 +1221,12 @@ function route() {
       return viewExam(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
+    // демо-сервисы студента (public/services.js)
+    case 'credit': return viewCredit();
+    case 'attendance': return viewAttendance();
+    case 'dorm': return viewDorm();
+    case 'voting': return viewVoting();
+    case 'library': return viewLibrary();
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
   }
