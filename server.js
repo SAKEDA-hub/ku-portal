@@ -76,9 +76,12 @@ function userOf(req) {
   const t = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return sessions.get(t) || null;
 }
+/* Программа (университет) пользователя — от неё зависят цвета портала и онлайн-экзамена */
+const PROGRAMS = ['ku', 'arizona'];
+const programOf = (u) => (u && PROGRAMS.includes(u.program) ? u.program : 'ku');
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '' };
+  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u) };
 }
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -147,11 +150,22 @@ const DEMO_ON = process.env.DEMO !== '0';
 const DEMO_PASS = '1234';
 const DEMO_GROUP = 'ИСУ-26-2-а';
 const DEMO_ACCOUNTS = [
-  { role: 'teacher', email: 'teacher@demo.kz', lastName: 'Ахметова', firstName: 'Айгерим', middleName: 'Сериковна' },
+  { role: 'teacher', email: 'teacher@demo.kz', lastName: 'Ахметова', firstName: 'Айгерим', middleName: 'Сериковна', program: 'arizona' },
   { role: 'student', email: 'student@demo.kz', lastName: 'Иванов', firstName: 'Данияр', middleName: '', group: DEMO_GROUP },
   { role: 'student', email: 'student2@demo.kz', lastName: 'Каримова', firstName: 'Алина', middleName: '', group: DEMO_GROUP },
 ];
+/* Программа демо-аккаунтов: проставляем и в уже существующей базе (созданной до появления программ) */
+function syncDemoPrograms() {
+  let changed = false;
+  for (const a of DEMO_ACCOUNTS) {
+    const u = db.users.find((x) => x.email === a.email && x.demo);
+    const want = a.program || 'ku';
+    if (u && u.program !== want) { u.program = want; changed = true; }
+  }
+  if (changed) saveDB();
+}
 function seedDemo() {
+  if (DEMO_ON) syncDemoPrograms();
   if (!DEMO_ON || db.users.some((x) => x.email === DEMO_ACCOUNTS[0].email)) return;
   const made = {};
   for (const a of DEMO_ACCOUNTS) {
@@ -159,7 +173,7 @@ function seedDemo() {
     const u = {
       id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role,
       fio: [a.lastName, a.firstName, a.middleName].filter(Boolean).join(' '), firstName: a.firstName,
-      email: a.email, salt, passHash: hash(DEMO_PASS, salt), group: a.group || '', createdAt: Date.now(), demo: true,
+      email: a.email, salt, passHash: hash(DEMO_PASS, salt), group: a.group || '', program: a.program || 'ku', createdAt: Date.now(), demo: true,
     };
     db.users.push(u);
     made[a.email] = u;
@@ -433,11 +447,12 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---------- Аутентификация ---------- */
     if (p === '/api/auth/register' && req.method === 'POST') {
-      const { lastName = '', firstName = '', middleName = '', email = '', password = '', role = 'student', group = '' } = body;
+      const { lastName = '', firstName = '', middleName = '', email = '', password = '', role = 'student', group = '', program = 'ku' } = body;
       if (!lastName.trim() || !firstName.trim()) return bad(res, 400, 'Укажите фамилию и имя');
       if (!/^\S+@\S+\.\S+$/.test(email)) return bad(res, 400, 'Некорректный email');
       if (String(password).length < 4) return bad(res, 400, 'Пароль — минимум 4 символа');
       if (!['student', 'teacher'].includes(role)) return bad(res, 400, 'Выберите роль');
+      if (!PROGRAMS.includes(program)) return bad(res, 400, 'Выберите программу');
       if (role === 'student' && !String(group).trim()) return bad(res, 400, 'Укажите группу');
       const em = String(email).trim().toLowerCase();
       if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
@@ -448,6 +463,7 @@ const server = http.createServer(async (req, res) => {
         role, fio, firstName: String(firstName).trim(), email: em,
         salt, passHash: hash(String(password), salt),
         group: role === 'student' ? String(group).trim() : '',
+        program,
         createdAt: Date.now(),
       };
       db.users.push(user); saveDB();
@@ -481,7 +497,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/demo' && req.method === 'GET') {
       return ok(res, DEMO_ON
-        ? { enabled: true, password: DEMO_PASS, accounts: DEMO_ACCOUNTS.map((x) => ({ role: x.role, email: x.email, fio: x.lastName + ' ' + x.firstName })) }
+        ? { enabled: true, password: DEMO_PASS, accounts: DEMO_ACCOUNTS.map((x) => ({ role: x.role, email: x.email, fio: x.lastName + ' ' + x.firstName, program: x.program || 'ku' })) }
         : { enabled: false });
     }
 

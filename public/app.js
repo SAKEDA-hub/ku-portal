@@ -33,6 +33,7 @@ const I = {
   pause: '<path d="M9 5.5v13M15 5.5v13"/>',
   play: '<path d="M7.5 5.2v13.6L18.5 12z"/>',
   speaker: '<path d="M4 10v4h3.5l5 4.5v-13L7.5 10z"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.6 6.5a7.8 7.8 0 0 1 0 11"/>',
+  cap: '<path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.6v4.2c2.9 2.3 8.1 2.3 11 0v-4.2M21.5 9.5v5"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
 };
 function svg(name, cls) {
@@ -72,6 +73,24 @@ async function api(path, o) {
   return j;
 }
 
+/* ------------------------- Программа и цвета университета ------------------------- */
+/* У пользователя есть программа: Kozybayev University или международная программа University of Arizona.
+   От неё автоматически зависят цвета портала (data-theme на <html>, палитры в style.css)
+   и тема онлайн-экзамена (inCampus / «Международный кампус»), см. examLaunchUrl(). */
+const PROGRAMS = {
+  ku: { id: 'ku', name: 'Kozybayev University', short: 'Kozybayev University', icon: 'logo', theme: '', themeColor: '#05a4ba', examTheme: 'incampus' },
+  arizona: { id: 'arizona', name: 'University of Arizona', short: 'University of Arizona · международная программа', icon: 'cap', theme: 'arizona', themeColor: '#0C234B', examTheme: 'intl' },
+};
+const programOf = (u) => PROGRAMS[(u && u.program) || 'ku'] || PROGRAMS.ku;
+function applyProgramTheme(u) {
+  const pr = programOf(u);
+  const root = document.documentElement;
+  if (pr.theme) root.dataset.theme = pr.theme; else delete root.dataset.theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = pr.themeColor;
+  try { if (pr.theme) localStorage.setItem('ku_theme', pr.theme); else localStorage.removeItem('ku_theme'); } catch { }
+}
+
 /* ------------------------------ Общие блоки ------------------------------ */
 function navHTML(active) {
   return `<nav class="bnav">
@@ -93,8 +112,8 @@ function headHTML() {
     </div>
   </div>
   <div class="uni">
-    <div class="mark">${svg('logo')}</div>
-    <div class="uname">Kozybayev University</div>
+    <div class="mark">${svg(programOf(u).icon)}</div>
+    <div class="uname">${esc(programOf(u).name)}</div>
   </div>`;
 }
 function miniHead(title) {
@@ -102,7 +121,7 @@ function miniHead(title) {
 }
 
 /* ============================ Аутентификация ============================ */
-let authTab = 'login', authRole = 'student';
+let authTab = 'login', authRole = 'student', authProgram = 'ku';
 function viewAuth(msg) {
   stopPoll();
   app.innerHTML = `
@@ -148,10 +167,23 @@ function renderAuthForm() {
         <button class="chip ${authRole === 'student' ? 'on' : ''}" id="chStud">Студент</button>
         <button class="chip ${authRole === 'teacher' ? 'on' : ''}" id="chTeach">Преподаватель</button>
       </div>
+      <label class="lbl">Программа</label>
+      <div class="chips">
+        <button class="chip ${authProgram === 'ku' ? 'on' : ''}" id="chKU">Kozybayev University</button>
+        <button class="chip ${authProgram === 'arizona' ? 'on' : ''}" id="chAZ">University of Arizona</button>
+      </div>
       <div id="grpWrap">${authRole === 'student' ? '<input class="inp" id="rGroup" placeholder="Группа (например: ИСУ-26-2-а)"><label class="lbl">Оценки и расписание появятся, когда преподаватель добавит их для вашей группы</label>' : ''}</div>
       <button class="btn pri" id="rBtn">Создать аккаунт</button>`;
     document.getElementById('chStud').onclick = () => { authRole = 'student'; renderAuthForm(); };
     document.getElementById('chTeach').onclick = () => { authRole = 'teacher'; renderAuthForm(); };
+    // Выбор программы — без перерисовки формы, чтобы не стереть введённые поля
+    const pickProgram = (pr) => {
+      authProgram = pr;
+      document.getElementById('chKU').classList.toggle('on', pr === 'ku');
+      document.getElementById('chAZ').classList.toggle('on', pr === 'arizona');
+    };
+    document.getElementById('chKU').onclick = () => pickProgram('ku');
+    document.getElementById('chAZ').onclick = () => pickProgram('arizona');
     document.getElementById('rBtn').onclick = doRegister;
   }
 }
@@ -166,10 +198,10 @@ async function renderDemoBox() {
   box.innerHTML = `
     <div class="demo-box">
       <b>Тестовый вход</b>
-      <div class="tx">Пароль у всех демо-аккаунтов: ${esc(demoInfo.password)}. Для проверки очереди откройте второй аккаунт в окне инкогнито.</div>
+      <div class="tx">Пароль у всех демо-аккаунтов: ${esc(demoInfo.password)}. Преподаватель — международная программа University of Arizona, студент — Kozybayev University.</div>
       <div class="row2">
-        <button class="btn ghost" data-demo="${esc(t.email)}">Преподаватель</button>
-        <button class="btn ghost" data-demo="${esc(st.email)}">Студент</button>
+        <button class="btn ghost" data-demo="${esc(t.email)}">Преподаватель<small class="demo-pr">${esc(programOf(t).name)}</small></button>
+        <button class="btn ghost" data-demo="${esc(st.email)}">Студент<small class="demo-pr">${esc(programOf(st).name)}</small></button>
       </div>
     </div>`;
   box.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = async () => {
@@ -196,7 +228,7 @@ async function doRegister() {
       method: 'POST',
       body: {
         lastName: v('rLast'), firstName: v('rFirst'), middleName: v('rMid'),
-        email: v('rEmail'), password: v('rPass'), role: authRole, group: authRole === 'student' ? v('rGroup') : '',
+        email: v('rEmail'), password: v('rPass'), role: authRole, program: authProgram, group: authRole === 'student' ? v('rGroup') : '',
       },
     });
     S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
@@ -411,6 +443,7 @@ function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
   u.searchParams.set('back', location.origin + '/#/exam');
+  u.searchParams.set('theme', programOf(S.user).examTheme); // цвета экзамена — по программе пользователя
   return u.href;
 }
 function examTransition(href) {
@@ -420,7 +453,7 @@ function examTransition(href) {
   ov.setAttribute('aria-live', 'polite');
   ov.innerHTML = `
     <div class="oe-ov-in">
-      <div class="oe-bridge"><span class="oe-app ku">${svg('logo')}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
+      <div class="oe-bridge"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
       <div class="oe-ov-t">Открываем онлайн-экзамен…</div>
       <div class="oe-ov-s">Переходим в сервис экзаменов</div>
     </div>`;
@@ -437,7 +470,7 @@ function viewExam() {
   const href = examLaunchUrl();
   app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody">
     <div class="card oe-hero">
-      <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg('logo')}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
+      <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
       <div class="oe-kicker">Сервис экзаменов</div>
       <div class="oe-title">Онлайн-экзамен</div>
       <div class="tx oe-lead">${teacher
@@ -649,6 +682,7 @@ function viewProfile() {
       <div>
         <div class="pf-fio">${esc(u.fio)}</div>
         <div class="pf-sub">${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}${u.group ? ' · ' + esc(u.group) : ''}</div>
+        <div class="pf-sub">${esc(programOf(u).short)}</div>
         <div class="pf-sub">${esc(u.email)}</div>
       </div>
     </div>
@@ -674,6 +708,7 @@ function viewStub(name) {
 /* ============================ Роутер ============================ */
 function route() {
   stopPoll();
+  applyProgramTheme(S.user); // до входа и после выхода — цвета KU
   if (!S.user) return viewAuth();
   const h = location.hash.replace(/^#\/?/, '');
   const parts = h.split('/').filter(Boolean);

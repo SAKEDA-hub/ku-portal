@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1C1C1E">
 <meta name="color-scheme" content="dark">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('edu-theme')==='intl'?'intl':'incampus'}catch(e){document.documentElement.dataset.theme='incampus'}</script>
+<script>/* Тема: из KU Portal приходит ?from=ku-portal&theme=intl|incampus (по программе пользователя) — хранится на сессию вкладки;
+   иначе — выбор пользователя из localStorage (edu-theme). */
+try{var q=new URLSearchParams(location.search),t=q.get('theme');
+if(q.get('from')==='ku-portal'&&(t==='intl'||t==='incampus'))sessionStorage.setItem('edu-theme-ku',t);
+var th=sessionStorage.getItem('edu-theme-ku')||localStorage.getItem('edu-theme');
+document.documentElement.dataset.theme=th==='intl'?'intl':'incampus'}catch(e){document.documentElement.dataset.theme='incampus'}</script>
 <title>Онлайн-экзамен</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%2305a4ba'/><path d='M3 10l9-4.5 9 4.5-9 4.5z M7 12v4c2.5 1.8 7.5 1.8 10 0v-4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -782,7 +787,7 @@ function applyTheme(){
 }
 function setTheme(t){
   if(!THEMES.includes(t) || t === THEME) return;
-  THEME = t; try{ localStorage.setItem(THEME_KEY, t); }catch(e){}
+  THEME = t; try{ localStorage.setItem(THEME_KEY, t); sessionStorage.removeItem('edu-theme-ku'); }catch(e){}
   applyTheme(); render(); toast(L('Оформление: ', 'Theme: ', 'Безендіру: ') + themeName(t));
 }
 function themeSheet(){
@@ -1359,7 +1364,7 @@ const KU_BACK = (() => {
       fresh = true;
       const u = new URL(q.get('back') || '');
       if(/^https?:$/.test(u.protocol) && kuHostOk(u.hostname)){ back = u.href; sessionStorage.setItem(KU_BACK_KEY, back); }
-      q.delete('from'); q.delete('back');
+      q.delete('from'); q.delete('back'); q.delete('theme');
       history.replaceState(history.state, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash);
     }
   }catch(e){}
@@ -2465,7 +2470,7 @@ window.addEventListener('storage', e => {
     const d = loadDB(); if(!d) return; D = d;
     if(ME){ const u = userById(ME.id); if(!u){ doLogout(); toast(L('Ваш аккаунт удалён', 'Your account was deleted', 'Сіздің аккаунтыңыз жойылды')); return; } ME = u; }
     if(LIVE[S.view] || S.view === 'login'){ if(fieldFocused() || document.querySelector('.ov')) S.syncPending = true; else render(); }
-  } else if(e.key === THEME_KEY){ const t = e.newValue === 'intl' ? 'intl' : 'incampus'; if(t !== THEME){ THEME = t; applyTheme(); render(); } }
+  } else if(e.key === THEME_KEY && !(()=>{ try{ return sessionStorage.getItem('edu-theme-ku'); }catch(x){ return null; } })()){ const t = e.newValue === 'intl' ? 'intl' : 'incampus'; if(t !== THEME){ THEME = t; applyTheme(); render(); } }
   else if(e.key === GA_KEY && S.view === 'grade' && !document.querySelector('.ov')) render();
 });
 setInterval(() => { tick(); if(S.syncPending && !fieldFocused() && !document.querySelector('.ov')) render(); }, 1000);

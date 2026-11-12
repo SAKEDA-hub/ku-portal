@@ -18,6 +18,12 @@
 - Переход портал → экзамены: `/exam-sync/?from=ku-portal&back=<адрес портала>/#/exam`. Сайт экзаменов запоминает `back` на сессию вкладки, убирает параметры из адреса и показывает кнопку «KU Portal». `back` принимается только http(s) и только с того же хоста, хостов портала на Render, localhost или локальной сети (`KU_HOSTS`, `kuHostOk` в `exam-sync/index.html`).
 - Вход в онлайн-экзамен отдельный от портала (свои аккаунты exam-sync).
 
+## Цвета университета (программа пользователя)
+
+- `user.program` — `'ku'` (по умолчанию) или `'arizona'`; задаётся при регистрации, отдаётся в `pubUser`. Демо-преподаватель — `arizona` (`DEMO_ACCOUNTS`, `syncDemoPrograms()` проставляет и в старой базе).
+- Фронтенд: `PROGRAMS`, `programOf()`, `applyProgramTheme()` в `public/app.js` (вызывается в `route()`), палитра `:root[data-theme="arizona"]` в `public/style.css`. Новые цвета — только через переменные, обе палитры должны их определять.
+- Онлайн-экзамен получает `theme=intl|incampus` в адресе перехода и хранит её в `sessionStorage` (`edu-theme-ku`), чтобы вкладки разных пользователей в одном браузере не перекрашивали друг друга.
+
 ## Проверка после изменений
 
 1. `node --check server.js`, `node --check public/app.js`, `node --check exam-sync/handler.js` проходят, `node server.js` запускается без ошибок.
