@@ -108,7 +108,7 @@ const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как �
 
 /* Настройки хранятся в браузере отдельно для каждого пользователя */
 const PREF_DEFAULTS = {
-  palette: 'auto', mode: 'light', fontSize: 'md', lang: 'ru', reduceMotion: false, compact: false,
+  palette: 'auto', mode: 'light', fontSize: 'md', reduceMotion: false, compact: false,
   notifPush: true, notifGrades: true, notifSchedule: true, notifExam: true, notifEmail: false, notifSound: true,
   twoFactor: false, showInRating: true, showOnline: true, loginAlerts: true,
 };
@@ -119,25 +119,31 @@ function getPrefs() {
 function setPref(key, val) {
   const p = getPrefs(); p[key] = val;
   try { localStorage.setItem(prefsKey(), JSON.stringify(p)); } catch { }
-  if (key === 'palette' || key === 'mode') applyTheme();
+  if (key === 'palette' || key === 'mode' || key === 'fontSize' || key === 'compact' || key === 'reduceMotion') applyTheme();
 }
 const sysDark = () => !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+const FONT_SIZES = ['sm', 'md', 'lg', 'xl'];
 function resolvedTheme() {
-  if (!S.user) return { palette: 'ku', dark: false };
+  if (!S.user) return { palette: 'ku', dark: false, fs: 'md' };
   const p = getPrefs();
   const palette = p.palette === 'auto' || !PALETTES[p.palette] ? programOf(S.user).palette : p.palette;
   const dark = p.mode === 'dark' || (p.mode === 'system' && sysDark());
-  return { palette, dark, mode: p.mode };
+  const fs = FONT_SIZES.includes(p.fontSize) ? p.fontSize : 'md';
+  return { palette, dark, mode: p.mode, fs, compact: !!p.compact, still: !!p.reduceMotion };
 }
 function applyTheme() {
   const t = resolvedTheme();
   const root = document.documentElement;
   if (t.palette !== 'ku') root.dataset.palette = t.palette; else delete root.dataset.palette;
   if (t.dark) root.dataset.mode = 'dark'; else delete root.dataset.mode;
+  // размер текста (--fs в style.css), компактный режим и «меньше анимации»
+  if (t.fs !== 'md') root.dataset.fs = t.fs; else delete root.dataset.fs;
+  if (t.compact) root.dataset.compact = ''; else delete root.dataset.compact;
+  if (t.still) root.dataset.still = ''; else delete root.dataset.still;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = t.dark ? '#15181c' : PALETTES[t.palette].color;
   // для скрипта в index.html: применить тему до загрузки app.js, без «мигания»
-  try { if (S.user) localStorage.setItem('ku_theme', JSON.stringify({ palette: t.palette, mode: t.mode })); else localStorage.removeItem('ku_theme'); } catch { }
+  try { if (S.user) localStorage.setItem('ku_theme', JSON.stringify({ palette: t.palette, mode: t.mode, fs: t.fs, compact: t.compact, still: t.still })); else localStorage.removeItem('ku_theme'); } catch { }
 }
 if (window.matchMedia) {
   const mq = matchMedia('(prefers-color-scheme: dark)');
@@ -152,8 +158,7 @@ function navHTML(active) {
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
     ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
-    ${it('#/profile', 'profile', 'user', 'Профиль')}
-    ${it('#/settings', 'settings', 'gear', 'Настройки')}
+    ${it('#/profile', 'profile', 'user', 'Кабинет')}
   </nav>`;
 }
 function headHTML() {
@@ -307,8 +312,9 @@ async function viewHome() {
       : ringSVG(d.score);
 
     const srvs = [
+      // «Экзамен» здесь не дублируем — он есть в главном меню
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['Экзамен', 'clipboard', '#/exam'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
+      ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
       ['Общежитие', 'building', '#/stub/Общежитие'], ['Голосование', 'mic', '#/stub/Голосование'], ['Библиотека', 'chart', '#/stub/Библиотека'],
     ];
 
@@ -374,8 +380,9 @@ async function viewHomeT() {
   try {
     const d = await api('/teacher/subjects');
     const srvs = [
-      ['Экзамен', 'clipboard', '#/exam'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
-      ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'], ['Мои предметы', 'book', '#/t/grades'],
+      // «Экзамен» — в главном меню и в карточке выше; «Мои предметы» вели туда же, что и «Оценки»
+      ['Добавить занятие', 'plus', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
+      ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'],
     ];
     document.getElementById('pagebody').innerHTML = `
       <div class="section-label">Виджеты</div>
@@ -386,7 +393,7 @@ async function viewHomeT() {
           <span class="pill">Кабинет преподавателя</span>
         </div>
         <div class="ring-wrap" style="text-align:center">
-          <div style="font-size:32px;font-weight:800;color:var(--accent-deep)">${d.items.length}</div>
+          <div style="font-size:calc(32px * var(--fs));font-weight:800;color:var(--accent-deep)">${d.items.length}</div>
           <div class="tx">предметов</div>
         </div>
       </div>
@@ -518,7 +525,7 @@ function examTransition(href) {
     </div>`;
   document.body.appendChild(ov);
   requestAnimationFrame(() => ov.classList.add('on'));
-  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) || getPrefs().reduceMotion;
   setTimeout(() => { location.href = href; }, reduced ? 50 : 900);
   // Вернулись кнопкой «Назад» из bfcache — убрать оверлей
   window.addEventListener('pageshow', function h(e) { if (e.persisted) { ov.remove(); window.removeEventListener('pageshow', h); } });
@@ -679,7 +686,7 @@ async function paintScList() {
   if (!box) return;
   const d = await api('/schedule').catch((e) => ({ items: [] }));
   box.innerHTML = d.items.length ? d.items.map((r) => `
-    <div class="card" style="padding:14px"><div class="stud-fio" style="font-size:16px">${esc(r.subject)} (${esc(r.type)})</div>
+    <div class="card" style="padding:14px"><div class="stud-fio" style="font-size:calc(16px * var(--fs))">${esc(r.subject)} (${esc(r.type)})</div>
     <div class="stud-group">${esc(r.dayName)} · ${esc(r.start)}-${esc(r.end)} · ауд. ${esc(r.room || '—')} · ${esc(r.group)}</div></div>`).join('')
     : '<div class="card next-empty">Занятий пока нет.</div>';
 }
@@ -713,7 +720,7 @@ async function findStudents() {
   box.innerHTML = `<div class="ptitle" style="padding:2px 0 10px">Студенты (${d.items.length})</div>` + (d.items.length
     ? d.items.map((s) => `
       <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div><div style="font-size:15.5px">${esc(s.fio)}</div><div class="tx">${esc(s.group)}</div></div>
+        <div><div style="font-size:calc(15.5px * var(--fs))">${esc(s.fio)}</div><div class="tx">${esc(s.group)}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
           <input class="inp small" style="margin:0;width:84px" placeholder="0-100" data-sc="${s.id}">
           <button class="badge" style="border:0;cursor:pointer;padding:9px 13px" data-put="${s.id}">Выставить</button>
@@ -730,60 +737,19 @@ async function findStudents() {
   }));
 }
 
-/* ============================ Профиль (личный кабинет) ============================ */
-const SET_TILES = [
-  ['appearance', 'palette', 'Оформление', 'Тема и цвет сайта'],
-  ['notifications', 'bell', 'Уведомления', 'Оценки, расписание, экзамены'],
-  ['security', 'shield', 'Безопасность', 'Пароль, вход, сеансы'],
-  ['privacy', 'eye', 'Конфиденциальность', 'Рейтинг и видимость'],
-  ['language', 'globe', 'Язык и регион', 'Русский · UTC+5'],
-  ['about', 'help', 'Помощь', 'О приложении и поддержка'],
+/* ============================ Личный кабинет = профиль + все настройки ============================ */
+/* Один экран: слева (на ноутбуке) карточка профиля и оглавление разделов, справа — разделы настроек.
+   На телефоне оглавление — прокручиваемая строка чипов над разделами.
+   Работают: «Оформление» (тема, цвет, размер текста, компактный режим, меньше анимации) и язык.
+   Остальные переключатели только запоминаются в браузере — разделы помечены «в разработке». */
+const CAB_SECTIONS = [
+  ['appearance', 'palette', 'Оформление'],
+  ['language', 'globe', 'Язык и регион'],
+  ['notifications', 'bell', 'Уведомления'],
+  ['security', 'shield', 'Безопасность'],
+  ['privacy', 'eye', 'Конфиденциальность'],
+  ['account', 'user', 'Аккаунт'],
 ];
-function viewProfile() {
-  stopPoll();
-  const u = S.user, pr = programOf(u), t = resolvedTheme();
-  app.innerHTML = `
-    ${miniHead('Личный кабинет')}
-    <div id="pagebody" class="prof-page">
-      <div class="card profcard">
-        <div class="avatar">${esc(u.firstName.charAt(0).toUpperCase())}</div>
-        <div class="pf-main">
-          <div class="pf-fio">${esc(u.fio)}</div>
-          <div class="pf-sub">${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}${u.group ? ' · ' + esc(u.group) : ''}</div>
-          <div class="pf-sub">${esc(u.email)}</div>
-          <span class="pill pf-uni">${svg(pr.icon)}${esc(pr.name)}</span>
-        </div>
-      </div>
-      <div class="card quick-theme">
-        <div><b>Тема</b><div class="tx">${esc(MODES[t.mode] || MODES.light)} · ${esc(PALETTES[t.palette].name)}</div></div>
-        <div class="seg2" role="radiogroup" aria-label="Тема">
-          ${['light', 'dark', 'system'].map((m) => `<button role="radio" aria-checked="${t.mode === m}" class="${t.mode === m ? 'on' : ''}" data-mode="${m}" title="${MODES[m]}">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}</button>`).join('')}
-        </div>
-      </div>
-      <div class="section-label">Настройки</div>
-      <div class="set-tiles">
-        ${SET_TILES.map(([id, ic, title, sub]) => `<a class="set-tile" href="#/settings/${id}"><span class="st-ic">${svg(ic)}</span><b>${title}</b><span class="tx">${sub}</span></a>`).join('')}
-      </div>
-      <div class="section-label">Сервисы</div>
-      <div class="prof-links">
-        <a class="card lstrow" href="#/exam"><span class="lrow-ic">${svg('clipboard')}Экзамен</span><span class="chev">${svg('chev')}</span></a>
-        <a class="card lstrow" href="#/ai"><span class="lrow-ic">${svg('msg')}AI-помощник</span><span class="chev">${svg('chev')}</span></a>
-      </div>
-      <div class="prof-out"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
-      <div class="tx" style="text-align:center;margin:14px 0">KU Portal v1.1 · ${esc(pr.name)}</div>
-    </div>
-    ${navHTML('profile')}`;
-  app.querySelectorAll('.quick-theme [data-mode]').forEach((b) => (b.onclick = () => { setPref('mode', b.dataset.mode); viewProfile(); }));
-  document.getElementById('outBtn').onclick = logout;
-}
-async function logout() {
-  try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
-  localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
-}
-
-/* ============================ Настройки ============================ */
-/* «Оформление» работает (тема и цвет). Остальные переключатели запоминаются в браузере,
-   но пока ни на что не влияют — это заготовки разделов настроек. */
 function swRow(key, icon, title, sub) {
   const on = !!getPrefs()[key];
   return `<div class="set-row"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div>
@@ -792,8 +758,8 @@ function swRow(key, icon, title, sub) {
 function linkRow(icon, title, sub, act, cls) {
   return `<button class="set-row link ${cls || ''}" data-act="${act}"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div><span class="chev">${svg('chev')}</span></button>`;
 }
-function segRow(key, icon, title, opts) {
-  const cur = getPrefs()[key];
+function segRow(key, icon, title, opts, cur) {
+  if (cur === undefined) cur = getPrefs()[key];
   return `<div class="set-row wrap"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b></div>
     <div class="seg2 txt" role="radiogroup" aria-label="${esc(title)}">${opts.map(([v, l]) => `<button role="radio" aria-checked="${cur === v}" class="${cur === v ? 'on' : ''}" data-seg="${key}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
 }
@@ -802,80 +768,94 @@ function modePreview(m, cur) {
     <span class="mp mp-${m}"><i></i><i></i><i></i></span>
     <span class="mc-l">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}${MODES[m]}</span></button>`;
 }
-function viewSettings(section) {
+function secHead(id, title, soon) {
+  const ic = CAB_SECTIONS.find((s) => s[0] === id)[1];
+  return `<h2>${svg(ic)}${title}${soon ? '<span class="soon">в разработке</span>' : ''}</h2>`;
+}
+function viewProfile(section) {
   stopPoll();
   const u = S.user, p = getPrefs(), pr = programOf(u);
   const autoName = PALETTES[pr.palette].name;
   app.innerHTML = `
-    <a class="back" href="#/profile">${svg('back')} Личный кабинет</a><h1 class="ptitle">Настройки</h1>
-    <div id="pagebody" class="set-page">
-      <section class="card set-sec" id="set-appearance">
-        <h2>${svg('palette')}Оформление</h2>
-        <div class="set-lbl">Тема</div>
-        <div class="mode-cards" role="radiogroup" aria-label="Тема">${['light', 'dark', 'system'].map((m) => modePreview(m, p.mode)).join('')}</div>
-        <div class="set-lbl">Цвет сайта</div>
-        <div class="swatches" role="radiogroup" aria-label="Цвет сайта">
-          <button class="swatch auto ${p.palette === 'auto' ? 'on' : ''}" data-pal="auto" role="radio" aria-checked="${p.palette === 'auto'}" style="--sw:${PALETTES[pr.palette].color}"><i></i><span>Авто<small>${esc(autoName)}</small></span></button>
-          ${Object.entries(PALETTES).map(([id, x]) => `<button class="swatch ${p.palette === id ? 'on' : ''}" data-pal="${id}" role="radio" aria-checked="${p.palette === id}" style="--sw:${x.color}"><i></i><span>${esc(x.name)}</span></button>`).join('')}
+    ${miniHead('Личный кабинет')}
+    <div id="pagebody" class="cab">
+      <aside class="cab-side">
+        <div class="card profcard">
+          <div class="avatar">${esc(u.firstName.charAt(0).toUpperCase())}</div>
+          <div class="pf-main">
+            <div class="pf-fio">${esc(u.fio)}</div>
+            <div class="pf-sub">${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}${u.group ? ' · ' + esc(u.group) : ''}</div>
+            <div class="pf-sub pf-mail">${esc(u.email)}</div>
+            <span class="pill pf-uni">${svg(pr.icon)}${esc(pr.name)}</span>
+          </div>
         </div>
-        <div class="tx set-note">«Авто» — цвет вашей программы: ${esc(pr.name)}. Тема и цвет применяются и в онлайн-экзамене.</div>
-        ${segRow('fontSize', 'type', 'Размер текста', [['sm', 'Мелкий'], ['md', 'Обычный'], ['lg', 'Крупный']])}
-        ${swRow('compact', 'device', 'Компактный режим', 'Плотнее карточки и списки')}
-        ${swRow('reduceMotion', 'play', 'Меньше анимации', 'Отключить плавные переходы')}
-      </section>
+        <nav class="cab-nav" aria-label="Разделы настроек">
+          ${CAB_SECTIONS.map(([id, ic, title]) => `<a href="#/profile/${id}" data-sec="${id}">${svg(ic)}<span>${title}</span></a>`).join('')}
+        </nav>
+      </aside>
+      <div class="cab-main">
+        <section class="card set-sec" id="set-appearance">
+          ${secHead('appearance', 'Оформление')}
+          <div class="set-lbl">Тема</div>
+          <div class="mode-cards" role="radiogroup" aria-label="Тема">${['light', 'dark', 'system'].map((m) => modePreview(m, p.mode)).join('')}</div>
+          <div class="set-lbl">Цвет сайта</div>
+          <div class="swatches" role="radiogroup" aria-label="Цвет сайта">
+            <button class="swatch auto ${p.palette === 'auto' ? 'on' : ''}" data-pal="auto" role="radio" aria-checked="${p.palette === 'auto'}" title="Авто · ${esc(autoName)}" style="--sw:${PALETTES[pr.palette].color}"><i></i><span>Авто</span></button>
+            ${Object.entries(PALETTES).map(([id, x]) => `<button class="swatch ${p.palette === id ? 'on' : ''}" data-pal="${id}" role="radio" aria-checked="${p.palette === id}" title="${esc(x.name)}" style="--sw:${x.color}"><i></i><span>${esc(x.name)}</span></button>`).join('')}
+          </div>
+          <div class="tx set-note">«Авто» — цвет вашей программы (${esc(pr.name)}). Тема и цвет применяются и в онлайн-экзамене.</div>
+          ${segRow('fontSize', 'type', 'Размер текста', [['sm', 'Мелкий'], ['md', 'Обычный'], ['lg', 'Крупный'], ['xl', 'Очень крупный']])}
+          ${swRow('compact', 'device', 'Компактный режим', 'Плотнее карточки и списки')}
+          ${swRow('reduceMotion', 'play', 'Меньше анимации', 'Отключить плавные переходы')}
+        </section>
 
-      <section class="card set-sec" id="set-notifications">
-        <h2>${svg('bell')}Уведомления</h2>
-        ${swRow('notifPush', 'bell', 'Push-уведомления', 'На телефоне и в браузере')}
-        ${swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл')}
-        ${swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Перенос и отмена занятий')}
-        ${swRow('notifExam', 'clipboard', 'Экзамены', 'Напоминание за день и за час')}
-        ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
-        ${swRow('notifEmail', 'send', 'Email-рассылка', esc(u.email))}
-      </section>
+        <section class="card set-sec" id="set-language">
+          ${secHead('language', 'Язык и регион')}
+          ${segRow('lang', 'globe', 'Язык интерфейса', [['ru', 'Русский'], ['kk', 'Қазақша'], ['en', 'English']])}
+          <div class="set-row"><span class="sr-ic">${svg('clock')}</span><div class="sr-t"><b>Часовой пояс</b><span class="tx">Астана, Костанай (UTC+5)</span></div></div>
+          <div class="set-row"><span class="sr-ic">${svg('calendar')}</span><div class="sr-t"><b>Начало недели</b><span class="tx">Понедельник</span></div></div>
+        </section>
 
-      <section class="card set-sec" id="set-security">
-        <h2>${svg('shield')}Безопасность</h2>
-        ${linkRow('lock', 'Сменить пароль', 'Последнее изменение: при регистрации', 'soon')}
-        ${swRow('twoFactor', 'shield', 'Двухфакторная аутентификация', 'Код подтверждения при входе')}
-        ${swRow('loginAlerts', 'bell', 'Оповещать о новом входе', 'Письмо при входе с нового устройства')}
-        ${linkRow('device', 'Активные сеансы', 'Это устройство · сейчас', 'soon')}
-      </section>
+        <section class="card set-sec" id="set-notifications">
+          ${secHead('notifications', 'Уведомления', true)}
+          ${swRow('notifPush', 'bell', 'Push-уведомления', 'На телефоне и в браузере')}
+          ${swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл')}
+          ${swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Перенос и отмена занятий')}
+          ${swRow('notifExam', 'clipboard', 'Экзамены', 'Напоминание за день и за час')}
+          ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
+          ${swRow('notifEmail', 'send', 'Email-рассылка', esc(u.email))}
+        </section>
 
-      <section class="card set-sec" id="set-privacy">
-        <h2>${svg('eye')}Конфиденциальность</h2>
-        ${swRow('showInRating', 'chart', 'Показывать меня в рейтинге группы', 'Одногруппники видят ваше место')}
-        ${swRow('showOnline', 'users', 'Статус «в сети»', 'Видно преподавателям и группе')}
-        ${linkRow('download', 'Скачать мои данные', 'Оценки, расписание, профиль', 'soon')}
-      </section>
+        <section class="card set-sec" id="set-security">
+          ${secHead('security', 'Безопасность', true)}
+          ${linkRow('lock', 'Сменить пароль', 'Последнее изменение: при регистрации', 'soon')}
+          ${swRow('twoFactor', 'shield', 'Двухфакторная аутентификация', 'Код подтверждения при входе')}
+          ${swRow('loginAlerts', 'bell', 'Оповещать о новом входе', 'Письмо при входе с нового устройства')}
+          ${linkRow('device', 'Активные сеансы', 'Это устройство · сейчас', 'soon')}
+        </section>
 
-      <section class="card set-sec" id="set-language">
-        <h2>${svg('globe')}Язык и регион</h2>
-        ${segRow('lang', 'globe', 'Язык интерфейса', [['ru', 'Русский'], ['kk', 'Қазақша'], ['en', 'English']])}
-        <div class="set-row"><span class="sr-ic">${svg('clock')}</span><div class="sr-t"><b>Часовой пояс</b><span class="tx">Астана, Костанай (UTC+5)</span></div></div>
-        <div class="set-row"><span class="sr-ic">${svg('calendar')}</span><div class="sr-t"><b>Начало недели</b><span class="tx">Понедельник</span></div></div>
-      </section>
+        <section class="card set-sec" id="set-privacy">
+          ${secHead('privacy', 'Конфиденциальность', true)}
+          ${swRow('showInRating', 'chart', 'Показывать меня в рейтинге группы', 'Одногруппники видят ваше место')}
+          ${swRow('showOnline', 'users', 'Статус «в сети»', 'Видно преподавателям и группе')}
+          ${linkRow('download', 'Скачать мои данные', 'Оценки, расписание, профиль', 'soon')}
+        </section>
 
-      <section class="card set-sec" id="set-account">
-        <h2>${svg('user')}Аккаунт</h2>
-        <div class="set-row"><span class="sr-ic">${svg(pr.icon)}</span><div class="sr-t"><b>Программа</b><span class="tx">${esc(pr.short)}</span></div></div>
-        <div class="set-row"><span class="sr-ic">${svg('send')}</span><div class="sr-t"><b>Email</b><span class="tx">${esc(u.email)}</span></div></div>
-        ${linkRow('trash', 'Удалить аккаунт', 'Обратитесь в деканат', 'soon', 'danger')}
-      </section>
-
-      <section class="card set-sec" id="set-about">
-        <h2>${svg('help')}Помощь</h2>
-        ${linkRow('msg', 'Спросить AI-помощника', 'Вопросы о вузе', 'ai')}
-        ${linkRow('info', 'О приложении', 'KU Portal v1.1', 'about')}
-      </section>
+        <section class="card set-sec" id="set-account">
+          ${secHead('account', 'Аккаунт')}
+          ${linkRow('info', 'О приложении', 'KU Portal v1.2', 'about')}
+          ${linkRow('trash', 'Удалить аккаунт', 'Обратитесь в деканат', 'soon', 'danger')}
+          <button class="btn danger-ghost cab-out" id="outBtn">Выйти из аккаунта</button>
+        </section>
+      </div>
     </div>
-    ${navHTML('settings')}`;
+    ${navHTML('profile')}`;
 
   const pb = document.getElementById('pagebody');
-  const rerender = () => { const y = window.scrollY; viewSettings(); window.scrollTo(0, y); };
+  const rerender = () => { const y = window.scrollY; viewProfile(); window.scrollTo(0, y); };
   pb.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { setPref('mode', b.dataset.mode); rerender(); }));
   pb.querySelectorAll('[data-pal]').forEach((b) => (b.onclick = () => { setPref('palette', b.dataset.pal); rerender(); }));
-  pb.querySelectorAll('[data-seg]').forEach((b) => (b.onclick = () => { setPref(b.dataset.seg, b.dataset.v); rerender(); toast('Сохранено'); }));
+  pb.querySelectorAll('[data-seg]').forEach((b) => (b.onclick = () => { setPref(b.dataset.seg, b.dataset.v); rerender(); }));
   pb.querySelectorAll('[data-sw]').forEach((b) => (b.onclick = () => {
     const on = !b.classList.contains('on');
     b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
@@ -883,11 +863,25 @@ function viewSettings(section) {
   }));
   pb.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     const a = b.dataset.act;
-    if (a === 'ai') location.hash = '#/ai';
-    else if (a === 'about') toast('KU Portal v1.1 · Kozybayev University');
+    if (a === 'about') toast('KU Portal v1.2 · ' + pr.name);
     else toast('Скоро будет доступно');
   }));
+  // оглавление: плавный переход к разделу без перерисовки страницы
+  pb.querySelectorAll('[data-sec]').forEach((a) => (a.onclick = (e) => {
+    e.preventDefault();
+    const el = document.getElementById('set-' + a.dataset.sec);
+    if (el) el.scrollIntoView({ block: 'start', behavior: getPrefs().reduceMotion ? 'auto' : 'smooth' });
+    history.replaceState(null, '', '#/profile/' + a.dataset.sec);
+    markSec(a.dataset.sec);
+  }));
+  const markSec = (id) => pb.querySelectorAll('[data-sec]').forEach((a) => a.classList.toggle('on', a.dataset.sec === id));
+  markSec(section || 'appearance');
+  document.getElementById('outBtn').onclick = logout;
   if (section) { const el = document.getElementById('set-' + section); if (el) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); }
+}
+async function logout() {
+  try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
+  localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
 }
 
 /* ============================ Заглушки ============================ */
@@ -917,8 +911,8 @@ function route() {
       if (parts[1] === 'schedule') return viewTSchedule();
       if (parts[1] === 'grades') return viewTGrades();
       return viewExam(); // #/t/queue, #/t/room/... — бывшая очередь
-    case 'profile': return viewProfile();
-    case 'settings': return viewSettings(parts[1]);
+    case 'profile': return viewProfile(parts[1]);
+    case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
   }
