@@ -836,7 +836,12 @@ html.from-ku #app,html.from-ku .topbar{animation:kuIn .45s cubic-bezier(.2,.8,.2
 
 /* ---------- язык интерфейса (RU / EN / KK); содержимое тестов не переводится ---------- */
 const LANG_KEY = 'edu-lang', LANGS = ['ru', 'en', 'kk'];
-let LANG = (() => { try{ const l = localStorage.getItem(LANG_KEY); return LANGS.includes(l) ? l : 'ru'; }catch(e){ return 'ru'; } })();
+// Из KU Portal приходит ?from=ku-portal&lang=<язык портала> — запоминаем на сессию вкладки (как тему), иначе — выбор пользователя
+let LANG = (() => { try{
+  const q = new URLSearchParams(location.search), ql = q.get('lang');
+  if(q.get('from') === 'ku-portal' && LANGS.includes(ql)) sessionStorage.setItem('edu-lang-ku', ql);
+  const l = sessionStorage.getItem('edu-lang-ku') || localStorage.getItem(LANG_KEY); return LANGS.includes(l) ? l : 'ru';
+}catch(e){ return 'ru'; } })();
 // L(ru, en, kk): если казахского перевода нет — показываем русский текст
 const L = (ru, en, kk) => LANG === 'en' ? en : LANG === 'kk' && kk != null ? kk : ru;
 const LOC = () => ({ en:'en-GB', kk:'kk-KZ' })[LANG] || 'ru-RU';
@@ -847,7 +852,7 @@ const langSwitch = () => `<div class="lang" role="group" aria-label="Язык и
   `<button class="${LANG === k ? 'on' : ''}" data-act="lang" data-l="${k}" lang="${k}" aria-pressed="${LANG === k}" aria-label="${nm}" title="${nm}">${sh}</button>`).join('')}</div>`;
 function setLang(l){
   if(!LANGS.includes(l) || l === LANG) return;
-  LANG = l; try{ localStorage.setItem(LANG_KEY, l); }catch(e){}
+  LANG = l; try{ localStorage.setItem(LANG_KEY, l); sessionStorage.removeItem('edu-lang-ku'); }catch(e){}
   applyLang(); render();
   const b = document.querySelector(`.lang [data-l="${l}"]`); if(b) b.focus({preventScroll:true});
 }
@@ -1535,7 +1540,7 @@ const KU_BACK = (() => {
       fresh = true;
       const u = new URL(q.get('back') || '');
       if(/^https?:$/.test(u.protocol) && kuHostOk(u.hostname)){ back = u.href; sessionStorage.setItem(KU_BACK_KEY, back); }
-      q.delete('from'); q.delete('back'); q.delete('theme');
+      q.delete('from'); q.delete('back'); q.delete('theme'); q.delete('lang');
       history.replaceState(history.state, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash);
     }
   }catch(e){}

@@ -20,11 +20,18 @@
 
 ## Темы и настройки
 
-- Портал: `PALETTES`, `MODES`, `getPrefs()/setPref()` (localStorage `ku_prefs:<userId>`), `resolvedTheme()`, `applyTheme()` (вызывается в `route()`), экраны `viewProfile()` (личный кабинет с плитками) и `viewSettings(section)` (`#/settings`, `#/settings/<раздел>`). На `<html>`: `data-palette` (кроме `ku`) и `data-mode="dark"`. Палитры и тёмный режим — блоки `:root[data-palette=…]` и `:root[data-mode="dark"]` в `public/style.css`; новые цвета — только через переменные (включая `--nav-bg`, `--tab-bg`, `--toast-bg` и т.п.). Ранний скрипт в `index.html` применяет тему до загрузки app.js.
+- Портал: `PALETTES`, `MODES`, `getPrefs()/setPref()` (localStorage `ku_prefs:<userId>`), `resolvedTheme()`, `applyTheme()` (вызывается в `route()`). Личный кабинет и настройки — **один экран** `viewProfile(section)` (`#/profile`, `#/profile/<раздел>`; старые `#/settings/*` ведут туда же): профиль + оглавление (`CAB_SECTIONS`) + все разделы настроек. В меню три пункта: Главная, Экзамен, Кабинет. Не возвращать плитки-ссылки на настройки и блок «Сервисы» в кабинет; «Экзамен» не дублировать в «Сервисах» главной. На `<html>`: `data-palette` (кроме `ku`), `data-mode="dark"`, `data-fs` (`sm`/`lg`/`xl` → `--fs`; все `font-size` в CSS — `calc(Npx * var(--fs))`, новые писать так же), `data-compact`, `data-still` (меньше анимации). Палитры и тёмный режим — блоки `:root[data-palette=…]` и `:root[data-mode="dark"]` в `public/style.css`; новые цвета — только через переменные (включая `--nav-bg`, `--tab-bg`, `--toast-bg` и т.п.). Ранний скрипт в `index.html` применяет тему до загрузки app.js.
 - «Авто» = палитра программы: `user.program` — `'ku'` (по умолчанию) или `'arizona'`; задаётся при регистрации, отдаётся в `pubUser`. Демо-преподаватель — `arizona` (`DEMO_ACCOUNTS`, `syncDemoPrograms()`).
 - Онлайн-экзамен: тема = цвет (`incampus` | `intl`) × режим (`auto` | `light` | `dark` | `system`), итог в `data-theme`: `incampus`, `incampus-light`, `intl`, `intl-dark` (`eduThemeOf()` в раннем скрипте, `applyTheme()/setTheme()/setMode()`). Из портала приходят `theme=` и `mode=` (sessionStorage `edu-theme-ku`/`edu-mode-ku` — на вкладку), ручной выбор — localStorage `edu-theme`/`edu-mode`. Панель настроек — `accountSheet()` → `settingsHTML()`.
 - Переключатели-заглушки (уведомления, безопасность и т.п.) только запоминаются — не выдавать их за работающие.
 - Адаптив портала: `--app-max` 440 → 720 (≥640px) → 1120 (≥1024px, верхнее меню `.bnav`, сетки `.dash`, `.prof-page`, `.set-page`).
+
+## Языки (RU / KK / EN)
+
+- `public/i18n.js` (подключён перед `app.js`): `t('русская строка', {vars})`, `tv(значение с сервера)`, `getLang()/setLang()` (localStorage `ku_lang`, настройка устройства — работает и на экране входа), `weekdayName()`, `fmtDay()`.
+- Словарь `I18N`: ключ — русская строка, значение `[en, kk]`. Любой новый текст интерфейса оборачивать в `t()` и добавлять в словарь; пропуск видно в консоли (`[i18n] нет перевода`). Ошибки API и фиксированные ответы помощника переводятся по тому же словарю на клиенте — сервер по-прежнему отвечает по-русски.
+- Пользовательские данные (ФИО, группы, свои названия предметов) не переводятся; встроенные предметы и типы занятий — переводятся.
+- В онлайн-экзамен язык передаётся параметром `lang=` (sessionStorage `edu-lang-ku` на вкладку).
 
 ## Проверка после изменений
 

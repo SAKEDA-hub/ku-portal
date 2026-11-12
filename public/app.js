@@ -57,13 +57,6 @@ function svg(name, cls) {
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function tm(ts) { return new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
-const RU_M = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-function dstr(s) {
-  const m = /^\d{4}-\d{2}-\d{2}$/.exec(String(s || ''));
-  if (!m) return s;
-  return String(Number(s.slice(8))) + ' ' + RU_M[Number(s.slice(5, 7)) - 1];
-}
 function stopPoll() {
   if (window.__poll) { clearInterval(window.__poll); window.__poll = null; }
   if (window.__unsub) { const f = window.__unsub; window.__unsub = null; f(); }
@@ -80,9 +73,9 @@ async function api(path, o) {
   o.headers = Object.assign({ 'Content-Type': 'application/json' }, S.token ? { Authorization: 'Bearer ' + S.token } : {}, o.headers || {});
   if (o.body && typeof o.body !== 'string') o.body = JSON.stringify(o.body);
   const r = await fetch('/api' + path, o);
-  if (r.status === 401 && S.token) { S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error('Сессия истекла'); }
+  if (r.status === 401 && S.token) { S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error(t('Сессия истекла')); }
   const j = await r.json().catch(() => ({ error: 'Ошибка сервера' }));
-  if (!r.ok) throw new Error(j.error || 'Ошибка сервера');
+  if (!r.ok) throw new Error(tv(j.error || 'Ошибка сервера')); // ошибки сервера — на русском, переводим по словарю
   return j;
 }
 
@@ -93,7 +86,7 @@ async function api(path, o) {
    Онлайн-экзамен получает цвет программы (inCampus / «Международный кампус») и выбранный режим, см. examLaunchUrl(). */
 const PROGRAMS = {
   ku: { id: 'ku', name: 'Kozybayev University', short: 'Kozybayev University', icon: 'logo', palette: 'ku', examTheme: 'incampus' },
-  arizona: { id: 'arizona', name: 'University of Arizona', short: 'University of Arizona · международная программа', icon: 'cap', palette: 'arizona', examTheme: 'intl' },
+  arizona: { id: 'arizona', name: 'University of Arizona', short: 'University of Arizona · международная программа' /* t() при выводе */, icon: 'cap', palette: 'arizona', examTheme: 'intl' },
 };
 const programOf = (u) => PROGRAMS[(u && u.program) || 'ku'] || PROGRAMS.ku;
 const PALETTES = {
@@ -104,7 +97,7 @@ const PALETTES = {
   coral: { name: 'Коралловый', color: '#e0603f' },
   graphite: { name: 'Графит', color: '#3f4a56' },
 };
-const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как в системе' };
+const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как в системе' }; // названия — через t() при выводе
 
 /* Настройки хранятся в браузере отдельно для каждого пользователя */
 const PREF_DEFAULTS = {
@@ -153,7 +146,7 @@ if (window.matchMedia) {
 
 /* ------------------------------ Общие блоки ------------------------------ */
 function navHTML(active) {
-  const it = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${label}</a>`;
+  const it = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
   return `<nav class="bnav">
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
@@ -166,12 +159,12 @@ function headHTML() {
   return `
   <div class="hrow">
     <div>
-      <div class="hi">Привет,</div>
+      <div class="hi">${t('Привет,')}</div>
       <div class="nm">${esc(u.firstName)}</div>
     </div>
     <div class="nicons">
-      <button class="bell" id="bell" title="Уведомления">${svg('bell')}</button>
-      <button class="avatar" id="goProfile" title="Профиль">${esc(u.firstName.charAt(0).toUpperCase())}</button>
+      <button class="bell" id="bell" title="${t('Уведомления')}">${svg('bell')}</button>
+      <button class="avatar" id="goProfile" title="${t('Кабинет')}">${esc(u.firstName.charAt(0).toUpperCase())}</button>
     </div>
   </div>
   <div class="uni">
@@ -180,7 +173,7 @@ function headHTML() {
   </div>`;
 }
 function miniHead(title) {
-  return `<a class="back" href="#/">${svg('back')} Назад</a><h1 class="ptitle">${esc(title)}</h1>`;
+  return `<a class="back" href="#/">${svg('back')} ${t('Назад')}</a><h1 class="ptitle">${esc(t(title))}</h1>`;
 }
 
 /* ============================ Аутентификация ============================ */
@@ -196,9 +189,10 @@ function viewAuth(msg) {
         <div class="sub">Kozybayev University</div>
       </div>
     </div>
+    <div class="seg2 txt auth-lang" role="radiogroup" aria-label="${t('Язык')}">${Object.entries(LANGS).map(([k, n]) => `<button role="radio" lang="${k}" aria-checked="${getLang() === k}" class="${getLang() === k ? 'on' : ''}" data-lang="${k}">${n}</button>`).join('')}</div>
     <div class="tabs">
-      <button id="tabLogin" class="${authTab === 'login' ? 'on' : ''}">Вход</button>
-      <button id="tabReg" class="${authTab === 'reg' ? 'on' : ''}">Регистрация</button>
+      <button id="tabLogin" class="${authTab === 'login' ? 'on' : ''}">${t('Вход')}</button>
+      <button id="tabReg" class="${authTab === 'reg' ? 'on' : ''}">${t('Регистрация')}</button>
     </div>
     <div id="authform"></div>
     <div class="err" id="autherr">${msg ? esc(msg) : ''}</div>
@@ -206,6 +200,7 @@ function viewAuth(msg) {
   </div>`;
   renderAuthForm();
   renderDemoBox();
+  app.querySelectorAll('[data-lang]').forEach((b) => (b.onclick = () => { setLang(b.dataset.lang); viewAuth(); }));
   document.getElementById('tabLogin').onclick = () => { authTab = 'login'; viewAuth(); };
   document.getElementById('tabReg').onclick = () => { authTab = 'reg'; viewAuth(); };
 }
@@ -214,29 +209,29 @@ function renderAuthForm() {
   if (authTab === 'login') {
     box.innerHTML = `
       <input class="inp" id="liEmail" type="email" placeholder="Email">
-      <input class="inp" id="liPass" type="password" placeholder="Пароль">
-      <button class="btn pri" id="liBtn">Войти</button>`;
+      <input class="inp" id="liPass" type="password" placeholder="${t('Пароль')}">
+      <button class="btn pri" id="liBtn">${t('Войти')}</button>`;
     document.getElementById('liBtn').onclick = doLogin;
     document.getElementById('liPass').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
   } else {
     box.innerHTML = `
-      <input class="inp" id="rLast" placeholder="Фамилия">
-      <input class="inp" id="rFirst" placeholder="Имя">
-      <input class="inp" id="rMid" placeholder="Отчество (необязательно)">
+      <input class="inp" id="rLast" placeholder="${t('Фамилия')}">
+      <input class="inp" id="rFirst" placeholder="${t('Имя')}">
+      <input class="inp" id="rMid" placeholder="${t('Отчество (необязательно)')}">
       <input class="inp" id="rEmail" type="email" placeholder="Email">
-      <input class="inp" id="rPass" type="password" placeholder="Пароль (мин. 4 символа)">
-      <label class="lbl">Роль</label>
+      <input class="inp" id="rPass" type="password" placeholder="${t('Пароль (мин. 4 символа)')}">
+      <label class="lbl">${t('Роль')}</label>
       <div class="chips">
-        <button class="chip ${authRole === 'student' ? 'on' : ''}" id="chStud">Студент</button>
-        <button class="chip ${authRole === 'teacher' ? 'on' : ''}" id="chTeach">Преподаватель</button>
+        <button class="chip ${authRole === 'student' ? 'on' : ''}" id="chStud">${t('Студент')}</button>
+        <button class="chip ${authRole === 'teacher' ? 'on' : ''}" id="chTeach">${t('Преподаватель')}</button>
       </div>
-      <label class="lbl">Программа</label>
+      <label class="lbl">${t('Программа')}</label>
       <div class="chips">
         <button class="chip ${authProgram === 'ku' ? 'on' : ''}" id="chKU">Kozybayev University</button>
         <button class="chip ${authProgram === 'arizona' ? 'on' : ''}" id="chAZ">University of Arizona</button>
       </div>
-      <div id="grpWrap">${authRole === 'student' ? '<input class="inp" id="rGroup" placeholder="Группа (например: ИСУ-26-2-а)"><label class="lbl">Оценки и расписание появятся, когда преподаватель добавит их для вашей группы</label>' : ''}</div>
-      <button class="btn pri" id="rBtn">Создать аккаунт</button>`;
+      <div id="grpWrap">${authRole === 'student' ? `<input class="inp" id="rGroup" placeholder="${t('Группа (например: ИСУ-26-2-а)')}"><label class="lbl">${t('Оценки и расписание появятся, когда преподаватель добавит их для вашей группы')}</label>` : ''}</div>
+      <button class="btn pri" id="rBtn">${t('Создать аккаунт')}</button>`;
     document.getElementById('chStud').onclick = () => { authRole = 'student'; renderAuthForm(); };
     document.getElementById('chTeach').onclick = () => { authRole = 'teacher'; renderAuthForm(); };
     // Выбор программы — без перерисовки формы, чтобы не стереть введённые поля
@@ -256,15 +251,15 @@ async function renderDemoBox() {
   try { if (!demoInfo) demoInfo = await api('/demo'); } catch { return; }
   const box = document.getElementById('demoBox');
   if (!box || !demoInfo.enabled) return;
-  const t = demoInfo.accounts.find((a) => a.role === 'teacher');
+  const te = demoInfo.accounts.find((a) => a.role === 'teacher');
   const st = demoInfo.accounts.find((a) => a.role === 'student');
   box.innerHTML = `
     <div class="demo-box">
-      <b>Тестовый вход</b>
-      <div class="tx">Пароль у всех демо-аккаунтов: ${esc(demoInfo.password)}. Преподаватель — международная программа University of Arizona, студент — Kozybayev University.</div>
+      <b>${t('Тестовый вход')}</b>
+      <div class="tx">${esc(t('Пароль у всех демо-аккаунтов: {p}. Преподаватель — международная программа University of Arizona, студент — Kozybayev University.', { p: demoInfo.password }))}</div>
       <div class="row2">
-        <button class="btn ghost" data-demo="${esc(t.email)}">Преподаватель<small class="demo-pr">${esc(programOf(t).name)}</small></button>
-        <button class="btn ghost" data-demo="${esc(st.email)}">Студент<small class="demo-pr">${esc(programOf(st).name)}</small></button>
+        <button class="btn ghost" data-demo="${esc(te.email)}">${t('Преподаватель')}<small class="demo-pr">${esc(programOf(te).name)}</small></button>
+        <button class="btn ghost" data-demo="${esc(st.email)}">${t('Студент')}<small class="demo-pr">${esc(programOf(st).name)}</small></button>
       </div>
     </div>`;
   box.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = async () => {
@@ -303,7 +298,7 @@ function v(id) { const el = document.getElementById(id); return el ? el.value.tr
 async function viewHome() {
   stopPoll();
   if (S.user.role === 'teacher') return viewHomeT();
-  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
+  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">${t('Загрузка…')}</div></div>${navHTML('home')}`;
   bindHead();
   try {
     const d = await api('/student/dashboard');
@@ -319,35 +314,35 @@ async function viewHome() {
     ];
 
     document.getElementById('pagebody').innerHTML = `
-      <div class="section-label">Виджеты</div>
+      <div class="section-label">${t('Виджеты')}</div>
       <div class="card scorecard">
         <div>
           <div class="stud-fio">${esc(S.user.fio)}</div>
           <div class="stud-group">${esc(d.group)}</div>
-          <span class="pill">Общий балл за семестр</span>
+          <span class="pill">${t('Общий балл за семестр')}</span>
         </div>
         <div class="ring-wrap">${ring}</div>
       </div>
       ${d.next ? `
       <div class="lesson">
-        <div class="subj">${esc(d.next.subject)} (${esc(d.next.type)})</div>
-        <div class="dt">${esc(d.next.date)}</div>
+        <div class="subj">${esc(tv(d.next.subject))} (${esc(tv(d.next.type))})</div>
+        <div class="dt">${esc(d.next.iso ? fmtDay(d.next.iso, true) : d.next.date)}</div>
         <hr class="rule">
-        <div class="row">Время: ${esc(d.next.time)}</div>
-        <div class="row">Аудитория: ${esc(d.next.room)}</div>
-        <div class="row">Преподаватель: ${esc(d.next.teacher)}</div>
-        <div class="foot">${svg('info')} Следующее занятие в расписании</div>
+        <div class="row">${esc(t('Время: {v}', { v: d.next.time }))}</div>
+        <div class="row">${esc(t('Аудитория: {v}', { v: d.next.room }))}</div>
+        <div class="row">${esc(t('Преподаватель: {v}', { v: d.next.teacher }))}</div>
+        <div class="foot">${svg('info')} ${t('Следующее занятие в расписании')}</div>
       </div>` : `
-      <div class="card" style="border-left:8px solid var(--accent)"><div class="next-empty">Ближайших занятий пока нет.<br>Преподаватель ещё не добавил расписание для группы ${esc(d.group)}.</div></div>`}
-      <div class="section-label">Сервисы</div>
+      <div class="card" style="border-left:8px solid var(--accent)"><div class="next-empty">${t('Ближайших занятий пока нет.')}<br>${esc(t('Преподаватель ещё не добавил расписание для группы {g}.', { g: d.group }))}</div></div>`}
+      <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
-        ${srvs.map((s, i) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${s[0]}</span></button>`).join('')}
+        ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
       </div>
       <a class="news" href="https://ku.edu.kz/ru/" target="_blank" rel="noopener">
         <div class="tg">${svg('tg')}</div>
         <div style="flex:1">
-          <b>Сайт Kozybayev University</b>
-          <span>Новости, объявления и задания</span>
+          <b>${t('Сайт Kozybayev University')}</b>
+          <span>${t('Новости, объявления и задания')}</span>
         </div>
         <div class="chev">${svg('chev')}</div>
       </a>`;
@@ -368,14 +363,14 @@ function ringSVG(score) {
 }
 function bindHead() {
   const b = document.getElementById('bell');
-  if (b) b.onclick = () => toast('Новых уведомлений нет');
+  if (b) b.onclick = () => toast(t('Новых уведомлений нет'));
   const p = document.getElementById('goProfile');
   if (p) p.onclick = () => { location.hash = '#/profile'; };
 }
 
 /* ============================ Главная (преподаватель) ============================ */
 async function viewHomeT() {
-  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
+  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">${t('Загрузка…')}</div></div>${navHTML('home')}`;
   bindHead();
   try {
     const d = await api('/teacher/subjects');
@@ -385,28 +380,28 @@ async function viewHomeT() {
       ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'],
     ];
     document.getElementById('pagebody').innerHTML = `
-      <div class="section-label">Виджеты</div>
+      <div class="section-label">${t('Виджеты')}</div>
       <div class="card scorecard">
         <div>
           <div class="stud-fio">${esc(S.user.fio)}</div>
-          <div class="stud-group">Преподаватель</div>
-          <span class="pill">Кабинет преподавателя</span>
+          <div class="stud-group">${t('Преподаватель')}</div>
+          <span class="pill">${t('Кабинет преподавателя')}</span>
         </div>
         <div class="ring-wrap" style="text-align:center">
           <div style="font-size:calc(32px * var(--fs));font-weight:800;color:var(--accent-deep)">${d.items.length}</div>
-          <div class="tx">предметов</div>
+          <div class="tx">${t('предметов')}</div>
         </div>
       </div>
       <a class="lesson" href="#/exam" style="display:block;color:inherit">
-        <div class="subj">Онлайн-экзамен</div>
-        <div class="dt">Тесты, writing, speaking и ведомость</div>
+        <div class="subj">${t('Онлайн-экзамен')}</div>
+        <div class="dt">${t('Тесты, writing, speaking и ведомость')}</div>
         <hr class="rule">
-        <div class="row">Создавайте тесты и открывайте комнаты экзамена для групп</div>
-        <div class="foot">${svg('info')} Раздел «Экзамен»</div>
+        <div class="row">${t('Создавайте тесты и открывайте комнаты экзамена для групп')}</div>
+        <div class="foot">${svg('info')} ${t('Раздел «Экзамен»')}</div>
       </a>
-      <div class="section-label">Сервисы</div>
+      <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
-        ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${s[0]}</span></button>`).join('')}
+        ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
       </div>`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
   } catch (e) {
@@ -417,25 +412,24 @@ async function viewHomeT() {
 /* ============================ Расписание ============================ */
 async function viewSchedule() {
   stopPoll();
-  app.innerHTML = `${miniHead('Расписание')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Расписание')}<div id="pagebody"><div class="load">${t('Загрузка…')}</div></div>${navHTML()}`;
   try {
     const d = await api('/schedule');
     if (!d.items.length) {
-      document.getElementById('pagebody').innerHTML = `<div class="card next-empty">Занятий пока нет.</div>`;
+      document.getElementById('pagebody').innerHTML = `<div class="card next-empty">${t('Занятий пока нет.')}</div>`;
       return;
     }
     const byDay = {};
     d.items.forEach((r) => { (byDay[r.day] = byDay[r.day] || []).push(r); });
-    const DOW = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
     document.getElementById('pagebody').innerHTML = Object.keys(byDay).map((day) => `
-      <div class="dayhead">${DOW[day]}</div>
+      <div class="dayhead">${esc(weekdayName(Number(day)))}</div>
       ${byDay[day].map((r) => `
       <div class="card lesson" style="margin-bottom:10px">
-        <div class="subj">${esc(r.subject)} (${esc(r.type)})</div>
+        <div class="subj">${esc(tv(r.subject))} (${esc(tv(r.type))})</div>
         <hr class="rule">
-        <div class="row">Время: ${esc(r.start)} - ${esc(r.end)}</div>
-        <div class="row">Аудитория: ${esc(r.room || '—')}</div>
-        ${S.user.role === 'student' ? `<div class="row">Преподаватель: ${esc(r.teacher)}</div>` : `<div class="row">Группа: ${esc(r.group)}</div>`}
+        <div class="row">${esc(t('Время: {v}', { v: r.start + ' - ' + r.end }))}</div>
+        <div class="row">${esc(t('Аудитория: {v}', { v: r.room || '—' }))}</div>
+        <div class="row">${S.user.role === 'student' ? esc(t('Преподаватель: {v}', { v: r.teacher })) : esc(t('Группа: {v}', { v: r.group }))}</div>
       </div>`).join('')}`).join('');
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
 }
@@ -443,40 +437,40 @@ async function viewSchedule() {
 /* ============================ Оценки / Рейтинг ============================ */
 async function viewGrades() {
   stopPoll();
-  app.innerHTML = `${miniHead('Успеваемость')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Успеваемость')}<div id="pagebody"><div class="load">${t('Загрузка…')}</div></div>${navHTML()}`;
   try {
     const d = await api('/grades');
     document.getElementById('pagebody').innerHTML = `
       <div class="card scorecard">
         <div>
-          <div class="stud-fio">${d.avg == null ? 'Оценок пока нет' : 'Средний балл'}</div>
-          <div class="stud-group">Общий балл за семестр</div>
+          <div class="stud-fio">${d.avg == null ? t('Оценок пока нет') : t('Средний балл')}</div>
+          <div class="stud-group">${t('Общий балл за семестр')}</div>
         </div>
         <div class="ring-wrap">${ringSVG(d.avg)}</div>
       </div>
       <div class="card">
         ${d.items.length ? d.items.map((g) => `
           <div class="lstrow" style="cursor:default">
-            <div>${esc(g.subject)}<div class="tx">${esc(g.teacher)} · ${esc(g.date)}</div></div>
+            <div>${esc(tv(g.subject))}<div class="tx">${esc(g.teacher)} · ${esc(fmtDay(g.date))}</div></div>
             <div class="r" style="color:var(--accent-deep);font-weight:700">${g.score}</div>
-          </div>`).join('') : '<div class="next-empty">Оценки появятся, когда преподаватель выставит их.</div>'}
+          </div>`).join('') : `<div class="next-empty">${t('Оценки появятся, когда преподаватель выставит их.')}</div>`}
       </div>`;
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
 }
 async function viewRating() {
   stopPoll();
-  app.innerHTML = `${miniHead('Рейтинг')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Рейтинг')}<div id="pagebody"><div class="load">${t('Загрузка…')}</div></div>${navHTML()}`;
   try {
     const d = await api('/rating');
     document.getElementById('pagebody').innerHTML = `
-      <div class="card"><div class="stud-fio">Группа ${esc(d.group)}</div>
-      <div class="stud-group">${d.selfPos ? 'Вы на ' + d.selfPos + '-м месте из ' + d.rows.length : 'Пока нет оценок в группе'}</div></div>
+      <div class="card"><div class="stud-fio">${esc(t('Группа {g}', { g: d.group }))}</div>
+      <div class="stud-group">${d.selfPos ? t('Вы на {n}-м месте из {total}', { n: d.selfPos, total: d.rows.length }) : t('Пока нет оценок в группе')}</div></div>
       <div class="card">
         ${d.rows.length ? d.rows.map((r, i) => `
           <div class="lstrow ${r.id === S.user.id ? 'me' : ''}" style="cursor:default">
             <div>${i + 1}. ${esc(r.fio)}</div>
             <div class="r" style="color:var(--accent-deep);font-weight:700">${r.avg == null ? '—' : r.avg}</div>
-          </div>`).join('') : '<div class="next-empty">В группе пока нет студентов.</div>'}
+          </div>`).join('') : `<div class="next-empty">${t('В группе пока нет студентов.')}</div>`}
       </div>`;
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
 }
@@ -508,6 +502,7 @@ function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
   u.searchParams.set('back', location.origin + '/#/exam');
+  u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
   u.searchParams.set('theme', programOf(S.user).examTheme); // цвета экзамена — по программе пользователя
   const m = getPrefs().mode; if (m !== 'light') u.searchParams.set('mode', m); // светлая — исходный вид экзамена; тёмная/системная — передаём
   return u.href;
@@ -520,8 +515,8 @@ function examTransition(href) {
   ov.innerHTML = `
     <div class="oe-ov-in">
       <div class="oe-bridge"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
-      <div class="oe-ov-t">Открываем онлайн-экзамен…</div>
-      <div class="oe-ov-s">Переходим в сервис экзаменов</div>
+      <div class="oe-ov-t">${t('Открываем онлайн-экзамен…')}</div>
+      <div class="oe-ov-s">${t('Переходим в сервис экзаменов')}</div>
     </div>`;
   document.body.appendChild(ov);
   requestAnimationFrame(() => ov.classList.add('on'));
@@ -537,31 +532,30 @@ function viewExam() {
   app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody">
     <div class="card oe-hero">
       <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
-      <div class="oe-kicker">Сервис экзаменов</div>
-      <div class="oe-title">Онлайн-экзамен</div>
+      <div class="oe-kicker">${t('Сервис экзаменов')}</div>
+      <div class="oe-title">${t('Онлайн-экзамен')}</div>
       <div class="tx oe-lead">${teacher
-        ? 'Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.'
-        : 'Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.'}</div>
-      <div class="oe-status" id="oeStatus"><i></i><span>Проверяем доступность сайта…</span></div>
-      <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}Перейти к онлайн-экзамену</a>
-      <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}Открыть в новой вкладке</a>
+        ? t('Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.')
+        : t('Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.')}</div>
+      <div class="oe-status" id="oeStatus"><i></i><span>${t('Проверяем доступность сайта…')}</span></div>
+      <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}${t('Перейти к онлайн-экзамену')}</a>
+      <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}${t('Открыть в новой вкладке')}</a>
     </div>
     <div class="oe-feat">
-      ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, t, d]) => `
-        <div class="card oe-fi"><span class="oe-fic">${svg(ic)}</span><div><b>${esc(t)}</b><div class="tx">${esc(d)}</div></div></div>`).join('')}
+      ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, ti, d]) => `
+        <div class="card oe-fi"><span class="oe-fic">${svg(ic)}</span><div><b>${esc(t(ti))}</b><div class="tx">${esc(t(d))}</div></div></div>`).join('')}
     </div>
     <div class="card oe-note">
       <span class="oe-fic">${svg('info')}</span>
-      <div class="tx"><b>Вход на сайте экзаменов отдельный.</b> Используйте логин и пароль, которые выдал преподаватель.
-        Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.</div>
+      <div class="tx"><b>${t('Вход на сайте экзаменов отдельный.')}</b> ${t('Используйте логин и пароль, которые выдал преподаватель. Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.')}</div>
     </div>
   </div>${navHTML('exam')}`;
 
   const st = document.getElementById('oeStatus');
   const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
   fetch(EXAM_SYNC_PATH + 'api/state', { method: 'HEAD', cache: 'no-store' })
-    .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? 'Сайт доступен' : 'Сайт экзаменов временно недоступен'))
-    .catch(() => setSt('bad', 'Не удалось связаться с сайтом экзаменов'));
+    .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? t('Сайт доступен') : t('Сайт экзаменов временно недоступен')))
+    .catch(() => setSt('bad', t('Не удалось связаться с сайтом экзаменов')));
 
   document.getElementById('oeGo').addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // открыть в новой вкладке — как обычно
@@ -571,7 +565,15 @@ function viewExam() {
 }
 
 /* ============================ AI-помощник ============================ */
-const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я AI-помощник Kozybayev University 🎓\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.' }];
+const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я AI-помощник Kozybayev University 🎓\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.', fixed: true }];
+/* Фиксированные ответы (приветствие, ответы сервера без модели) переводятся при выводе;
+   ответы модели приходят на языке вопроса и не трогаются. */
+function aiText(m) {
+  if (m.role === 'user') return m.content;
+  const pre = 'Нашёл на сайте ku.edu.kz:\n\n';
+  if (m.content.startsWith(pre)) return t('Нашёл на сайте ku.edu.kz:') + '\n\n' + m.content.slice(pre.length);
+  return tv(m.content);
+}
 let aiHistory = null;
 async function viewAI() {
   stopPoll();
@@ -581,14 +583,14 @@ async function viewAI() {
       <div class="chathead">
         <div class="avatar">${svg('msg')}</div>
         <div style="flex:1">
-          <b>AI-помощник</b>
-          <div class="st"><span class="dot" id="aidot"></span><span id="aist">уточняю статус…</span></div>
+          <b>${t('AI-помощник')}</b>
+          <div class="st"><span class="dot" id="aidot"></span><span id="aist">${t('уточняю статус…')}</span></div>
         </div>
         <a class="back" style="padding:0" href="#/">${svg('back')}</a>
       </div>
       <div class="chatbody" id="chatbody"><div class="chatwrap" id="chatwrap"></div></div>
       <div class="chatbar">
-        <input class="inp" id="chatinp" placeholder="Задайте вопрос…" autocomplete="off">
+        <input class="inp" id="chatinp" placeholder="${t('Задайте вопрос…')}" autocomplete="off">
         <button class="sendbtn" id="chatsend">${svg('send')}</button>
       </div>
     </div>`;
@@ -601,15 +603,15 @@ async function viewAI() {
   api('/ai/status').then((st) => {
     const dot = document.getElementById('aidot'), stt = document.getElementById('aist');
     if (!dot) return;
-    if (st.online) { dot.classList.add('on'); stt.textContent = 'модель: ' + st.model; }
-    else stt.textContent = 'модель не найдена, режим поиска по сайту';
+    if (st.online) { dot.classList.add('on'); stt.textContent = t('модель: {m}', { m: st.model }); }
+    else stt.textContent = t('модель не найдена, режим поиска по сайту');
   }).catch(() => { });
 }
 function paintChat() {
   const w = document.getElementById('chatwrap');
   if (!w) return;
   w.innerHTML = aiHistory.map((m) =>
-    `<div class="msg ${m.role === 'user' ? 'user' : 'bot'}" style="align-self:${m.role === 'user' ? 'flex-end' : 'flex-start'}">${esc(m.content)}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`
+    `<div class="msg ${m.role === 'user' ? 'user' : 'bot'}" style="align-self:${m.role === 'user' ? 'flex-end' : 'flex-start'}">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`
   ).join('');
 }
 async function sendChat() {
@@ -638,36 +640,33 @@ async function sendChat() {
 /* --- преподаватель: расписание --- */
 async function viewTSchedule() {
   stopPoll();
-  app.innerHTML = `${miniHead('Добавить занятие')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Добавить занятие')}<div id="pagebody"><div class="load">${t('Загрузка…')}</div></div>${navHTML()}`;
   try {
     const subs = await api('/teacher/subjects');
     const pb = document.getElementById('pagebody');
     if (!subs.items.length) {
-      pb.innerHTML = `<div class="card next-empty">Сначала откройте комнату в «Электронной очереди» — предмет создастся автоматически.</div>`;
+      pb.innerHTML = `<div class="card next-empty">${t('У вас пока нет предметов.')}</div>`;
       return;
     }
     pb.innerHTML = `
       <div class="card">
-        <label class="lbl">Предмет</label>
-        <select class="inp" id="scSubj">${subs.items.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
-        <label class="lbl">Тип занятия</label>
-        <select class="inp" id="scType"><option>Лек.</option><option>Практ.</option><option>Лаб.</option></select>
-        <label class="lbl">Группа</label>
-        <input class="inp" id="scGroup" placeholder="Например: ИСУ-26-2-а">
-        <label class="lbl">День недели</label>
-        <select class="inp" id="scDay">
-          <option value="0">Понедельник</option><option value="1">Вторник</option><option value="2">Среда</option>
-          <option value="3">Четверг</option><option value="4">Пятница</option><option value="5">Суббота</option>
-        </select>
+        <label class="lbl">${t('Предмет')}</label>
+        <select class="inp" id="scSubj">${subs.items.map((s) => `<option value="${s.id}">${esc(tv(s.name))}</option>`).join('')}</select>
+        <label class="lbl">${t('Тип занятия')}</label>
+        <select class="inp" id="scType">${['Лек.', 'Практ.', 'Лаб.'].map((x) => `<option value="${x}">${t(x)}</option>`).join('')}</select>
+        <label class="lbl">${t('Группа')}</label>
+        <input class="inp" id="scGroup" placeholder="${t('Например: ИСУ-26-2-а')}">
+        <label class="lbl">${t('День недели')}</label>
+        <select class="inp" id="scDay">${[0, 1, 2, 3, 4, 5].map((i) => `<option value="${i}">${esc(weekdayName(i))}</option>`).join('')}</select>
         <div class="row2">
-          <div><label class="lbl">Начало</label><input class="inp" id="scStart" type="time"></div>
-          <div><label class="lbl">Конец</label><input class="inp" id="scEnd" type="time"></div>
+          <div><label class="lbl">${t('Начало')}</label><input class="inp" id="scStart" type="time"></div>
+          <div><label class="lbl">${t('Конец')}</label><input class="inp" id="scEnd" type="time"></div>
         </div>
-        <label class="lbl">Аудитория</label>
+        <label class="lbl">${t('Аудитория')}</label>
         <input class="inp" id="scRoom" placeholder="119 (1/1)">
-        <button class="btn pri" id="scBtn">Добавить занятие</button>
+        <button class="btn pri" id="scBtn">${t('Добавить занятие')}</button>
       </div>
-      <div class="ptitle" style="padding:2px 0 10px">Мои занятия</div>
+      <div class="ptitle" style="padding:2px 0 10px">${t('Мои занятия')}</div>
       <div id="scList"></div>`;
     document.getElementById('scBtn').onclick = async () => {
       try {
@@ -675,7 +674,7 @@ async function viewTSchedule() {
           method: 'POST',
           body: { subjectId: v('scSubj'), type: v('scType'), group: v('scGroup'), day: Number(v('scDay')), startTime: v('scStart'), endTime: v('scEnd'), room: v('scRoom') },
         });
-        toast('Занятие добавлено'); paintScList();
+        toast(t('Занятие добавлено')); paintScList();
       } catch (e) { toast(e.message, true); }
     };
     paintScList();
@@ -686,26 +685,26 @@ async function paintScList() {
   if (!box) return;
   const d = await api('/schedule').catch((e) => ({ items: [] }));
   box.innerHTML = d.items.length ? d.items.map((r) => `
-    <div class="card" style="padding:14px"><div class="stud-fio" style="font-size:calc(16px * var(--fs))">${esc(r.subject)} (${esc(r.type)})</div>
-    <div class="stud-group">${esc(r.dayName)} · ${esc(r.start)}-${esc(r.end)} · ауд. ${esc(r.room || '—')} · ${esc(r.group)}</div></div>`).join('')
-    : '<div class="card next-empty">Занятий пока нет.</div>';
+    <div class="card" style="padding:14px"><div class="stud-fio" style="font-size:calc(16px * var(--fs))">${esc(tv(r.subject))} (${esc(tv(r.type))})</div>
+    <div class="stud-group">${esc(weekdayName(r.day))} · ${esc(r.start)}-${esc(r.end)} · ${esc(t('ауд. {r}', { r: r.room || '—' }))} · ${esc(r.group)}</div></div>`).join('')
+    : `<div class="card next-empty">${t('Занятий пока нет.')}</div>`;
 }
 
 /* --- преподаватель: оценки --- */
 async function viewTGrades() {
   stopPoll();
-  app.innerHTML = `${miniHead('Выставить оценки')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Выставить оценки')}<div id="pagebody"><div class="load">${t('Загрузка…')}</div></div>${navHTML()}`;
   try {
     const subs = await api('/teacher/subjects');
-    if (!subs.items.length) return (document.getElementById('pagebody').innerHTML = `<div class="card next-empty">Сначала откройте комнату в «Электронной очереди» — предмет создастся автоматически.</div>`);
+    if (!subs.items.length) return (document.getElementById('pagebody').innerHTML = `<div class="card next-empty">${t('У вас пока нет предметов.')}</div>`);
     document.getElementById('pagebody').innerHTML = `
       <div class="card">
-        <label class="lbl">Предмет</label>
-        <select class="inp" id="gSubj">${subs.items.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
-        <label class="lbl">Группа студентов</label>
+        <label class="lbl">${t('Предмет')}</label>
+        <select class="inp" id="gSubj">${subs.items.map((s) => `<option value="${s.id}">${esc(tv(s.name))}</option>`).join('')}</select>
+        <label class="lbl">${t('Группа студентов')}</label>
         <div class="row2">
           <input class="inp" id="gGroup" placeholder="ИСУ-26-2-а" style="margin:0">
-          <button class="btn ghost" id="gFind" style="max-width:120px">Найти</button>
+          <button class="btn ghost" id="gFind" style="max-width:120px">${t('Найти')}</button>
         </div>
       </div>
       <div id="gStuds"></div>`;
@@ -717,22 +716,22 @@ async function findStudents() {
   const g = v('gGroup');
   const d = await api('/teacher/students' + (g ? '?group=' + encodeURIComponent(g) : ''));
   const box = document.getElementById('gStuds');
-  box.innerHTML = `<div class="ptitle" style="padding:2px 0 10px">Студенты (${d.items.length})</div>` + (d.items.length
+  box.innerHTML = `<div class="ptitle" style="padding:2px 0 10px">${t('Студенты ({n})', { n: d.items.length })}</div>` + (d.items.length
     ? d.items.map((s) => `
       <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
         <div><div style="font-size:calc(15.5px * var(--fs))">${esc(s.fio)}</div><div class="tx">${esc(s.group)}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
           <input class="inp small" style="margin:0;width:84px" placeholder="0-100" data-sc="${s.id}">
-          <button class="badge" style="border:0;cursor:pointer;padding:9px 13px" data-put="${s.id}">Выставить</button>
+          <button class="badge" style="border:0;cursor:pointer;padding:9px 13px" data-put="${s.id}">${t('Выставить')}</button>
         </div>
       </div>`).join('')
-    : '<div class="card next-empty">Студентов такой группы нет.</div>');
+    : `<div class="card next-empty">${t('Студентов такой группы нет.')}</div>`);
   box.querySelectorAll('[data-put]').forEach((b) => (b.onclick = async () => {
     const sid = b.dataset.put;
     const val = box.querySelector('[data-sc="' + sid + '"]').value;
     try {
       await api('/teacher/grades', { method: 'POST', body: { studentId: sid, subjectId: v('gSubj'), score: Number(val) } });
-      toast('Оценка выставлена'); b.textContent = '✓'; b.disabled = true;
+      toast(t('Оценка выставлена')); b.textContent = '✓'; b.disabled = true;
     } catch (e) { toast(e.message, true); }
   }));
 }
@@ -752,30 +751,30 @@ const CAB_SECTIONS = [
 ];
 function swRow(key, icon, title, sub) {
   const on = !!getPrefs()[key];
-  return `<div class="set-row"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div>
-    <button class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(title)}" data-sw="${key}"><i></i></button></div>`;
+  return `<div class="set-row"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b>${sub ? `<span class="tx">${tv(sub)}</span>` : ''}</div>
+    <button class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(t(title))}" data-sw="${key}"><i></i></button></div>`;
 }
 function linkRow(icon, title, sub, act, cls) {
-  return `<button class="set-row link ${cls || ''}" data-act="${act}"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b>${sub ? `<span class="tx">${sub}</span>` : ''}</div><span class="chev">${svg('chev')}</span></button>`;
+  return `<button class="set-row link ${cls || ''}" data-act="${act}"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b>${sub ? `<span class="tx">${tv(sub)}</span>` : ''}</div><span class="chev">${svg('chev')}</span></button>`;
 }
 function segRow(key, icon, title, opts, cur) {
   if (cur === undefined) cur = getPrefs()[key];
-  return `<div class="set-row wrap"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${title}</b></div>
-    <div class="seg2 txt" role="radiogroup" aria-label="${esc(title)}">${opts.map(([v, l]) => `<button role="radio" aria-checked="${cur === v}" class="${cur === v ? 'on' : ''}" data-seg="${key}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+  return `<div class="set-row wrap"><span class="sr-ic">${svg(icon)}</span><div class="sr-t"><b>${t(title)}</b></div>
+    <div class="seg2 txt" role="radiogroup" aria-label="${esc(t(title))}">${opts.map(([v, l]) => `<button role="radio" aria-checked="${cur === v}" class="${cur === v ? 'on' : ''}" data-seg="${key}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
 }
 function modePreview(m, cur) {
   return `<button class="mode-card ${cur === m ? 'on' : ''}" data-mode="${m}" role="radio" aria-checked="${cur === m}">
     <span class="mp mp-${m}"><i></i><i></i><i></i></span>
-    <span class="mc-l">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}${MODES[m]}</span></button>`;
+    <span class="mc-l">${svg(m === 'light' ? 'sun' : m === 'dark' ? 'moon' : 'device')}${t(MODES[m])}</span></button>`;
 }
 function secHead(id, title, soon) {
   const ic = CAB_SECTIONS.find((s) => s[0] === id)[1];
-  return `<h2>${svg(ic)}${title}${soon ? '<span class="soon">в разработке</span>' : ''}</h2>`;
+  return `<h2>${svg(ic)}${t(title)}${soon ? `<span class="soon">${t('в разработке')}</span>` : ''}</h2>`;
 }
 function viewProfile(section) {
   stopPoll();
   const u = S.user, p = getPrefs(), pr = programOf(u);
-  const autoName = PALETTES[pr.palette].name;
+  const autoName = t(PALETTES[pr.palette].name);
   app.innerHTML = `
     ${miniHead('Личный кабинет')}
     <div id="pagebody" class="cab">
@@ -784,36 +783,36 @@ function viewProfile(section) {
           <div class="avatar">${esc(u.firstName.charAt(0).toUpperCase())}</div>
           <div class="pf-main">
             <div class="pf-fio">${esc(u.fio)}</div>
-            <div class="pf-sub">${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}${u.group ? ' · ' + esc(u.group) : ''}</div>
+            <div class="pf-sub">${u.role === 'teacher' ? t('Преподаватель') : t('Студент')}${u.group ? ' · ' + esc(u.group) : ''}</div>
             <div class="pf-sub pf-mail">${esc(u.email)}</div>
             <span class="pill pf-uni">${svg(pr.icon)}${esc(pr.name)}</span>
           </div>
         </div>
-        <nav class="cab-nav" aria-label="Разделы настроек">
-          ${CAB_SECTIONS.map(([id, ic, title]) => `<a href="#/profile/${id}" data-sec="${id}">${svg(ic)}<span>${title}</span></a>`).join('')}
+        <nav class="cab-nav" aria-label="${t('Разделы настроек')}">
+          ${CAB_SECTIONS.map(([id, ic, title]) => `<a href="#/profile/${id}" data-sec="${id}">${svg(ic)}<span>${t(title)}</span></a>`).join('')}
         </nav>
       </aside>
       <div class="cab-main">
         <section class="card set-sec" id="set-appearance">
           ${secHead('appearance', 'Оформление')}
-          <div class="set-lbl">Тема</div>
-          <div class="mode-cards" role="radiogroup" aria-label="Тема">${['light', 'dark', 'system'].map((m) => modePreview(m, p.mode)).join('')}</div>
-          <div class="set-lbl">Цвет сайта</div>
-          <div class="swatches" role="radiogroup" aria-label="Цвет сайта">
-            <button class="swatch auto ${p.palette === 'auto' ? 'on' : ''}" data-pal="auto" role="radio" aria-checked="${p.palette === 'auto'}" title="Авто · ${esc(autoName)}" style="--sw:${PALETTES[pr.palette].color}"><i></i><span>Авто</span></button>
-            ${Object.entries(PALETTES).map(([id, x]) => `<button class="swatch ${p.palette === id ? 'on' : ''}" data-pal="${id}" role="radio" aria-checked="${p.palette === id}" title="${esc(x.name)}" style="--sw:${x.color}"><i></i><span>${esc(x.name)}</span></button>`).join('')}
+          <div class="set-lbl">${t('Тема')}</div>
+          <div class="mode-cards" role="radiogroup" aria-label="${t('Тема')}">${['light', 'dark', 'system'].map((m) => modePreview(m, p.mode)).join('')}</div>
+          <div class="set-lbl">${t('Цвет сайта')}</div>
+          <div class="swatches" role="radiogroup" aria-label="${t('Цвет сайта')}">
+            <button class="swatch auto ${p.palette === 'auto' ? 'on' : ''}" data-pal="auto" role="radio" aria-checked="${p.palette === 'auto'}" title="${t('Авто')} · ${esc(autoName)}" style="--sw:${PALETTES[pr.palette].color}"><i></i><span>${t('Авто')}</span></button>
+            ${Object.entries(PALETTES).map(([id, x]) => `<button class="swatch ${p.palette === id ? 'on' : ''}" data-pal="${id}" role="radio" aria-checked="${p.palette === id}" title="${esc(t(x.name))}" style="--sw:${x.color}"><i></i><span>${esc(t(x.name))}</span></button>`).join('')}
           </div>
-          <div class="tx set-note">«Авто» — цвет вашей программы (${esc(pr.name)}). Тема и цвет применяются и в онлайн-экзамене.</div>
-          ${segRow('fontSize', 'type', 'Размер текста', [['sm', 'Мелкий'], ['md', 'Обычный'], ['lg', 'Крупный'], ['xl', 'Очень крупный']])}
+          <div class="tx set-note">${esc(t('«Авто» — цвет вашей программы ({p}). Тема и цвет применяются и в онлайн-экзамене.', { p: pr.name }))}</div>
+          ${segRow('fontSize', 'type', 'Размер текста', [['sm', t('Мелкий')], ['md', t('Обычный')], ['lg', t('Крупный')], ['xl', t('Очень крупный')]])}
           ${swRow('compact', 'device', 'Компактный режим', 'Плотнее карточки и списки')}
           ${swRow('reduceMotion', 'play', 'Меньше анимации', 'Отключить плавные переходы')}
         </section>
 
         <section class="card set-sec" id="set-language">
           ${secHead('language', 'Язык и регион')}
-          ${segRow('lang', 'globe', 'Язык интерфейса', [['ru', 'Русский'], ['kk', 'Қазақша'], ['en', 'English']])}
-          <div class="set-row"><span class="sr-ic">${svg('clock')}</span><div class="sr-t"><b>Часовой пояс</b><span class="tx">Астана, Костанай (UTC+5)</span></div></div>
-          <div class="set-row"><span class="sr-ic">${svg('calendar')}</span><div class="sr-t"><b>Начало недели</b><span class="tx">Понедельник</span></div></div>
+          ${segRow('lang', 'globe', 'Язык интерфейса', Object.entries(LANGS), getLang())}
+          <div class="set-row"><span class="sr-ic">${svg('clock')}</span><div class="sr-t"><b>${t('Часовой пояс')}</b><span class="tx">${t('Астана, Костанай (UTC+5)')}</span></div></div>
+          <div class="set-row"><span class="sr-ic">${svg('calendar')}</span><div class="sr-t"><b>${t('Начало недели')}</b><span class="tx">${esc(weekdayName(0))}</span></div></div>
         </section>
 
         <section class="card set-sec" id="set-notifications">
@@ -845,7 +844,7 @@ function viewProfile(section) {
           ${secHead('account', 'Аккаунт')}
           ${linkRow('info', 'О приложении', 'KU Portal v1.2', 'about')}
           ${linkRow('trash', 'Удалить аккаунт', 'Обратитесь в деканат', 'soon', 'danger')}
-          <button class="btn danger-ghost cab-out" id="outBtn">Выйти из аккаунта</button>
+          <button class="btn danger-ghost cab-out" id="outBtn">${t('Выйти из аккаунта')}</button>
         </section>
       </div>
     </div>
@@ -855,7 +854,11 @@ function viewProfile(section) {
   const rerender = () => { const y = window.scrollY; viewProfile(); window.scrollTo(0, y); };
   pb.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { setPref('mode', b.dataset.mode); rerender(); }));
   pb.querySelectorAll('[data-pal]').forEach((b) => (b.onclick = () => { setPref('palette', b.dataset.pal); rerender(); }));
-  pb.querySelectorAll('[data-seg]').forEach((b) => (b.onclick = () => { setPref(b.dataset.seg, b.dataset.v); rerender(); }));
+  pb.querySelectorAll('[data-seg]').forEach((b) => (b.onclick = () => {
+    if (b.dataset.seg === 'lang') setLang(b.dataset.v); // язык — настройка устройства (i18n.js)
+    else setPref(b.dataset.seg, b.dataset.v);
+    rerender();
+  }));
   pb.querySelectorAll('[data-sw]').forEach((b) => (b.onclick = () => {
     const on = !b.classList.contains('on');
     b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
@@ -864,7 +867,7 @@ function viewProfile(section) {
   pb.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     const a = b.dataset.act;
     if (a === 'about') toast('KU Portal v1.2 · ' + pr.name);
-    else toast('Скоро будет доступно');
+    else toast(t('Скоро будет доступно'));
   }));
   // оглавление: плавный переход к разделу без перерисовки страницы
   pb.querySelectorAll('[data-sec]').forEach((a) => (a.onclick = (e) => {
@@ -888,7 +891,7 @@ async function logout() {
 function viewStub(name) {
   app.innerHTML = `
     ${miniHead(name)}
-    <div class="stub">${svg('building')}<b>${esc(name)}</b>Раздел в разработке.<br>Скоро здесь появятся сервисы университета.</div>
+    <div class="stub">${svg('building')}<b>${esc(t(name))}</b>${t('Раздел в разработке.')}<br>${t('Скоро здесь появятся сервисы университета.')}</div>
     ${navHTML()}`;
 }
 

@@ -328,6 +328,7 @@ label.lbl { color: var(--text-2); font-size: calc(12.5px * var(--fs)); font-weig
 .auth .logo .mark svg { width: 44px; height: 44px; }
 .auth h1 { font-size: calc(22px * var(--fs)); font-weight: 700; }
 .auth .sub { color: var(--muted); font-size: calc(13.5px * var(--fs)); }
+.auth .auth-lang { display: flex; width: max-content; margin: -10px auto 16px; }
 .demo-box { margin-top: 18px; padding: 14px; border: 1px dashed var(--accent); border-radius: 14px; background: var(--accent-dim); }
 .demo-box b { display: block; font-size: calc(13.5px * var(--fs)); margin-bottom: 4px; color: var(--accent-deep); }
 .demo-box .tx { margin-bottom: 10px; }

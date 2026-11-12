@@ -1,0 +1,299 @@
+'use strict';
+/* KU Portal — язык интерфейса: русский (исходный), казахский, английский.
+ *
+ * t('Русская строка', { var: value }) → перевод на текущий язык; {var} подставляется.
+ * Ключ — сама русская строка: код остаётся читаемым, а строка без перевода
+ * просто показывается по-русски (в консоль пишется предупреждение — легко найти пропуск).
+ * Тот же словарь переводит фиксированные ответы сервера (ошибки API, ответы помощника без модели).
+ * Пользовательские данные (ФИО, группы, свои названия предметов) не переводятся;
+ * переводятся только встроенные названия предметов и типы занятий.
+ *
+ * Язык — настройка устройства: localStorage 'ku_lang' (работает и на экране входа, до авторизации).
+ */
+const LANGS = { ru: 'Русский', kk: 'Қазақша', en: 'English' };
+const LOCALES = { ru: 'ru-RU', kk: 'kk-KZ', en: 'en-GB' };
+let LANG = (() => { try { const l = localStorage.getItem('ku_lang'); return LANGS[l] ? l : 'ru'; } catch { return 'ru'; } })();
+function getLang() { return LANG; }
+function setLang(l) {
+  if (!LANGS[l]) return;
+  LANG = l;
+  try { localStorage.setItem('ku_lang', l); } catch { }
+  document.documentElement.lang = l;
+}
+document.documentElement.lang = LANG;
+
+/* [английский, казахский] */
+const I18N = {
+  /* --- общие --- */
+  'Главная': ['Home', 'Басты бет'],
+  'Экзамен': ['Exam', 'Емтихан'],
+  'Кабинет': ['Account', 'Кабинет'],
+  'Привет,': ['Hello,', 'Сәлем,'],
+  'Уведомления': ['Notifications', 'Хабарландырулар'],
+  'Профиль': ['Profile', 'Профиль'],
+  'Назад': ['Back', 'Артқа'],
+  'Загрузка…': ['Loading…', 'Жүктелуде…'],
+  'Сессия истекла': ['Session expired', 'Сессия аяқталды'],
+  'Ошибка сервера': ['Server error', 'Сервер қатесі'],
+  'Новых уведомлений нет': ['No new notifications', 'Жаңа хабарландыру жоқ'],
+  'Скоро будет доступно': ['Coming soon', 'Жақында қолжетімді болады'],
+  'Сохранено': ['Saved', 'Сақталды'],
+  'Студент': ['Student', 'Студент'],
+  'Преподаватель': ['Teacher', 'Оқытушы'],
+  'University of Arizona · международная программа': ['University of Arizona · international program', 'University of Arizona · халықаралық бағдарлама'],
+
+  /* --- вход и регистрация --- */
+  'Вход': ['Sign in', 'Кіру'],
+  'Регистрация': ['Sign up', 'Тіркелу'],
+  'Пароль': ['Password', 'Құпиясөз'],
+  'Войти': ['Sign in', 'Кіру'],
+  'Фамилия': ['Last name', 'Тегі'],
+  'Имя': ['First name', 'Аты'],
+  'Отчество (необязательно)': ['Middle name (optional)', 'Әкесінің аты (міндетті емес)'],
+  'Пароль (мин. 4 символа)': ['Password (min. 4 characters)', 'Құпиясөз (кемінде 4 таңба)'],
+  'Роль': ['Role', 'Рөлі'],
+  'Программа': ['Program', 'Бағдарлама'],
+  'Группа (например: ИСУ-26-2-а)': ['Group (e.g. ИСУ-26-2-а)', 'Топ (мысалы: ИСУ-26-2-а)'],
+  'Оценки и расписание появятся, когда преподаватель добавит их для вашей группы': ['Grades and schedule will appear once a teacher adds them for your group', 'Бағалар мен кесте оқытушы оларды тобыңызға қосқанда пайда болады'],
+  'Создать аккаунт': ['Create account', 'Аккаунт құру'],
+  'Тестовый вход': ['Demo sign-in', 'Сынақ кіру'],
+  'Пароль у всех демо-аккаунтов: {p}. Преподаватель — международная программа University of Arizona, студент — Kozybayev University.': ['Password for all demo accounts: {p}. The teacher is in the University of Arizona international program, the student is at Kozybayev University.', 'Барлық демо-аккаунттың құпиясөзі: {p}. Оқытушы — University of Arizona халықаралық бағдарламасы, студент — Kozybayev University.'],
+  'Язык': ['Language', 'Тіл'],
+
+  /* --- ошибки сервера (server.js) --- */
+  'Укажите фамилию и имя': ['Enter your last and first name', 'Тегіңіз бен атыңызды енгізіңіз'],
+  'Некорректный email': ['Invalid email', 'Email қате'],
+  'Пароль — минимум 4 символа': ['Password must be at least 4 characters', 'Құпиясөз кемінде 4 таңба болуы керек'],
+  'Выберите роль': ['Choose a role', 'Рөлді таңдаңыз'],
+  'Выберите программу': ['Choose a program', 'Бағдарламаны таңдаңыз'],
+  'Укажите группу': ['Enter a group', 'Топты көрсетіңіз'],
+  'Такой email уже зарегистрирован': ['This email is already registered', 'Бұл email тіркелген'],
+  'Неверный email или пароль': ['Wrong email or password', 'Email немесе құпиясөз қате'],
+  'Не авторизован': ['Not signed in', 'Жүйеге кірмегенсіз'],
+  'Укажите название предмета': ['Enter a subject name', 'Пән атауын енгізіңіз'],
+  'Выберите студента': ['Choose a student', 'Студентті таңдаңыз'],
+  'Выберите свой предмет': ['Choose one of your subjects', 'Өз пәніңізді таңдаңыз'],
+  'Балл — число от 0 до 100': ['Score must be a number from 0 to 100', 'Балл 0-ден 100-ге дейінгі сан болуы керек'],
+  'Укажите время (ЧЧ:ММ)': ['Enter time (HH:MM)', 'Уақытты енгізіңіз (СС:ММ)'],
+  'Пустой вопрос': ['Empty question', 'Сұрақ бос'],
+  'Не найдено': ['Not found', 'Табылмады'],
+  'Внутренняя ошибка': ['Internal error', 'Ішкі қате'],
+
+  /* --- главная --- */
+  'Виджеты': ['Widgets', 'Виджеттер'],
+  'Сервисы': ['Services', 'Сервистер'],
+  'Общий балл за семестр': ['Overall semester score', 'Семестрдегі жалпы балл'],
+  'Время: {v}': ['Time: {v}', 'Уақыты: {v}'],
+  'Аудитория: {v}': ['Room: {v}', 'Аудитория: {v}'],
+  'Преподаватель: {v}': ['Teacher: {v}', 'Оқытушы: {v}'],
+  'Группа: {v}': ['Group: {v}', 'Топ: {v}'],
+  'Следующее занятие в расписании': ['Next class in your schedule', 'Кестедегі келесі сабақ'],
+  'Ближайших занятий пока нет.': ['No upcoming classes yet.', 'Алдағы сабақтар әзірге жоқ.'],
+  'Преподаватель ещё не добавил расписание для группы {g}.': ['The teacher has not added a schedule for group {g} yet.', 'Оқытушы {g} тобына кестені әлі қоспады.'],
+  'Рейтинг': ['Rating', 'Рейтинг'],
+  'Расписание': ['Schedule', 'Сабақ кестесі'],
+  'Успеваемость': ['Grades', 'Үлгерім'],
+  'AI-помощник': ['AI assistant', 'AI-көмекші'],
+  'Посещаемость': ['Attendance', 'Сабаққа қатысу'],
+  'Общежитие': ['Dormitory', 'Жатақхана'],
+  'Голосование': ['Voting', 'Дауыс беру'],
+  'Библиотека': ['Library', 'Кітапхана'],
+  'Сайт Kozybayev University': ['Kozybayev University website', 'Kozybayev University сайты'],
+  'Новости, объявления и задания': ['News, announcements and assignments', 'Жаңалықтар, хабарландырулар және тапсырмалар'],
+  'Добавить занятие': ['Add class', 'Сабақ қосу'],
+  'Оценки': ['Grades', 'Бағалар'],
+  'Кабинет преподавателя': ['Teacher dashboard', 'Оқытушы кабинеті'],
+  'предметов': ['subjects', 'пән'],
+  'Онлайн-экзамен': ['Online exam', 'Онлайн емтихан'],
+  'Тесты, writing, speaking и ведомость': ['Tests, writing, speaking and grade sheet', 'Тесттер, writing, speaking және ведомость'],
+  'Создавайте тесты и открывайте комнаты экзамена для групп': ['Create tests and open exam rooms for groups', 'Тест құрып, топтарға емтихан бөлмесін ашыңыз'],
+  'Раздел «Экзамен»': ['“Exam” section', '«Емтихан» бөлімі'],
+
+  /* --- расписание, оценки, рейтинг --- */
+  'Занятий пока нет.': ['No classes yet.', 'Сабақтар әзірге жоқ.'],
+  'Оценок пока нет': ['No grades yet', 'Бағалар әзірге жоқ'],
+  'Средний балл': ['Average score', 'Орташа балл'],
+  'Оценки появятся, когда преподаватель выставит их.': ['Grades will appear once the teacher posts them.', 'Бағалар оқытушы қойғанда пайда болады.'],
+  'Группа {g}': ['Group {g}', '{g} тобы'],
+  'Вы на {n}-м месте из {total}': ['You are #{n} of {total}', '{total} студенттің ішінде {n}-орындасыз'],
+  'Пока нет оценок в группе': ['No grades in the group yet', 'Топта әзірге баға жоқ'],
+  'В группе пока нет студентов.': ['There are no students in the group yet.', 'Топта әзірге студент жоқ.'],
+
+  /* --- экзамен --- */
+  'Тесты онлайн': ['Online tests', 'Онлайн тесттер'],
+  'Grammar, vocabulary и другие тесты с таймером — прогресс сохраняется, если закрыть вкладку.': ['Grammar, vocabulary and other timed tests — progress is kept if you close the tab.', 'Grammar, vocabulary және таймері бар басқа тесттер — қойындыны жапсаңыз да прогресс сақталады.'],
+  'Письменная часть экзамена прямо в браузере, черновик не потеряется.': ['The written part of the exam right in your browser — your draft will not be lost.', 'Емтиханның жазбаша бөлігі тікелей браузерде, жоба жоғалмайды.'],
+  'Speaking-очередь': ['Speaking queue', 'Speaking кезегі'],
+  'Комнаты экзамена с очередью на устную часть и live-обновлениями.': ['Exam rooms with a queue for the oral part and live updates.', 'Ауызша бөлімге кезегі және live-жаңартулары бар емтихан бөлмелері.'],
+  'Результаты': ['Results', 'Нәтижелер'],
+  'Баллы по частям экзамена и разбор ответов.': ['Scores for each part of the exam and answer review.', 'Емтихан бөліктері бойынша балдар және жауаптарды талдау.'],
+  'Редактор тестов': ['Test editor', 'Тест редакторы'],
+  'Создание тестов с разными типами вопросов, импорт и экспорт.': ['Create tests with different question types, import and export.', 'Әр түрлі сұрақтары бар тесттер құру, импорт және экспорт.'],
+  'Комнаты экзамена': ['Exam rooms', 'Емтихан бөлмелері'],
+  'Собираете экзамен из тестов, writing и speaking, открываете комнату группе.': ['Build an exam from tests, writing and speaking, then open the room for a group.', 'Емтиханды тесттерден, writing және speaking-тен құрап, топқа бөлме ашасыз.'],
+  'Вызов студентов, таймер ответа, оценка устной части.': ['Call students, answer timer, grading of the oral part.', 'Студенттерді шақыру, жауап таймері, ауызша бөлімді бағалау.'],
+  'Ведомость': ['Grade sheet', 'Ведомость'],
+  'Сводные баллы студентов по всем частям экзамена.': ['Students’ total scores across all parts of the exam.', 'Студенттердің емтиханның барлық бөлігі бойынша жиынтық балдары.'],
+  'Открываем онлайн-экзамен…': ['Opening the online exam…', 'Онлайн емтихан ашылуда…'],
+  'Переходим в сервис экзаменов': ['Going to the exam service', 'Емтихан сервисіне өтудеміз'],
+  'Сервис экзаменов': ['Exam service', 'Емтихан сервисі'],
+  'Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.': ['A separate site for running written exams: tests, writing, speaking and the grade sheet in one place.', 'Жазбаша емтихан өткізуге арналған жеке сайт: тесттер, writing, speaking және ведомость бір жерде.'],
+  'Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.': ['A separate site for taking exams online: tests, writing and speaking sign-up in one place.', 'Емтиханды онлайн тапсыруға арналған жеке сайт: тесттер, writing және speaking-ке жазылу бір жерде.'],
+  'Проверяем доступность сайта…': ['Checking the site…', 'Сайттың қолжетімділігі тексерілуде…'],
+  'Перейти к онлайн-экзамену': ['Go to the online exam', 'Онлайн емтиханға өту'],
+  'Открыть в новой вкладке': ['Open in a new tab', 'Жаңа қойындыда ашу'],
+  'Вход на сайте экзаменов отдельный.': ['The exam site has its own sign-in.', 'Емтихан сайтына жеке кіресіз.'],
+  'Используйте логин и пароль, которые выдал преподаватель. Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.': ['Use the login and password given by your teacher. You can return to the portal with the “KU Portal” button in the exam site’s top bar.', 'Оқытушы берген логин мен құпиясөзді пайдаланыңыз. Порталға емтихан сайтының жоғарғы панеліндегі «KU Portal» батырмасымен оралуға болады.'],
+  'Сайт доступен': ['The site is available', 'Сайт қолжетімді'],
+  'Сайт экзаменов временно недоступен': ['The exam site is temporarily unavailable', 'Емтихан сайты уақытша қолжетімсіз'],
+  'Не удалось связаться с сайтом экзаменов': ['Could not reach the exam site', 'Емтихан сайтымен байланысу мүмкін болмады'],
+
+  /* --- AI-помощник --- */
+  'Здравствуйте! Я AI-помощник Kozybayev University 🎓\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.': ['Hello! I am the Kozybayev University AI assistant 🎓\n\nAsk me anything about the university: admission, programs, dormitory, schedule and so on. I take information from the official website ku.edu.kz.', 'Сәлеметсіз бе! Мен Kozybayev University-дің AI-көмекшісімін 🎓\n\nУниверситет туралы кез келген нәрсені сұраңыз: түсу, мамандықтар, жатақхана, кесте және т.б. Ақпаратты ресми ku.edu.kz сайтынан аламын.'],
+  'уточняю статус…': ['checking status…', 'күйі тексерілуде…'],
+  'модель: {m}': ['model: {m}', 'модель: {m}'],
+  'модель не найдена, режим поиска по сайту': ['model not found, website search mode', 'модель табылмады, сайттан іздеу режимі'],
+  'Задайте вопрос…': ['Ask a question…', 'Сұрақ қойыңыз…'],
+  'Здравствуйте! Я AI-помощник Kozybayev University. Спрашивайте о вузе: поступление, расписание, общежитие и т.д.': ['Hello! I am the Kozybayev University AI assistant. Ask about the university: admission, schedule, dormitory and so on.', 'Сәлеметсіз бе! Мен Kozybayev University-дің AI-көмекшісімін. Университет туралы сұраңыз: түсу, кесте, жатақхана және т.б.'],
+  'Нашёл на сайте ku.edu.kz:': ['Found on ku.edu.kz (in Russian):', 'ku.edu.kz сайтынан таптым (орыс тілінде):'],
+  'К сожалению, на сайте ku.edu.kz я не нашёл ответа на этот вопрос. Попробуйте уточнить вопрос или обратитесь в приёмную комиссию / деканат.': ['Unfortunately, I could not find an answer to this question on ku.edu.kz. Try rephrasing it or contact the admissions office / dean’s office.', 'Өкінішке қарай, ku.edu.kz сайтынан бұл сұраққа жауап таппадым. Сұрақты нақтылап көріңіз немесе қабылдау комиссиясына / деканатқа хабарласыңыз.'],
+  'Локальная ИИ-модель сейчас недоступна. Запустите её так:\n\nollama serve\n(и, если модель ещё не скачана: ollama pull qwen2.5:1.5b)\n\nПока могу отвечать только по кэшу сайта ku.edu.kz, а он недоступен.': ['The local AI model is currently unavailable. Start it like this:\n\nollama serve\n(and, if the model is not downloaded yet: ollama pull qwen2.5:1.5b)\n\nFor now I can only answer from the ku.edu.kz cache, and it is unavailable.', 'Жергілікті ЖИ-модель қазір қолжетімсіз. Оны былай іске қосыңыз:\n\nollama serve\n(модель әлі жүктелмесе: ollama pull qwen2.5:1.5b)\n\nӘзірге тек ku.edu.kz сайтының кэші бойынша жауап бере аламын, ал ол қолжетімсіз.'],
+
+  /* --- преподаватель: расписание и оценки --- */
+  'У вас пока нет предметов.': ['You have no subjects yet.', 'Сізде әзірге пән жоқ.'],
+  'Предмет': ['Subject', 'Пән'],
+  'Тип занятия': ['Class type', 'Сабақ түрі'],
+  'Группа': ['Group', 'Топ'],
+  'Например: ИСУ-26-2-а': ['E.g. ИСУ-26-2-а', 'Мысалы: ИСУ-26-2-а'],
+  'День недели': ['Day of the week', 'Апта күні'],
+  'Начало': ['Start', 'Басталуы'],
+  'Конец': ['End', 'Аяқталуы'],
+  'Аудитория': ['Room', 'Аудитория'],
+  'Мои занятия': ['My classes', 'Менің сабақтарым'],
+  'Занятие добавлено': ['Class added', 'Сабақ қосылды'],
+  'ауд. {r}': ['room {r}', '{r} ауд.'],
+  'Выставить оценки': ['Grade students', 'Баға қою'],
+  'Группа студентов': ['Student group', 'Студенттер тобы'],
+  'Найти': ['Find', 'Іздеу'],
+  'Студенты ({n})': ['Students ({n})', 'Студенттер ({n})'],
+  'Выставить': ['Grade', 'Қою'],
+  'Студентов такой группы нет.': ['No students in this group.', 'Мұндай топта студент жоқ.'],
+  'Оценка выставлена': ['Grade posted', 'Баға қойылды'],
+  'Лек.': ['Lecture', 'Дәріс'],
+  'Практ.': ['Practice', 'Практика'],
+  'Лаб.': ['Lab', 'Зертхана'],
+  /* встроенные названия предметов (server.js, DISCIPLINES) */
+  'Английский язык': ['English', 'Ағылшын тілі'],
+  'Высшая математика': ['Higher Mathematics', 'Жоғары математика'],
+  'Политология': ['Political Science', 'Саясаттану'],
+  'Экология': ['Ecology', 'Экология'],
+  'Экономика': ['Economics', 'Экономика'],
+  'Введение в информационные технологии': ['Introduction to Information Technology', 'Ақпараттық технологияларға кіріспе'],
+  'Другие предметы': ['Other subjects', 'Басқа пәндер'],
+  'Занятие': ['Class', 'Сабақ'],
+
+  /* --- личный кабинет --- */
+  'Личный кабинет': ['My account', 'Жеке кабинет'],
+  'Разделы настроек': ['Settings sections', 'Баптау бөлімдері'],
+  'в разработке': ['coming soon', 'әзірленуде'],
+  'Оформление': ['Appearance', 'Безендіру'],
+  'Тема': ['Theme', 'Тақырып'],
+  'Светлая': ['Light', 'Ашық'],
+  'Тёмная': ['Dark', 'Қараңғы'],
+  'Как в системе': ['System', 'Жүйедегідей'],
+  'Цвет сайта': ['Site color', 'Сайт түсі'],
+  'Авто': ['Auto', 'Авто'],
+  'Kozybayev': ['Kozybayev', 'Kozybayev'],
+  'Arizona': ['Arizona', 'Arizona'],
+  'Writing': ['Writing', 'Writing'],
+  'Изумрудный': ['Emerald', 'Зүмірет'],
+  'Фиолетовый': ['Violet', 'Күлгін'],
+  'Коралловый': ['Coral', 'Маржан'],
+  'Графит': ['Graphite', 'Графит'],
+  '«Авто» — цвет вашей программы ({p}). Тема и цвет применяются и в онлайн-экзамене.': ['“Auto” is your program’s color ({p}). The theme and color also apply in the online exam.', '«Авто» — бағдарламаңыздың түсі ({p}). Тақырып пен түс онлайн емтиханда да қолданылады.'],
+  'Размер текста': ['Text size', 'Мәтін өлшемі'],
+  'Мелкий': ['Small', 'Кіші'],
+  'Обычный': ['Normal', 'Қалыпты'],
+  'Крупный': ['Large', 'Ірі'],
+  'Очень крупный': ['Extra large', 'Өте ірі'],
+  'Компактный режим': ['Compact mode', 'Ықшам режим'],
+  'Плотнее карточки и списки': ['Denser cards and lists', 'Карточкалар мен тізімдер тығызырақ'],
+  'Меньше анимации': ['Reduce motion', 'Анимацияны азайту'],
+  'Отключить плавные переходы': ['Turn off smooth transitions', 'Біркелкі ауысуларды өшіру'],
+  'Язык и регион': ['Language & region', 'Тіл және аймақ'],
+  'Язык интерфейса': ['Interface language', 'Интерфейс тілі'],
+  'Часовой пояс': ['Time zone', 'Уақыт белдеуі'],
+  'Астана, Костанай (UTC+5)': ['Astana, Kostanay (UTC+5)', 'Астана, Қостанай (UTC+5)'],
+  'Начало недели': ['First day of week', 'Аптаның басы'],
+  'Понедельник': ['Monday', 'Дүйсенбі'],
+  'Push-уведомления': ['Push notifications', 'Push-хабарландырулар'],
+  'На телефоне и в браузере': ['On your phone and in the browser', 'Телефонда және браузерде'],
+  'Новые оценки': ['New grades', 'Жаңа бағалар'],
+  'Когда преподаватель выставит балл': ['When a teacher posts a score', 'Оқытушы балл қойғанда'],
+  'Изменения в расписании': ['Schedule changes', 'Кестедегі өзгерістер'],
+  'Перенос и отмена занятий': ['Rescheduled and cancelled classes', 'Сабақтың ауыстырылуы мен тоқтатылуы'],
+  'Экзамены': ['Exams', 'Емтихандар'],
+  'Напоминание за день и за час': ['Reminder a day and an hour before', 'Бір күн және бір сағат бұрын еске салу'],
+  'Звук': ['Sound', 'Дыбыс'],
+  'Звуковой сигнал уведомлений': ['Notification sound', 'Хабарландыру дыбысы'],
+  'Email-рассылка': ['Email newsletter', 'Email-тарату'],
+  'Безопасность': ['Security', 'Қауіпсіздік'],
+  'Сменить пароль': ['Change password', 'Құпиясөзді өзгерту'],
+  'Последнее изменение: при регистрации': ['Last changed: at sign-up', 'Соңғы өзгеріс: тіркелу кезінде'],
+  'Двухфакторная аутентификация': ['Two-factor authentication', 'Екі факторлы аутентификация'],
+  'Код подтверждения при входе': ['Confirmation code at sign-in', 'Кіру кезінде растау коды'],
+  'Оповещать о новом входе': ['Alert me about new sign-ins', 'Жаңа кіру туралы хабарлау'],
+  'Письмо при входе с нового устройства': ['Email when signing in from a new device', 'Жаңа құрылғыдан кіргенде хат жіберу'],
+  'Активные сеансы': ['Active sessions', 'Белсенді сеанстар'],
+  'Это устройство · сейчас': ['This device · now', 'Осы құрылғы · қазір'],
+  'Конфиденциальность': ['Privacy', 'Құпиялық'],
+  'Показывать меня в рейтинге группы': ['Show me in the group rating', 'Мені топ рейтингінде көрсету'],
+  'Одногруппники видят ваше место': ['Groupmates see your position', 'Топтастарыңыз орныңызды көреді'],
+  'Статус «в сети»': ['“Online” status', '«Желіде» мәртебесі'],
+  'Видно преподавателям и группе': ['Visible to teachers and your group', 'Оқытушыларға және топқа көрінеді'],
+  'Скачать мои данные': ['Download my data', 'Деректерімді жүктеп алу'],
+  'Оценки, расписание, профиль': ['Grades, schedule, profile', 'Бағалар, кесте, профиль'],
+  'Аккаунт': ['Account', 'Аккаунт'],
+  'О приложении': ['About the app', 'Қолданба туралы'],
+  'Удалить аккаунт': ['Delete account', 'Аккаунтты жою'],
+  'Обратитесь в деканат': ['Contact the dean’s office', 'Деканатқа хабарласыңыз'],
+  'Выйти из аккаунта': ['Sign out', 'Аккаунттан шығу'],
+
+  /* --- заглушки --- */
+  'Раздел в разработке.': ['This section is under development.', 'Бөлім әзірленуде.'],
+  'Скоро здесь появятся сервисы университета.': ['University services will appear here soon.', 'Жақында мұнда университет сервистері пайда болады.'],
+};
+
+const I18N_MISSING = new Set();
+function t(ru, vars) {
+  let s = ru;
+  if (LANG !== 'ru') {
+    const tr = I18N[ru];
+    if (tr) s = tr[LANG === 'en' ? 0 : 1];
+    else if (!I18N_MISSING.has(ru)) { I18N_MISSING.add(ru); console.warn('[i18n] нет перевода:', ru); }
+  }
+  if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  return s;
+}
+/* Перевод значения, пришедшего с сервера, только если для него есть перевод (без предупреждений) */
+function tv(s) { return LANG !== 'ru' && I18N[s] ? I18N[s][LANG === 'en' ? 0 : 1] : s; }
+
+/* Даты и дни недели. Русский и английский — через Intl; для казахского — свои названия:
+   данные локали kk есть не во всех браузерах (без них Intl выдаёт «M11 13, Fri»). */
+const KK_MONTHS = ['қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мамыр', 'маусым', 'шілде', 'тамыз', 'қыркүйек', 'қазан', 'қараша', 'желтоқсан'];
+const KK_DAYS = ['дүйсенбі', 'сейсенбі', 'сәрсенбі', 'бейсенбі', 'жұма', 'сенбі', 'жексенбі'];
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+function weekdayName(i) { // 0 = понедельник
+  if (LANG === 'kk') return cap(KK_DAYS[i] || '');
+  const d = new Date(2024, 0, 1 + i); // 1 января 2024 — понедельник
+  return cap(new Intl.DateTimeFormat(LOCALES[LANG], { weekday: 'long' }).format(d));
+}
+function fmtDay(iso, withWeekday) { // 'YYYY-MM-DD' → «Пятница, 13 ноября» / «Friday 13 November» / «13 қараша, жұма»
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return iso || '';
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  if (LANG === 'kk') return d.getDate() + ' ' + KK_MONTHS[d.getMonth()] + (withWeekday ? ', ' + KK_DAYS[(d.getDay() + 6) % 7] : '');
+  const o = { day: 'numeric', month: 'long' };
+  if (withWeekday) o.weekday = 'long';
+  return cap(new Intl.DateTimeFormat(LOCALES[LANG], o).format(d));
+}

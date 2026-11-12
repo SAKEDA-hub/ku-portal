@@ -110,6 +110,7 @@ function nextLesson(group) {
       return {
         subject: subjName(r.subjectId), type: r.type,
         date: fmtDate(d), time: `${r.start} - ${r.end}`,
+        iso: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, // клиент форматирует на языке интерфейса
         room: r.room, teacher: teacherFio(r.teacherId),
       };
     }
