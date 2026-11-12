@@ -410,22 +410,30 @@ const AI_STOP = new Set('это как что для если можно ест�
 function aiTerms(text) {
   return String(text || '').toLowerCase().replace(/ё/g, 'е').match(/[a-zа-яәғқңөұүһі0-9]+/g) || [];
 }
+function aiStem(word) {
+  return /[а-яәғқңөұүһі]/i.test(word) && word.length > 5 ? word.slice(0, 5) : word;
+}
 function retrieveKU(question, limit = 6) {
   const terms = [...new Set(aiTerms(question).filter((w) => w.length >= 3 && !AI_STOP.has(w)))];
   if (!terms.length) return [];
   const aliases = { педог: 'педагог', педогогика: 'педагогика', универ: 'университет', стоимость: 'цена обучение', баллы: 'балл' };
-  const expanded = new Set(terms);
-  for (const term of terms) if (aliases[term]) aiTerms(aliases[term]).forEach((t) => expanded.add(t));
+  const expanded = new Set(terms.map(aiStem));
+  for (const term of terms) if (aliases[term]) aiTerms(aliases[term]).map(aiStem).forEach((t) => expanded.add(t));
+  const physicalCulture = /физич|физкультур|подготовк/i.test(question);
+  if (physicalCulture) ['физич', 'культур', 'спорт', 'подго'].forEach((t) => expanded.add(t));
+  const costQuestion = /стоимост|цен|оплат|скольк|тенге/i.test(question);
   const ranked = kuChunks.map((row) => {
     const text = `${row.title || ''} ${row.text || ''}`.toLowerCase().replace(/ё/g, 'е');
+    const textTerms = aiTerms(text).map(aiStem);
     let score = 0;
     for (const term of expanded) {
       if (term.length < 3) continue;
-      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const count = (text.match(new RegExp(escaped, 'g')) || []).length;
+      const count = textTerms.filter((t) => t.startsWith(term)).length;
       if (count) score += Math.min(count, 6) * (term.length >= 6 ? 2 : 1);
     }
-    const canonical = terms.filter((term) => term.length >= 4 && text.includes(term)).length;
+    const canonical = terms.filter((term) => textTerms.some((t) => t.startsWith(aiStem(term)))).length;
+    if (costQuestion && /\b\d{3}[\s\u00a0]?\d{3}\b/.test(row.text || '') && /тенге/i.test(row.text || '')) score += 24;
+    if (physicalCulture && /физическ|физкультур|6B0140/i.test(`${row.title || ''} ${row.text || ''}`)) score += 12;
     return { row, score, canonical };
   }).filter((x) => x.score > 0 && (terms.length < 2 || x.canonical > 0));
   ranked.sort((a, b) => b.score - a.score);
