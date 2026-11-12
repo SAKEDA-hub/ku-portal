@@ -850,7 +850,7 @@ async function viewMyResults() {
 }
 
 /* ============================ AI-помощник ============================ */
-const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я AI-помощник Kozybayev University 🎓\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.' }];
+const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я помощник Kozybayev University 🎓\n\nМогу объяснить информацию из материалов университета: о программах обучения, стоимости, поступлении, общежитии и правилах. В ответе укажу источники.' }];
 let aiHistory = null;
 async function viewAI() {
   stopPoll();
@@ -880,8 +880,8 @@ async function viewAI() {
   api('/ai/status').then((st) => {
     const dot = document.getElementById('aidot'), stt = document.getElementById('aist');
     if (!dot) return;
-    if (st.online) { dot.classList.add('on'); stt.textContent = 'модель: ' + st.model; }
-    else stt.textContent = 'модель не найдена, режим поиска по сайту';
+    if (st.online) { dot.classList.add('on'); stt.textContent = 'Gemma подключена · база KU: ' + st.ctx + ' фрагментов'; }
+    else stt.textContent = 'Gemma недоступна · проверьте соединение с LM Studio';
   }).catch(() => { });
 }
 function paintChat() {
