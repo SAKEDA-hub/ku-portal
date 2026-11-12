@@ -219,7 +219,7 @@ async function viewHome() {
 
     const srvs = [
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['Электронная очередь', 'clipboard', '#/exam'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
+      ['Экзамен', 'clipboard', '#/exam'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/stub/Посещаемость'],
       ['Общежитие', 'building', '#/stub/Общежитие'], ['Голосование', 'mic', '#/stub/Голосование'], ['Библиотека', 'chart', '#/stub/Библиотека'],
     ];
 
@@ -287,7 +287,7 @@ async function viewHomeT() {
     const totalWaiting = d.items.filter((s) => s.status !== 'closed').reduce((a, s) => a + s.waiting, 0);
     const soon = d.items.find((s) => s.status !== 'closed' && (s.waiting > 0 || s.called > 0)) || d.items.find((s) => s.status !== 'closed');
     const srvs = [
-      ['Электронная очередь', 'clipboard', '#/t/queue'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
+      ['Экзамен', 'clipboard', '#/t/queue'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
       ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'], ['Мои предметы', 'book', '#/t/queue'],
     ];
     document.getElementById('pagebody').innerHTML = `
@@ -313,7 +313,7 @@ async function viewHomeT() {
         <div class="foot">${svg('info')} Комната для спикинга</div>
       </div>` : `
       <div class="card" style="border-left:8px solid var(--accent)">
-        <div class="next-empty">Активных зачётов пока нет.<br>Откройте комнату в разделе «Электронная очередь».</div>
+        <div class="next-empty">Активных зачётов пока нет.<br>Откройте комнату в разделе «Экзамен».</div>
       </div>`}
       <div class="section-label">Сервисы</div>
       <div class="srv-grid">
@@ -392,7 +392,7 @@ async function viewRating() {
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
 }
 
-/* ============================ Электронная очередь: общее ============================ */
+/* ============================ Экзамен: общее ============================ */
 let META = null;
 async function meta() {
   if (!META) META = await api('/queue/meta');
@@ -462,7 +462,7 @@ function tone(freqs, gap) {
 }
 
 /*
- * Точка расширения раздела «Электронная очередь» (см. AGENTS.md, раздел «Модули очереди»).
+ * Точка расширения раздела «Экзамен» (см. AGENTS.md, раздел «Модули очереди»).
  * Будущие модули — пробные тесты, задания по грамматике и вокабуляру, редактор заданий преподавателя —
  * регистрируются через registerQueueModule() и получают свою кнопку в разделе очереди и маршрут
  * #/exam/m/<id> (студент) или #/t/m/<id> (преподаватель). Пока реестр пуст, на сайте ничего не выводится.
@@ -620,7 +620,7 @@ function askNotify() {
 let qTab = null, qLevel = 0;
 async function viewExamList(tab) {
   stopPoll();
-  app.innerHTML = `${miniHead('Электронная очередь')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
   try { await meta(); } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
   qTab = tab || qTab || lsGet('ku_qtab', 'english');
   qLevel = Number(lsGet('ku_qlvl', '0')) || 0;
@@ -918,7 +918,7 @@ async function sendChat() {
 let tTab = 'all', tForm = { discipline: null, level: 2 };
 async function viewTQueue() {
   stopPoll();
-  app.innerHTML = `${miniHead('Электронная очередь')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
+  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
   try { await meta(); } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
   tTab = lsGet('ku_ttab', 'all');
   if (!tForm.discipline) tForm.discipline = tTab !== 'all' ? tTab : 'english';
@@ -1356,7 +1356,7 @@ function viewProfile() {
         <div class="pf-sub">${esc(u.email)}</div>
       </div>
     </div>
-    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div>📋 Электронная очередь</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Электронная очередь</div><div class="chev">${svg('chev')}</div></a>`}
+    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div>📋 Экзамен</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Экзамен</div><div class="chev">${svg('chev')}</div></a>`}
     <a class="card lstrow" style="display:flex" href="#/ai"><div>🤖 AI-помощник</div><div class="chev">${svg('chev')}</div></a>
     <div style="margin:10px 14px"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
     <div class="tx" style="text-align:center;margin-top:14px">KU Portal v1.0 · Kozybayev University</div>

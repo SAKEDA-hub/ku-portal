@@ -76,18 +76,15 @@ GitHub Pages не подходит: порталу нужен сервер. Бе
 | `DEMO` | включено | `0` — не создавать тестовые аккаунты |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Адрес Ollama для помощника |
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | Модель помощника |
-| `EXAM_SYNC_URL` | — | Адрес сайта «Онлайн-экзамен» ([exam-sync](https://github.com/StephCurrysvg/exam-sync)) для кнопки в разделе «Экзамен». Без неё: локально — тот же хост, порт `3001`, на хостинге — `https://exam-sync.onrender.com` |
+| `EXAM_SYNC_URL` | — | Адрес отдельно развёрнутого exam-sync. По умолчанию используется встроенный `/exam-sync/` |
 
 ### Онлайн-экзамен
 
-В разделе «Экзамен» у студента и преподавателя есть кнопка «Онлайн-экзамен»: экран-переход на отдельный сайт [exam-sync](https://github.com/StephCurrysvg/exam-sync) (код — `public/modules/online-exam.js`). На сайте экзаменов появляется кнопка «KU Portal» для возврата. Локально оба сервиса запускаются так:
+В разделе «Экзамен» у студента и преподавателя есть кнопка **«Онлайн-экзамен»**. Она ведёт на сервис экзаменов [exam-sync](https://github.com/StephCurrysvg/exam-sync), встроенный в этот же сервер по адресу `/exam-sync/` — отдельный деплой не нужен. На сайте экзаменов есть кнопка «KU Portal» для возврата.
 
-```bash
-node server.js                       # KU Portal — http://localhost:3000
-cd ../exam-sync && PORT=3001 node server.js   # Онлайн-экзамен — http://localhost:3001
-```
-
-На Render укажите в настройках сервиса портала (Environment) переменную `EXAM_SYNC_URL` с адресом развёрнутого exam-sync.
+- Вход в онлайн-экзамен отдельный: студенты `user`, `user1`–`user4` / `1`, преподаватель `teacher` / `admin`.
+- Данные экзаменов — `data/exam-sync.json` (создаётся сам; при первом запуске берутся демо-данные из `exam-sync/seed.json`).
+- Код: `exam-sync/` (интерфейс и сервер синхронизации), `public/modules/online-exam.js` (кнопка и экран перехода).
 
 Помощник по вопросам о вузе использует локальную модель через [Ollama](https://ollama.com) и тексты с сайта ku.edu.kz. Без Ollama он отвечает найденными на сайте фрагментами.
 
@@ -95,6 +92,7 @@ cd ../exam-sync && PORT=3001 node server.js   # Онлайн-экзамен — 
 
 - `server.js` — HTTP-сервер, API, очередь, live-обновления (Server-Sent Events).
 - `public/` — одностраничный интерфейс (HTML, CSS, JavaScript), шрифт Montserrat лежит локально.
+- `exam-sync/` — встроенный сервис «Онлайн-экзамен».
 - `data/db.json` — данные, создаются автоматически.
 
 <details>

@@ -5,26 +5,17 @@
  * в существующих экранах не меняет: кнопка появляется в панели модулей очереди у студента и преподавателя,
  * по ней открывается экран-переход #/exam/m/online-exam (#/t/m/online-exam).
  *
- * Адрес сайта экзаменов задаётся переменной окружения EXAM_SYNC_URL на сервере портала
- * (отдаётся через GET /api/modules/online-exam/config). Если она не задана:
- *  - при локальном запуске (localhost / адрес в Wi-Fi сети) — тот же хост, порт 3001;
- *  - иначе — EXAM_SYNC_DEFAULT_URL ниже.
+ * Сайт экзаменов встроен в этот же сервер по адресу /exam-sync/ (exam-sync/handler.js).
+ * Чтобы вести на отдельно развёрнутый exam-sync, задайте на сервере переменную EXAM_SYNC_URL
+ * (отдаётся через GET /api/modules/online-exam/config).
  */
 (function () {
-  const EXAM_SYNC_DEFAULT_URL = 'https://exam-sync.onrender.com';
-  const EXAM_SYNC_LOCAL_PORT = 3001;
+  const EXAM_SYNC_PATH = '/exam-sync/';
 
   I.monitor = '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="m9.2 10.4 1.9 1.9 3.8-3.9"/>';
   I.external = '<path d="M13.5 4.5h6v6"/><path d="M19.5 4.5 11 13"/><path d="M17.5 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"/>';
 
-  const isLocalHost = (h) => h === 'localhost' || h === '127.0.0.1' || h === '[::1]' ||
-    /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h);
-
-  function fallbackUrl() {
-    return isLocalHost(location.hostname)
-      ? `${location.protocol}//${location.hostname}:${EXAM_SYNC_LOCAL_PORT}/`
-      : EXAM_SYNC_DEFAULT_URL;
-  }
+  const fallbackUrl = () => location.origin + EXAM_SYNC_PATH;
   /* Только http(s): адрес приходит из настроек, но в href/location его подставлять без проверки нельзя */
   function safeUrl(raw) {
     try { const u = new URL(raw, location.href); return /^https?:$/.test(u.protocol) ? u : null; } catch { return null; }
@@ -35,7 +26,7 @@
       cfgPromise = api('/modules/online-exam/config')
         .then((c) => (c && c.url) || fallbackUrl())
         .catch(() => fallbackUrl())
-        .then((raw) => safeUrl(raw) || safeUrl(EXAM_SYNC_DEFAULT_URL));
+        .then((raw) => safeUrl(raw) || safeUrl(fallbackUrl()));
     }
     return cfgPromise;
   }
@@ -73,7 +64,7 @@
           <span class="oe-app ex">${svg('monitor')}</span>
         </div>
         <div class="oe-ov-t">Открываем онлайн-экзамен…</div>
-        <div class="oe-ov-s">Сайт экзаменов откроется в этой вкладке</div>
+        <div class="oe-ov-s">Переходим в сервис экзаменов</div>
       </div>`;
     document.body.appendChild(ov);
     requestAnimationFrame(() => ov.classList.add('on'));
@@ -127,7 +118,7 @@
           <div class="oe-status" id="oeStatus"><i></i><span>Проверяем доступность сайта…</span></div>
           <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}Перейти к онлайн-экзамену</a>
           <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}Открыть в новой вкладке</a>
-          <div class="oe-host">${esc(base.host)}</div>
+          ${base.origin !== location.origin ? `<div class="oe-host">${esc(base.host)}</div>` : ''}
         </div>
 
         <div class="oe-feat">

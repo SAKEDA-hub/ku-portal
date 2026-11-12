@@ -622,9 +622,16 @@ function serveStatic(req, res, url) {
 
 /* --------------------------------- API ----------------------------------- */
 
+/* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
+   кнопка перехода — модуль раздела «Экзамен» public/modules/online-exam.js */
+const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json') });
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
+
+  // «Онлайн-экзамен» (exam-sync), встроенный в портал: /exam-sync/...
+  if (await examSync(req, res)) return;
 
   if (!p.startsWith('/api/')) return serveStatic(req, res, url);
 
