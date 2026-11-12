@@ -76,6 +76,18 @@ GitHub Pages не подходит: порталу нужен сервер. Бе
 | `DEMO` | включено | `0` — не создавать тестовые аккаунты |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Адрес Ollama для помощника |
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | Модель помощника |
+| `EXAM_SYNC_URL` | — | Адрес сайта «Онлайн-экзамен» ([exam-sync](https://github.com/StephCurrysvg/exam-sync)) для кнопки в разделе «Экзамен». Без неё: локально — тот же хост, порт `3001`, на хостинге — `https://exam-sync.onrender.com` |
+
+### Онлайн-экзамен
+
+В разделе «Экзамен» у студента и преподавателя есть кнопка «Онлайн-экзамен»: экран-переход на отдельный сайт [exam-sync](https://github.com/StephCurrysvg/exam-sync) (код — `public/modules/online-exam.js`). На сайте экзаменов появляется кнопка «KU Portal» для возврата. Локально оба сервиса запускаются так:
+
+```bash
+node server.js                       # KU Portal — http://localhost:3000
+cd ../exam-sync && PORT=3001 node server.js   # Онлайн-экзамен — http://localhost:3001
+```
+
+На Render укажите в настройках сервиса портала (Environment) переменную `EXAM_SYNC_URL` с адресом развёрнутого exam-sync.
 
 Помощник по вопросам о вузе использует локальную модель через [Ollama](https://ollama.com) и тексты с сайта ku.edu.kz. Без Ollama он отвечает найденными на сайте фрагментами.
 

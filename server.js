@@ -239,6 +239,15 @@ function roomSort(a, b) {
  */
 const QUEUE_MODULE_ROUTES = [];
 
+/* Модуль «Онлайн-экзамен» (public/modules/online-exam.js): отдаёт адрес сайта EXAM SYNC.
+   Адрес задаётся переменной окружения EXAM_SYNC_URL; без неё клиент выбирает адрес сам. */
+QUEUE_MODULE_ROUTES.push(async ({ p, req, res, ok }) => {
+  if (p !== '/api/modules/online-exam/config' || req.method !== 'GET') return false;
+  const raw = String(process.env.EXAM_SYNC_URL || '').trim();
+  ok(res, { url: /^https?:\/\/[^\s"'<>]+$/i.test(raw) ? raw : null });
+  return true;
+});
+
 /* ------------------- Live-обновления: Server-Sent Events -------------------- */
 /*
  * EventSource не умеет слать заголовок Authorization, поэтому клиент сначала получает
