@@ -94,7 +94,7 @@ function headHTML() {
     </div>
   </div>
   <div class="uni">
-    <div class="mark">${svg('logo')}</div>
+    <div class="mark brand-mark"><img src="/bird-idle.png" alt="" /></div>
     <div class="uname">Kozybayev University</div>
   </div>`;
 }
@@ -109,7 +109,7 @@ function viewAuth(msg) {
   app.innerHTML = `
   <div class="auth">
     <div class="logo">
-      <div class="mark">${svg('logo')}</div>
+      <div class="mark brand-mark"><img src="/bird-idle.png" alt="" /></div>
       <div>
         <h1>KU Portal</h1>
         <div class="sub">Kozybayev University</div>
@@ -858,7 +858,7 @@ async function viewAI() {
   app.innerHTML = `
     <div class="chatpage" style="height:100vh">
       <div class="chathead">
-        <div class="avatar">${svg('msg')}</div>
+        <div class="avatar bird-avatar"><img src="/bird-idle.png" alt="" /></div>
         <div style="flex:1">
           <b>AI-помощник</b>
           <div class="st"><span class="dot" id="aidot"></span><span id="aist">уточняю статус…</span></div>
