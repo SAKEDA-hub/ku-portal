@@ -24,7 +24,7 @@
 - «Авто» = палитра программы: `user.program` — `'ku'` (по умолчанию) или `'arizona'`; задаётся при регистрации, отдаётся в `pubUser`. Демо-преподаватель — `arizona` (`DEMO_ACCOUNTS`, `syncDemoPrograms()`).
 - Онлайн-экзамен: тема = цвет (`incampus` | `intl`) × режим (`auto` | `light` | `dark` | `system`), итог в `data-theme`: `incampus`, `incampus-light`, `intl`, `intl-dark` (`eduThemeOf()` в раннем скрипте, `applyTheme()/setTheme()/setMode()`). Из портала приходят `theme=` и `mode=` (sessionStorage `edu-theme-ku`/`edu-mode-ku` — на вкладку), ручной выбор — localStorage `edu-theme`/`edu-mode`. Панель настроек — `accountSheet()` → `settingsHTML()`.
 - Переключатели-заглушки (уведомления, безопасность и т.п.) только запоминаются — не выдавать их за работающие.
-- Адаптив портала: `--app-max` 440 → 720 (≥640px) → 1120 (≥1024px, верхнее меню `.bnav`, сетки `.dash`, `.prof-page`, `.set-page`).
+- Адаптив портала: `--app-max` 440 → 720 (≥640px) → 1120 (≥1024px, верхнее меню `.bnav`, сетки `.dash` и `.cab` — личный кабинет).
 
 ## Языки (RU / KK / EN)
 
