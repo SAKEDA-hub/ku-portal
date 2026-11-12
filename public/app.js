@@ -35,7 +35,6 @@ const I = {
   speaker: '<path d="M4 10v4h3.5l5 4.5v-13L7.5 10z"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.6 6.5a7.8 7.8 0 0 1 0 11"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
 };
-function mi(icon, text) { return `<span class="mi">${svg(icon)}${text}</span>`; }
 function svg(name, cls) {
   return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[name]}</svg>`;
 }
@@ -67,7 +66,7 @@ async function api(path, o) {
   o.headers = Object.assign({ 'Content-Type': 'application/json' }, S.token ? { Authorization: 'Bearer ' + S.token } : {}, o.headers || {});
   if (o.body && typeof o.body !== 'string') o.body = JSON.stringify(o.body);
   const r = await fetch('/api' + path, o);
-  if (r.status === 401 && S.token) { Live.stop(); S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error('Сессия истекла'); }
+  if (r.status === 401 && S.token) { S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error('Сессия истекла'); }
   const j = await r.json().catch(() => ({ error: 'Ошибка сервера' }));
   if (!r.ok) throw new Error(j.error || 'Ошибка сервера');
   return j;
@@ -177,7 +176,7 @@ async function renderDemoBox() {
     authErr('');
     try {
       const d = await api('/auth/login', { method: 'POST', body: { email: b.dataset.demo, password: demoInfo.password } });
-      S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; Live.start(); goHome();
+      S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
     } catch (e) { authErr(e.message); }
   }));
 }
@@ -187,7 +186,7 @@ async function doLogin() {
   authErr('');
   try {
     const d = await api('/auth/login', { method: 'POST', body: { email: v('liEmail'), password: v('liPass') } });
-    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; Live.start(); goHome();
+    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
   } catch (e) { authErr(e.message); }
 }
 async function doRegister() {
@@ -200,7 +199,7 @@ async function doRegister() {
         email: v('rEmail'), password: v('rPass'), role: authRole, group: authRole === 'student' ? v('rGroup') : '',
       },
     });
-    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; Live.start(); goHome();
+    S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
   } catch (e) { authErr(e.message); }
 }
 function v(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
@@ -283,12 +282,10 @@ async function viewHomeT() {
   app.innerHTML = `${headHTML()}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML('home')}`;
   bindHead();
   try {
-    const d = await api('/teacher/sessions');
-    const totalWaiting = d.items.filter((s) => s.status !== 'closed').reduce((a, s) => a + s.waiting, 0);
-    const soon = d.items.find((s) => s.status !== 'closed' && (s.waiting > 0 || s.called > 0)) || d.items.find((s) => s.status !== 'closed');
+    const d = await api('/teacher/subjects');
     const srvs = [
-      ['Экзамен', 'clipboard', '#/t/queue'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
-      ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'], ['Мои предметы', 'book', '#/t/queue'],
+      ['Экзамен', 'clipboard', '#/exam'], ['Добавить занятие', 'calendar', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
+      ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'], ['Мои предметы', 'book', '#/t/grades'],
     ];
     document.getElementById('pagebody').innerHTML = `
       <div class="section-label">Виджеты</div>
@@ -299,22 +296,17 @@ async function viewHomeT() {
           <span class="pill">Кабинет преподавателя</span>
         </div>
         <div class="ring-wrap" style="text-align:center">
-          <div style="font-size:32px;font-weight:800;color:var(--accent-deep)">${totalWaiting}</div>
-          <div class="tx">в очереди</div>
+          <div style="font-size:32px;font-weight:800;color:var(--accent-deep)">${d.items.length}</div>
+          <div class="tx">предметов</div>
         </div>
       </div>
-      ${soon ? `
-      <div class="lesson">
-        <div class="subj">${esc(soon.subject)}</div>
-        <div class="dt">${esc(dstr(soon.date))}, ${esc(soon.time)}</div>
+      <a class="lesson" href="#/exam" style="display:block;color:inherit">
+        <div class="subj">Онлайн-экзамен</div>
+        <div class="dt">Тесты, writing, speaking и ведомость</div>
         <hr class="rule">
-        <div class="row">Аудитория: ${esc(soon.room || '—')}${soon.group ? ' · Группа: ' + esc(soon.group) : ''}</div>
-        <div class="row">${soon.calledFio ? 'Отвечает: ' + esc(soon.calledFio) : 'В очереди: ' + soon.waiting + ' студ.'}</div>
-        <div class="foot">${svg('info')} Комната для спикинга</div>
-      </div>` : `
-      <div class="card" style="border-left:8px solid var(--accent)">
-        <div class="next-empty">Активных зачётов пока нет.<br>Откройте комнату в разделе «Экзамен».</div>
-      </div>`}
+        <div class="row">Создавайте тесты и открывайте комнаты экзамена для групп</div>
+        <div class="foot">${svg('info')} Раздел «Экзамен»</div>
+      </a>
       <div class="section-label">Сервисы</div>
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${s[0]}</span></button>`).join('')}
@@ -392,461 +384,91 @@ async function viewRating() {
   } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; }
 }
 
-/* ============================ Экзамен: общее ============================ */
-let META = null;
-async function meta() {
-  if (!META) META = await api('/queue/meta');
-  return META;
-}
-function discList() { return META ? META.disciplines : []; }
-function discShort(id) {
-  const d = discList().find((x) => x.id === id);
-  return d ? d.short : (META ? META.other.short : id);
-}
-function lvl(id) { return (META && META.levels.find((l) => l.id === id)) || { id, name: '—', cefr: '', hint: '' }; }
-/* Подпись серьёзности: для английского добавляем CEFR */
-function lvlLabel(level, disc) { const l = lvl(level); return l.name + (disc === 'english' && l.cefr ? ' · ' + l.cefr : ''); }
-function lvlBadge(level, disc) { return `<span class="lvb lv${level}"><i></i>${esc(lvlLabel(level, disc))}</span>`; }
-const ROOM_ST = { open: ['Открыта', 'st-open'], paused: ['Пауза', 'st-paused'], closed: ['Закрыта', 'st-closed'] };
-function stBadge(st) { const x = ROOM_ST[st] || ['—', '']; return `<span class="stb ${x[1]}">${x[0]}</span>`; }
-function minsAgo(ts) { const m = Math.floor((Date.now() - ts) / 60000); return m < 1 ? 'только что' : m + ' мин назад'; }
-function etaText(m) { return m == null ? '' : m < 60 ? `≈ ${m} мин` : `≈ ${Math.floor(m / 60)} ч ${m % 60} мин`; }
-function lsGet(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }
-function lsSet(k, v) { try { localStorage.setItem(k, v); } catch { } }
-
-/* Подписка текущего экрана на live-события; снимается в stopPoll() при смене экрана */
-function onLive(fn) {
-  const off = Live.on(fn);
-  const prev = window.__unsub;
-  window.__unsub = () => { off(); if (prev) prev(); };
-}
-/* Склейка частых событий в одну перерисовку */
-function debounce(fn, ms) { let t = null; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-
-/* -------- Таймер ответа -------- */
-/* Часы клиента могут отставать/спешить: считаем время по серверу (поправка из serverNow в ответах API) */
-let clockOff = 0;
-function syncClock(serverNow) { if (serverNow) clockOff = serverNow - Date.now(); }
-function nowS() { return Date.now() + clockOff; }
-function mmss(sec) {
-  const a = Math.abs(Math.floor(sec));
-  return (sec < 0 ? '+' : '') + String(Math.floor(a / 60)).padStart(2, '0') + ':' + String(a % 60).padStart(2, '0');
-}
-/* Фаза ответа: run → warn (осталось ≤ warnSec) → over (лимит вышел) */
-function answerPhase(startedAt, limitSec, warnSec) {
-  const el = (nowS() - startedAt) / 1000;
-  const left = limitSec - el;
-  return { el, left, phase: left <= 0 ? 'over' : left <= warnSec ? 'warn' : 'run', pct: Math.min(100, (el / limitSec) * 100) };
-}
-/* Секундный тикер экрана; снимается вместе с подписками в stopPoll() */
-function startTicker(fn) {
-  const id = setInterval(fn, 1000);
-  const prev = window.__unsub;
-  window.__unsub = () => { clearInterval(id); if (prev) prev(); };
-  fn();
-}
-function tone(freqs, gap) {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new Ctx();
-    freqs.forEach((f, i) => {
-      const t = i * (gap || 0.25), o = ctx.createOscillator(), g = ctx.createGain();
-      o.frequency.value = f; o.connect(g); g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
-      g.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.2);
-      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.22);
-    });
-    setTimeout(() => ctx.close(), 400 + freqs.length * 300);
-  } catch { }
-}
-
+/* ============================ Экзамен → Онлайн-экзамен ============================ */
 /*
- * Точка расширения раздела «Экзамен» (см. AGENTS.md, раздел «Модули очереди»).
- * Будущие модули — пробные тесты, задания по грамматике и вокабуляру, редактор заданий преподавателя —
- * регистрируются через registerQueueModule() и получают свою кнопку в разделе очереди и маршрут
- * #/exam/m/<id> (студент) или #/t/m/<id> (преподаватель). Пока реестр пуст, на сайте ничего не выводится.
+ * Раздел «Экзамен» — вход в сервис «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync),
+ * встроенный в этот же сервер по адресу /exam-sync/ (exam-sync/handler.js).
+ * Сайт экзаменов показывает кнопку «KU Portal» для возврата сюда (параметры from/back).
  */
-const QUEUE_MODULES = [];
-function registerQueueModule(mod) {
-  if (!mod || !/^[a-z][\w-]{1,30}$/.test(mod.id) || typeof mod.render !== 'function') throw new Error('queue module: нужны id и render()');
-  if (QUEUE_MODULES.some((m) => m.id === mod.id)) return;
-  QUEUE_MODULES.push(Object.assign({ roles: ['student', 'teacher'], disciplines: null, icon: 'book' }, mod));
-}
-function queueModulesFor(role, disc) {
-  return QUEUE_MODULES.filter((m) => m.roles.includes(role) && (!m.disciplines || !disc || disc === 'all' || m.disciplines.includes(disc)));
-}
-function moduleBar(role, disc) {
-  const list = queueModulesFor(role, disc);
-  if (!list.length) return '';
-  const base = role === 'teacher' ? '#/t/m/' : '#/exam/m/';
-  return `<div class="modbar">${list.map((m) => `<a class="modbtn" href="${base}${m.id}${disc && disc !== 'all' ? '?d=' + encodeURIComponent(disc) : ''}">${svg(m.icon)}<span>${esc(m.title)}</span></a>`).join('')}</div>`;
-}
-async function viewQueueModule(role, id) {
-  stopPoll();
-  const mod = QUEUE_MODULES.find((m) => m.id === id && m.roles.includes(role));
-  if (!mod) { location.hash = role === 'teacher' ? '#/t/queue' : '#/exam'; return; }
-  const disc = (location.hash.split('?d=')[1] || '').split('&')[0] || null;
-  app.innerHTML = `<a class="back" href="${role === 'teacher' ? '#/t/queue' : '#/exam'}">${svg('back')} Очередь</a><h1 class="ptitle">${esc(mod.title)}</h1><div id="pagebody"></div>${navHTML()}`;
-  try { await meta(); } catch { }
-  await mod.render(document.getElementById('pagebody'), {
-    role, user: S.user, discipline: disc ? decodeURIComponent(disc) : null, meta: META,
-    api, esc, svg, toast, onLive, lvlLabel, lvlBadge, discShort,
-  });
-}
-
-/* -------- Live: SSE с одноразовым ticket, экспоненциальный реконнект, fallback на polling -------- */
-const Live = {
-  es: null, subs: new Set(), retry: 0, timer: null, poll: null, connected: false,
-  on(fn) { this.subs.add(fn); return () => this.subs.delete(fn); },
-  emit(ev) { for (const fn of Array.from(this.subs)) { try { fn(ev); } catch (e) { console.error(e); } } },
-  async start() {
-    if (!S.token || this.es || typeof EventSource === 'undefined') { if (typeof EventSource === 'undefined') this.startPoll(); return; }
-    clearTimeout(this.timer);
-    let ticket;
-    try { ticket = (await api('/events/ticket', { method: 'POST', body: {} })).ticket; }
-    catch { return this.reconnect(); }
-    if (!S.token) return;
-    const es = new EventSource('/api/events?ticket=' + encodeURIComponent(ticket));
-    this.es = es;
-    es.onopen = () => { this.retry = 0; this.connected = true; this.stopPoll(); };
-    es.onmessage = (m) => {
-      let ev; try { ev = JSON.parse(m.data); } catch { return; }
-      if (ev.type === 'hello') { this.emit({ type: 'resync' }); return; } // после реконнекта — догоняем пропущенное
-      onGlobalEvent(ev);
-      this.emit(ev);
-    };
-    // Ticket одноразовый, поэтому встроенный автореконнект EventSource не подходит — переподключаемся сами
-    es.onerror = () => { es.close(); if (this.es === es) this.es = null; this.connected = false; this.reconnect(); };
-  },
-  reconnect() {
-    if (!S.token) return;
-    this.startPoll();
-    const delay = Math.min(30000, 1000 * Math.pow(2, this.retry++));
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.start(), delay);
-  },
-  startPoll() { if (!this.poll) this.poll = setInterval(() => this.emit({ type: 'tick' }), 5000); },
-  stopPoll() { if (this.poll) { clearInterval(this.poll); this.poll = null; } },
-  stop() {
-    clearTimeout(this.timer); this.stopPoll(); this.retry = 0; this.connected = false;
-    if (this.es) { this.es.close(); this.es = null; }
-  },
+const EXAM_SYNC_PATH = '/exam-sync/';
+I.monitor = '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="m9.2 10.4 1.9 1.9 3.8-3.9"/>';
+I.external = '<path d="M13.5 4.5h6v6"/><path d="M19.5 4.5 11 13"/><path d="M17.5 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"/>';
+const EXAM_FEATURES = {
+  student: [
+    ['clipboard', 'Тесты онлайн', 'Grammar, vocabulary и другие тесты с таймером — прогресс сохраняется, если закрыть вкладку.'],
+    ['book', 'Writing', 'Письменная часть экзамена прямо в браузере, черновик не потеряется.'],
+    ['mic', 'Speaking-очередь', 'Комнаты экзамена с очередью на устную часть и live-обновлениями.'],
+    ['star', 'Результаты', 'Баллы по частям экзамена и разбор ответов.'],
+  ],
+  teacher: [
+    ['plus', 'Редактор тестов', 'Создание тестов с разными типами вопросов, импорт и экспорт.'],
+    ['door', 'Комнаты экзамена', 'Собираете экзамен из тестов, writing и speaking, открываете комнату группе.'],
+    ['users', 'Speaking-очередь', 'Вызов студентов, таймер ответа, оценка устной части.'],
+    ['chart', 'Ведомость', 'Сводные баллы студентов по всем частям экзамена.'],
+  ],
 };
-
-/* -------- Глобальные уведомления студента (на любом экране) -------- */
-function onGlobalEvent(ev) {
-  if (!S.user || S.user.role !== 'student') return;
-  if (ev.type === 'called') showCallAlert(ev);
-  else if (ev.type === 'soon') {
-    const txt = ev.pos === 1 ? 'Вы следующий' : 'Перед вами один человек';
-    toast(`${txt}: ${ev.discipline}${ev.room ? ', ауд. ' + ev.room : ''}. Подготовьтесь`);
-    tone([660, 880]);
-    if (navigator.vibrate) navigator.vibrate(200);
-    if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-      try { new Notification(txt, { body: ev.discipline + (ev.room ? ' · ауд. ' + ev.room : ''), tag: 'ku-soon' }); } catch { }
-    }
-  }
-  else if (ev.type === 'started') closeCallAlert();
-  else if (ev.type === 'done') {
-    closeCallAlert();
-    toast((ev.score != null ? `Ответ принят. Балл: ${ev.score}` : 'Ответ принят') + (ev.comment ? `. Комментарий: ${ev.comment}` : ''));
-  }
-  else if (ev.type === 'absent') { closeCallAlert(); toast('Вас отметили как отсутствующего', true); }
-  else if (ev.type === 'requeue') { closeCallAlert(); toast('Вас вернули в очередь'); }
-  else if (ev.type === 'removed') { closeCallAlert(); toast('Преподаватель убрал вас из очереди', true); }
-  else if (ev.type === 'cancelled') { closeCallAlert(); toast('Комната закрыта, запись отменена', true); }
+function examLaunchUrl() {
+  const u = new URL(EXAM_SYNC_PATH, location.origin);
+  u.searchParams.set('from', 'ku-portal');
+  u.searchParams.set('back', location.origin + '/#/exam');
+  return u.href;
 }
-let titleBlink = null;
-function beep() {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new Ctx();
-    [0, 0.28, 0.56].forEach((t) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
-      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.22);
-      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.24);
-    });
-    setTimeout(() => ctx.close(), 1200);
-  } catch { }
-}
-async function showCallAlert(ev) {
-  try { await meta(); } catch { } // справочник уровней нужен для бейджа на любом экране
-  closeCallAlert();
-  const where = ev.room ? 'Аудитория ' + ev.room : 'Подойдите к преподавателю';
-  const el = document.createElement('div');
-  el.className = 'callov'; el.id = 'callov';
-  el.innerHTML = `
-    <div class="callbox lvbord${ev.level}">
-      <div class="callpulse">${svg('bell')}</div>
-      <div class="calltitle">Вас вызывают на спикинг</div>
-      <div class="callsub">${esc(ev.discipline)}${ev.title ? ' · ' + esc(ev.title) : ''}</div>
-      <div class="callroom">${esc(where)}</div>
-      <div style="margin:10px 0 4px">${lvlBadge(ev.level, ev.disciplineId)}</div>
-      <div class="tx">${esc(ev.teacher)}</div>
-      <button class="btn pri big" id="callAck" style="margin-top:16px">Иду</button>
-      <button class="btn ghost" id="callOpen" style="margin-top:8px">Открыть комнату</button>
+function examTransition(href) {
+  const ov = document.createElement('div');
+  ov.className = 'oe-ov';
+  ov.setAttribute('role', 'status');
+  ov.setAttribute('aria-live', 'polite');
+  ov.innerHTML = `
+    <div class="oe-ov-in">
+      <div class="oe-bridge"><span class="oe-app ku">${svg('logo')}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
+      <div class="oe-ov-t">Открываем онлайн-экзамен…</div>
+      <div class="oe-ov-s">Переходим в сервис экзаменов</div>
     </div>`;
-  document.body.appendChild(el);
-  document.getElementById('callAck').onclick = async () => {
-    try { await api('/exam/queue/' + ev.entryId + '/ack', { method: 'POST', body: {} }); } catch (e) { toast(e.message, true); }
-    closeCallAlert();
-  };
-  document.getElementById('callOpen').onclick = () => { closeCallAlert(); location.hash = '#/exam/' + ev.sessionId; };
-  beep();
-  if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
-  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-    try { new Notification('Вас вызывают на спикинг', { body: `${ev.discipline} · ${where}`, tag: 'ku-call' }); } catch { }
-  }
-  const orig = document.title;
-  let f = false;
-  clearInterval(titleBlink);
-  titleBlink = setInterval(() => { document.title = (f = !f) ? '● Вас вызывают' : orig; }, 900);
-  el.dataset.title = orig;
+  document.body.appendChild(ov);
+  requestAnimationFrame(() => ov.classList.add('on'));
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(() => { location.href = href; }, reduced ? 50 : 900);
+  // Вернулись кнопкой «Назад» из bfcache — убрать оверлей
+  window.addEventListener('pageshow', function h(e) { if (e.persisted) { ov.remove(); window.removeEventListener('pageshow', h); } });
 }
-function closeCallAlert() {
-  const el = document.getElementById('callov');
-  if (titleBlink) { clearInterval(titleBlink); titleBlink = null; }
-  if (el) { if (el.dataset.title) document.title = el.dataset.title; el.remove(); }
-}
-function askNotify() {
-  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => { });
-}
-
-/* ============================ Очередь: студент — вкладки предметов ============================ */
-let qTab = null, qLevel = 0;
-async function viewExamList(tab) {
+function viewExam() {
   stopPoll();
-  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
-  try { await meta(); } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
-  qTab = tab || qTab || lsGet('ku_qtab', 'english');
-  qLevel = Number(lsGet('ku_qlvl', '0')) || 0;
-  await paintExamList();
-  const re = debounce(() => paintExamList(true), 250);
-  onLive(() => re()); // любое событие (room/tick/resync/called…) — перечитываем список
-}
-async function paintExamList(silent) {
-  const pb = document.getElementById('pagebody');
-  if (!pb) return;
-  let d;
-  try {
-    const qs = '?discipline=' + encodeURIComponent(qTab) + (qLevel ? '&level=' + qLevel : '');
-    d = await api('/exam/sessions' + qs);
-  } catch (e) { if (!silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
-  const key = JSON.stringify([qTab, qLevel, d]);
-  if (silent && pb.dataset.key === key) return;
-  pb.dataset.key = key;
-
-  const tabs = discList().slice();
-  if (d.tabs.other || qTab === 'other') tabs.push(META.other);
-  const scrollX = (document.getElementById('qtabs') || {}).scrollLeft || 0;
-
-  pb.innerHTML = `
-    ${d.my.length ? `<div class="mystrip">${d.my.map((m) => `
-      <button class="mycard ${m.status === 'called' ? 'called' : ''}" data-open="${m.session.id}">
-        <div class="mc-top">${esc(discShort(m.session.discipline))} ${lvlBadge(m.session.level, m.session.discipline)}</div>
-        <div class="mc-big">${m.status === 'called' ? 'Вас вызвали' : '№ ' + m.pos}</div>
-        <div class="tx">${m.status === 'called' ? (m.session.room ? 'Ауд. ' + esc(m.session.room) : 'Подойдите к преподавателю') : etaText(m.etaMin)}</div>
-      </button>`).join('')}</div>` : ''}
-    <div class="qtabs" id="qtabs" role="tablist">
-      ${tabs.map((t) => {
-        const c = d.tabs[t.id];
-        return `<button role="tab" class="qtab ${t.id === qTab ? 'on' : ''}" data-tab="${t.id}" aria-selected="${t.id === qTab}">
-          ${esc(t.short)}${c && c.open ? `<b class="qcnt">${c.open}</b>` : ''}</button>`;
-      }).join('')}
+  const teacher = S.user.role === 'teacher';
+  const href = examLaunchUrl();
+  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody">
+    <div class="card oe-hero">
+      <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg('logo')}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
+      <div class="oe-kicker">Сервис экзаменов</div>
+      <div class="oe-title">Онлайн-экзамен</div>
+      <div class="tx oe-lead">${teacher
+        ? 'Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.'
+        : 'Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.'}</div>
+      <div class="oe-status" id="oeStatus"><i></i><span>Проверяем доступность сайта…</span></div>
+      <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}Перейти к онлайн-экзамену</a>
+      <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}Открыть в новой вкладке</a>
     </div>
-    <div class="lvfilter">
-      <button class="lvf ${!qLevel ? 'on' : ''}" data-lv="0">Все уровни</button>
-      ${META.levels.map((l) => `<button class="lvf lvf${l.id} ${qLevel === l.id ? 'on' : ''}" data-lv="${l.id}">${esc(lvlLabel(l.id, qTab))}</button>`).join('')}
+    <div class="oe-feat">
+      ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, t, d]) => `
+        <div class="card oe-fi"><span class="oe-fic">${svg(ic)}</span><div><b>${esc(t)}</b><div class="tx">${esc(d)}</div></div></div>`).join('')}
     </div>
-    <div class="qhead-row">
-      <div class="qhead">${esc((tabs.find((t) => t.id === qTab) || {}).name || '')}</div>
-      <a class="linkbtn" href="#/exam/results">${svg('star')}Мои результаты</a>
+    <div class="card oe-note">
+      <span class="oe-fic">${svg('info')}</span>
+      <div class="tx"><b>Вход на сайте экзаменов отдельный.</b> Используйте логин и пароль, которые выдал преподаватель.
+        Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.</div>
     </div>
-    ${moduleBar('student', qTab)}
-    ${d.items.length ? d.items.map((s) => roomCardStudent(s)).join('') : `
-      <div class="card next-empty">${qLevel ? 'Нет комнат с такой серьёзностью.' : 'По этому предмету комнат пока нет.'}<br>Они появятся, когда преподаватель откроет комнату для спикинга.</div>`}`;
+  </div>${navHTML()}`;
 
-  const qt = document.getElementById('qtabs');
-  qt.scrollLeft = scrollX;
-  const act = qt.querySelector('.qtab.on');
-  if (act && !silent) act.scrollIntoView({ inline: 'center', block: 'nearest' });
-  qt.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => {
-    qTab = b.dataset.tab; lsSet('ku_qtab', qTab);
-    history.replaceState(null, '', '#/exam/tab/' + qTab);
-    paintExamList();
-  }));
-  pb.querySelectorAll('[data-lv]').forEach((b) => (b.onclick = () => { qLevel = Number(b.dataset.lv); lsSet('ku_qlvl', String(qLevel)); paintExamList(); }));
-  pb.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => { location.hash = '#/exam/' + b.dataset.open; }));
-}
-function roomCardStudent(s) {
-  const l = lvl(s.level);
-  return `
-    <button class="card room lvbord${s.level} ${s.status !== 'open' ? 'dim' : ''}" data-open="${s.id}">
-      <div class="room-top">
-        ${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)}
-        ${s.my ? `<span class="badge ok">${s.my.status === 'called' ? 'Вас вызвали' : 'Вы № ' + s.my.pos}</span>` : ''}
-      </div>
-      <div class="stud-fio" style="font-size:18px;margin-top:8px">${esc(s.title || s.subject)}</div>
-      <div class="stud-group" style="margin:4px 0 6px">${esc(s.teacher)}</div>
-      <div class="tx">${esc(l.hint)}</div>
-      <div class="room-meta">
-        ${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}
-        ${mi('users', s.waiting + (s.capacity ? '/' + s.capacity : ''))}
-        ${s.status === 'open' && !s.my ? mi('clock', etaText(s.etaMin)) : ''}
-      </div>
-    </button>`;
-}
+  const st = document.getElementById('oeStatus');
+  const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
+  fetch(EXAM_SYNC_PATH + 'api/state', { method: 'HEAD', cache: 'no-store' })
+    .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? 'Сайт доступен' : 'Сайт экзаменов временно недоступен'))
+    .catch(() => setSt('bad', 'Не удалось связаться с сайтом экзаменов'));
 
-/* ============================ Очередь: студент — комната ============================ */
-let examSessionId = null;
-async function viewExamDetail(id) {
-  stopPoll();
-  examSessionId = id;
-  app.innerHTML = `${miniHead('Комната')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
-  try { await meta(); } catch { }
-  await renderExamDetail(id);
-  const re = debounce(() => renderExamDetail(id, true), 200);
-  onLive((ev) => { if (ev.type === 'tick' || ev.type === 'resync' || ev.sessionId === id) re(); });
-  // Тикаем раз в 30 с, чтобы «вызвали N мин назад» и ETA не устаревали; таймеры ответа — каждую секунду
-  window.__poll = setInterval(() => renderExamDetail(id, true, true), 30000);
-  startTicker(tickStudentTimers);
-}
-async function renderExamDetail(id, silent, force) {
-  let d;
-  try { d = await api('/exam/sessions/' + id); }
-  catch (e) { const pb = document.getElementById('pagebody'); if (pb && !silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div><a class="back" style="justify-content:center;width:100%" href="#/exam">← К комнатам</a>`; return; }
-  if (examSessionId !== id) return;
-  const pb = document.getElementById('pagebody');
-  if (!pb) return;
-  syncClock(d.serverNow);
-  const key = JSON.stringify(Object.assign({}, d, { serverNow: 0 }));
-  if (silent && !force && pb.dataset.key === key) return;
-  pb.dataset.key = key;
-  const s = d.session, me = d.myEntry, l = lvl(s.level);
-  const head = `
-    <div class="card room lvbord${s.level}" style="cursor:default">
-      <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)}</div>
-      <div class="stud-fio" style="font-size:20px;margin-top:8px">${esc(s.title || s.subject)}</div>
-      <div class="stud-group" style="margin:4px 0 6px">${esc(s.disciplineName)} · ${esc(s.teacher)}</div>
-      <div class="tx">${esc(l.hint)}</div>
-      <div class="room-meta">${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}${mi('users', d.waiting + (s.capacity ? '/' + s.capacity : ''))}</div>
-    </div>`;
-  const list = `
-    <div class="card">
-      ${d.calledNow.length ? `<div class="tx" style="margin-bottom:8px">Сейчас отвечают:</div>${d.calledNow.map((c) => `<div class="lstrow called ${c.me ? 'me' : ''}" style="cursor:default"><div>${esc(c.fio)} ${c.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${c.startedAt ? `отвечает <b data-el="${c.startedAt}">${mmss((nowS() - c.startedAt) / 1000)}</b>` : 'идёт к аудитории'}</div></div>`).join('')}` : ''}
-      <div class="tx" style="margin:6px 0 10px">В очереди (${d.waiting}):</div>
-      ${d.queue.length ? d.queue.map((q) => `<div class="lstrow ${q.me ? 'me' : ''}" style="cursor:default"><div>${q.pos}. ${esc(q.fio)} ${q.me ? '<b style="color:var(--accent)">(вы)</b>' : ''}</div><div class="r">${tm(q.ts)}</div></div>`).join('') : '<div class="tx">Очередь пуста.</div>'}
-    </div>`;
-  let main;
-  if (me && me.status === 'called' && me.startedAt) {
-    // Студент уже отвечает — показываем, сколько времени прошло и сколько осталось
-    main = `
-      <div class="card exhead">
-        <div class="tx">Идёт ваш ответ</div>
-        <div class="tclock" data-st="${me.startedAt}" data-lim="${me.limitSec}" data-warn="${s.warnSec}">${mmss((nowS() - me.startedAt) / 1000)}</div>
-        <div class="progress tbar"><i data-bar style="width:0%"></i></div>
-        <div class="qcap" data-left></div>
-      </div>`;
-  } else if (me && me.status === 'called') {
-    main = `
-      <div class="card exhead calledbox">
-        <div class="qnum" style="font-size:30px">Вас вызвали</div>
-        <div class="callroom">${s.room ? 'Аудитория ' + esc(s.room) : 'Подойдите к преподавателю'}</div>
-        <div class="qcap">${minsAgo(me.calledAt)}${me.ackAt ? ' · вы подтвердили' : ''}</div>
-        ${me.ackAt ? '' : '<button class="btn pri big" id="ackBtn">Иду</button>'}
-      </div>`;
-  } else if (me) {
-    main = `
-      <div class="card exhead">
-        <div class="qnum">№ ${me.pos}</div>
-        <div class="qcap">Ваша позиция · ожидание ${etaText(me.etaMin)}</div>
-        <div class="progress"><i style="width:${Math.max(6, 100 - ((me.pos - 1) / Math.max(1, d.waiting)) * 100)}%"></i></div>
-        ${s.status === 'paused' ? '<div class="tx" style="margin-top:10px;color:var(--yellow)">Преподаватель поставил комнату на паузу — ваше место сохранено.</div>' : ''}
-        ${'Notification' in window && Notification.permission === 'default' ? '<button class="btn ghost" id="notifBtn" style="margin-top:12px">' + svg('bell') + 'Включить уведомления о вызове</button>' : ''}
-      </div>`;
-  } else if (s.status === 'open') {
-    const full = s.capacity && d.waiting >= s.capacity;
-    main = `
-      <div style="margin:6px 14px 12px">
-        <button class="btn pri big" id="joinBtn" ${full ? 'disabled' : ''}>${full ? 'Очередь заполнена' : 'Встать в очередь'}</button>
-        <div class="tx" style="text-align:center;margin-top:8px">Примерное ожидание: ${etaText(d.etaNew)}</div>
-      </div>`;
-  } else {
-    main = `<div class="card next-empty">${s.status === 'paused' ? 'Запись временно приостановлена преподавателем.' : 'Комната закрыта.'}</div>`;
-  }
-  pb.innerHTML = head + main + list + `
-    ${me ? '<div style="margin:8px 14px"><button class="btn danger-ghost" id="leaveBtn">Выйти из очереди</button></div>' : ''}
-    <a class="back" style="justify-content:center;width:100%" href="#/exam/tab/${esc(s.discipline)}">← К комнатам предмета</a>`;
-
-  const jb = document.getElementById('joinBtn');
-  if (jb) jb.onclick = async () => {
-    askNotify();
-    jb.disabled = true; jb.textContent = 'Записываем…';
-    try {
-      const r = await api('/exam/sessions/' + id + '/join', { method: 'POST', body: {} });
-      toast(`Вы в очереди: № ${r.pos} (${etaText(r.etaMin)})`);
-      await renderExamDetail(id, true, true);
-    } catch (e) { toast(e.message, true); jb.disabled = false; jb.textContent = 'Встать в очередь'; }
-  };
-  const lb = document.getElementById('leaveBtn');
-  if (lb) lb.onclick = async () => {
-    if (!confirm('Выйти из очереди? Место будет потеряно.')) return;
-    try { await api('/exam/queue/leave', { method: 'POST', body: { entryId: me.id } }); toast('Вы вышли из очереди'); renderExamDetail(id, true, true); }
-    catch (e) { toast(e.message, true); }
-  };
-  const ab = document.getElementById('ackBtn');
-  if (ab) ab.onclick = async () => {
-    try { await api('/exam/queue/' + me.id + '/ack', { method: 'POST', body: {} }); closeCallAlert(); renderExamDetail(id, true, true); }
-    catch (e) { toast(e.message, true); }
-  };
-  const nb = document.getElementById('notifBtn');
-  if (nb) nb.onclick = () => { Notification.requestPermission().then(() => renderExamDetail(id, true, true)).catch(() => { }); };
-  tickStudentTimers();
-}
-function tickStudentTimers() {
-  document.querySelectorAll('[data-el]').forEach((el) => { el.textContent = mmss((nowS() - Number(el.dataset.el)) / 1000); });
-  const c = document.querySelector('.tclock[data-st]');
-  if (!c) return;
-  const ph = answerPhase(Number(c.dataset.st), Number(c.dataset.lim), Number(c.dataset.warn));
-  c.textContent = mmss(ph.el);
-  c.className = 'tclock ph-' + ph.phase;
-  const bar = document.querySelector('[data-bar]'); if (bar) { bar.style.width = ph.pct + '%'; bar.parentNode.className = 'progress tbar ph-' + ph.phase; }
-  const left = document.querySelector('[data-left]');
-  if (left) left.textContent = ph.left > 0 ? `Осталось ${mmss(ph.left)} из ${Math.round(Number(c.dataset.lim) / 60)} мин` : 'Время вышло, преподаватель скоро выставит оценку';
-}
-
-/* ============================ Очередь: студент — мои результаты ============================ */
-async function viewMyResults() {
-  stopPoll();
-  app.innerHTML = `<a class="back" href="#/exam">${svg('back')} Очередь</a><h1 class="ptitle">Мои результаты</h1><div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
-  try { await meta(); } catch { }
-  const paint = async () => {
-    const pb = document.getElementById('pagebody');
-    if (!pb) return;
-    let d;
-    try { d = await api('/exam/my-results'); } catch (e) { pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
-    const done = d.items.filter((x) => x.status === 'done');
-    pb.innerHTML = `
-      <div class="card scorecard">
-        <div><div class="stud-fio">Спикинг</div><div class="stud-group">Сдано: ${done.length} · пропусков: ${d.items.length - done.length}</div><span class="pill">Средний балл за ответы</span></div>
-        <div class="ring-wrap">${ringSVG(d.avg)}</div>
-      </div>
-      ${d.items.length ? d.items.map((r) => `
-        <div class="card room lvbord${r.level}" style="cursor:default">
-          <div class="room-top">${lvlBadge(r.level, r.discipline)}<span class="badge">${esc(discShort(r.discipline))}</span>
-            ${r.status === 'done' ? (r.score != null ? `<span class="badge ok">${r.score} б.</span>` : '<span class="badge ok">Принят</span>') : '<span class="badge warn">Не пришёл</span>'}</div>
-          <div class="room-title">${esc(r.title)}</div>
-          <div class="room-sub">${esc(r.teacher)}</div>
-          <div class="room-meta">${mi('calendar', new Date(r.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))}${r.durSec ? mi('clock', mmss(r.durSec)) : ''}${r.room ? mi('door', esc(r.room)) : ''}</div>
-          ${r.comment ? `<div class="fbk">${esc(r.comment)}</div>` : ''}
-        </div>`).join('') : '<div class="card next-empty">Результатов пока нет. Они появятся после первого ответа.</div>'}`;
-  };
-  await paint();
-  onLive((ev) => { if (ev.type === 'done' || ev.type === 'absent' || ev.type === 'resync') paint(); });
+  document.getElementById('oeGo').addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // открыть в новой вкладке — как обычно
+    e.preventDefault();
+    examTransition(href);
+  });
 }
 
 /* ============================ AI-помощник ============================ */
@@ -912,332 +534,6 @@ async function sendChat() {
   }
   paintChat();
   body.scrollTop = body.scrollHeight;
-}
-
-/* ============================ Очередь: преподаватель ============================ */
-let tTab = 'all', tForm = { discipline: null, level: 2 };
-async function viewTQueue() {
-  stopPoll();
-  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
-  try { await meta(); } catch (e) { document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
-  tTab = lsGet('ku_ttab', 'all');
-  if (!tForm.discipline) tForm.discipline = tTab !== 'all' ? tTab : 'english';
-  const pb = document.getElementById('pagebody');
-  pb.innerHTML = `
-    <details class="card newroom" id="newRoom">
-      <summary>${svg('plus')}Новая комната для спикинга</summary>
-      <label class="lbl">Предмет (вкладка у студентов)</label>
-      <div class="discgrid" id="nrDisc"></div>
-      <label class="lbl">Серьёзность комнаты</label>
-      <div class="lvpick" id="nrLevel"></div>
-      <div class="tx" id="nrHint" style="margin:-2px 0 10px"></div>
-      <label class="lbl">Тема / название (необяз.)</label>
-      <input class="inp" id="nrTitle" maxlength="80" placeholder="Например: Speaking — Travel &amp; Tourism">
-      <div class="row2">
-        <div><label class="lbl">Аудитория</label><input class="inp" id="nrRoom" maxlength="40" placeholder="301"></div>
-        <div><label class="lbl">Группа</label><input class="inp" id="nrGroup" maxlength="40" placeholder="для всех"></div>
-      </div>
-      <div class="row2">
-        <div><label class="lbl">Дата</label><input class="inp" id="nrDate" type="date"></div>
-        <div><label class="lbl">Время</label><input class="inp" id="nrTime" type="time"></div>
-      </div>
-      <div class="row2">
-        <div><label class="lbl">Минут на ответ</label><input class="inp" id="nrSlot" type="number" min="1" max="60" value="7"></div>
-        <div><label class="lbl">Предупредить за, сек</label><input class="inp" id="nrWarn" type="number" min="0" max="600" value="60"></div>
-      </div>
-      <label class="lbl">Лимит очереди (0 — без лимита)</label>
-      <input class="inp" id="nrCap" type="number" min="0" max="500" value="0">
-      <div class="tx" style="margin-bottom:10px">Пустые дата/время — комната открывается «сейчас».</div>
-      <button class="btn pri" id="nrBtn">Открыть комнату</button>
-    </details>
-    <div class="qtabs" id="ttabs"></div>
-    <div id="tModules"></div>
-    <div id="tSessions"><div class="load">Загрузка…</div></div>`;
-  paintNewRoomForm();
-  document.getElementById('nrBtn').onclick = createRoom;
-  await renderTList();
-  const re = debounce(() => renderTList(true), 250);
-  onLive(() => re());
-}
-function paintNewRoomForm() {
-  const dg = document.getElementById('nrDisc');
-  if (!dg) return;
-  dg.innerHTML = discList().map((d) => `<button type="button" class="dchip ${tForm.discipline === d.id ? 'on' : ''}" data-d="${d.id}">${esc(d.short)}</button>`).join('');
-  dg.querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => { tForm.discipline = b.dataset.d; paintNewRoomForm(); }));
-  const lp = document.getElementById('nrLevel');
-  lp.innerHTML = META.levels.map((l) => `<button type="button" class="lvopt lvopt${l.id} ${tForm.level === l.id ? 'on' : ''}" data-l="${l.id}">
-      <b>${l.id}</b><span>${esc(lvlLabel(l.id, tForm.discipline))}</span></button>`).join('');
-  lp.querySelectorAll('[data-l]').forEach((b) => (b.onclick = () => { tForm.level = Number(b.dataset.l); paintNewRoomForm(); }));
-  document.getElementById('nrHint').textContent = lvl(tForm.level).hint;
-}
-async function createRoom() {
-  const btn = document.getElementById('nrBtn');
-  btn.disabled = true;
-  try {
-    const r = await api('/teacher/sessions', {
-      method: 'POST',
-      body: {
-        discipline: tForm.discipline, level: tForm.level, title: v('nrTitle'), room: v('nrRoom'), group: v('nrGroup'),
-        date: v('nrDate'), time: v('nrTime'), slotMin: Number(v('nrSlot') || 7), warnSec: Number(v('nrWarn') || 60), capacity: Number(v('nrCap') || 0),
-      },
-    });
-    toast('Комната открыта — студенты видят её во вкладке «' + discShort(tForm.discipline) + '»');
-    location.hash = '#/t/room/' + r.id;
-  } catch (e) { toast(e.message, true); btn.disabled = false; }
-}
-async function renderTList(silent) {
-  const box = document.getElementById('tSessions');
-  if (!box) return;
-  let d;
-  try { d = await api('/teacher/sessions'); } catch (e) { if (!silent) box.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
-  const key = JSON.stringify([tTab, d]);
-  if (silent && box.dataset.key === key) return;
-  box.dataset.key = key;
-  const cnt = {};
-  d.items.forEach((s) => { if (s.status !== 'closed') cnt[s.discipline] = (cnt[s.discipline] || 0) + 1; });
-  const tabs = [{ id: 'all', short: 'Все' }].concat(discList());
-  if (d.items.some((s) => s.discipline === 'other')) tabs.push(META.other);
-  const tt = document.getElementById('ttabs');
-  tt.innerHTML = tabs.map((t) => {
-    const c = t.id === 'all' ? Object.values(cnt).reduce((a, b) => a + b, 0) : cnt[t.id];
-    return `<button class="qtab ${tTab === t.id ? 'on' : ''}" data-tab="${t.id}">${esc(t.short)}${c ? `<b class="qcnt">${c}</b>` : ''}</button>`;
-  }).join('');
-  tt.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => {
-    tTab = b.dataset.tab; lsSet('ku_ttab', tTab);
-    if (tTab !== 'all') { tForm.discipline = tTab; paintNewRoomForm(); }
-    renderTList();
-  }));
-  const tm_ = document.getElementById('tModules');
-  if (tm_) tm_.innerHTML = moduleBar('teacher', tTab); // модули очереди (AGENTS.md); пустой реестр — пусто
-  const items = d.items.filter((s) => tTab === 'all' || s.discipline === tTab);
-  box.innerHTML = items.length ? items.map((s) => `
-    <button class="card room lvbord${s.level} ${s.status === 'closed' ? 'dim' : ''}" data-room="${s.id}">
-      <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)} <span class="badge">${esc(discShort(s.discipline))}</span></div>
-      <div class="stud-fio" style="font-size:17.5px;margin-top:8px">${esc(s.title || s.subject)}</div>
-      <div class="room-meta">${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}${s.group ? mi('users', esc(s.group)) : ''}</div>
-      <div class="room-meta"><span class="badge">${s.waiting} ждут</span>${s.called ? `<span class="badge warn">${s.called} вызван(о)</span>` : ''}<span class="badge ok">${s.done} принято</span></div>
-      ${s.calledFio ? `<div class="tx" style="margin-top:6px">Отвечает: <b style="color:var(--accent)">${esc(s.calledFio)}</b></div>` : ''}
-    </button>`).join('')
-    : `<div class="card next-empty">${tTab === 'all' ? 'Комнат пока нет — откройте первую выше.' : 'По этому предмету комнат нет.'}</div>`;
-  box.querySelectorAll('[data-room]').forEach((b) => (b.onclick = () => { location.hash = '#/t/room/' + b.dataset.room; }));
-}
-
-/* -------- Пульт комнаты: вызов, таймер ответа, приём с баллом, неявка, возврат, серьёзность -------- */
-let tRoomId = null;
-const tAlerted = {}; // entryId → последняя фаза, о которой уже предупредили (чтобы не повторять звук)
-function tSoundOn() { return lsGet('ku_tsound', '1') === '1'; }
-async function viewTRoom(id) {
-  stopPoll();
-  tRoomId = id;
-  app.innerHTML = `<a class="back" href="#/t/queue">${svg('back')} Комнаты</a><h1 class="ptitle">Пульт комнаты</h1><div id="pagebody"><div class="load">Загрузка…</div></div>${navHTML()}`;
-  try { await meta(); } catch { }
-  await paintTRoom(id);
-  const re = debounce(() => paintTRoom(id, true), 150);
-  onLive((ev) => { if (ev.type === 'tick' || ev.type === 'resync' || ev.sessionId === id) re(); });
-  window.__poll = setInterval(() => paintTRoom(id, true, true), 30000); // подписи «вызван N мин назад»
-  startTicker(tickTeacherTimers);
-}
-/* Каждую секунду обновляем только цифры таймеров, без перерисовки страницы */
-function tickTeacherTimers() {
-  document.querySelectorAll('[data-el]').forEach((el) => { el.textContent = mmss((nowS() - Number(el.dataset.el)) / 1000); });
-  document.querySelectorAll('.tcard[data-st]').forEach((card) => {
-    const ph = answerPhase(Number(card.dataset.st), Number(card.dataset.lim), Number(card.dataset.warn));
-    card.classList.remove('ph-run', 'ph-warn', 'ph-over');
-    card.classList.add('ph-' + ph.phase);
-    card.querySelector('[data-clock]').textContent = mmss(ph.el);
-    card.querySelector('[data-bar]').style.width = ph.pct + '%';
-    card.querySelector('[data-state]').textContent =
-      ph.phase === 'over' ? `Время вышло ${mmss(-ph.left)} назад. Пора заканчивать и выставлять оценку`
-        : ph.phase === 'warn' ? `Осталось ${mmss(ph.left)}. Пора подводить итог`
-          : `Осталось ${mmss(ph.left)} из ${Math.round(Number(card.dataset.lim) / 60)} мин`;
-    alertPhase(card.dataset.entry, ph.phase, card.dataset.fio);
-  });
-}
-function alertPhase(entryId, phase, fio) {
-  const prev = tAlerted[entryId];
-  if (prev === phase || phase === 'run') { tAlerted[entryId] = phase; return; }
-  tAlerted[entryId] = phase;
-  if (phase === 'warn') {
-    toast(`${fio}: осталось меньше минуты`);
-    if (tSoundOn()) tone([740, 740]);
-  } else if (phase === 'over') {
-    toast(`${fio}: время вышло, пора выставить оценку`, true);
-    if (tSoundOn()) tone([880, 660, 880, 660], 0.22);
-    if (navigator.vibrate) navigator.vibrate([250, 120, 250]);
-    if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-      try { new Notification('Время ответа вышло', { body: `${fio}: пора выставить оценку`, tag: 'ku-over-' + entryId }); } catch { }
-    }
-    const box = document.querySelector(`.tcard[data-entry="${entryId}"] .gradebox`);
-    if (box) box.classList.add('attn');
-  }
-}
-async function downloadCsv(id) {
-  try {
-    const r = await fetch('/api/teacher/sessions/' + id + '/export.csv', { headers: { Authorization: 'Bearer ' + S.token } });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Не удалось выгрузить');
-    const name = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'vedomost.csv';
-    const url = URL.createObjectURL(await r.blob());
-    const a = document.createElement('a');
-    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  } catch (e) { toast(e.message, true); }
-}
-async function paintTRoom(id, silent, force) {
-  const pb = document.getElementById('pagebody');
-  if (!pb || tRoomId !== id) return;
-  let d;
-  try { d = await api('/teacher/sessions/' + id + '/queue'); }
-  catch (e) { if (!silent) pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
-  syncClock(d.serverNow);
-  const key = JSON.stringify(Object.assign({}, d, { serverNow: 0 }));
-  if (silent && !force && pb.dataset.key === key) return;
-  // Не перерисовываем, пока преподаватель вводит балл или комментарий — иначе потеряется ввод
-  const ae = document.activeElement;
-  if (silent && ae && pb.contains(ae) && ae.matches('input, textarea')) return;
-  pb.dataset.key = key;
-  const s = d.session;
-  const closed = s.status === 'closed';
-  const warnSec = s.warnSec != null ? s.warnSec : 60;
-  const calledCard = (r) => `
-    <div class="tcard ${r.startedAt ? 'ph-run' : 'ph-wait'}" data-entry="${r.id}" data-fio="${esc(r.fio)}"
-      ${r.startedAt ? `data-st="${r.startedAt}" data-lim="${r.limitSec}" data-warn="${warnSec}"` : ''}>
-      <div class="tcard-top">
-        <div><b>${esc(r.fio)}</b><div class="tx">${esc(r.group)} · ${r.ackAt ? '<span style="color:var(--ok)">подтвердил вызов</span>' : 'не подтвердил вызов'}</div></div>
-        <button class="abtn" data-rq="${r.id}" data-front="1" title="Вернуть в начало очереди" aria-label="Вернуть в начало очереди">${svg('undo')}</button>
-      </div>
-      ${r.startedAt ? `
-        <div class="tclock" data-clock>00:00</div>
-        <div class="progress tbar"><i data-bar style="width:0%"></i></div>
-        <div class="tstate" data-state></div>
-        <div class="trow">
-          <button class="abtn" data-ext="${r.id}" data-sec="60">+1 мин</button>
-          <button class="abtn" data-ext="${r.id}" data-sec="120">+2 мин</button>
-          <span class="tx" style="margin-left:auto">лимит ${Math.round(r.limitSec / 60 * 10) / 10} мин</span>
-        </div>` : `
-        <div class="tx" style="margin:10px 0">Вызван <b data-el="${r.calledAt}">00:00</b> назад. Когда студент начнёт отвечать, запустите таймер.</div>
-        <button class="btn pri" data-start="${r.id}">${svg('play')}Начать ответ</button>`}
-      <div class="gradebox">
-        <div class="row2">
-          <input class="inp sc" data-sc="${r.id}" type="number" min="0" max="100" inputmode="numeric" placeholder="Балл 0–100">
-          <button class="btn ok-btn" data-acc="${r.id}">Принять</button>
-        </div>
-        <textarea class="inp cm" data-cm="${r.id}" rows="2" maxlength="300" placeholder="Комментарий студенту (необязательно)"></textarea>
-        <button class="btn danger-ghost slim" data-abs="${r.id}">Не пришёл</button>
-      </div>
-    </div>`;
-  const waitRow = (r) => `
-    <div class="lstrow" style="cursor:default">
-      <div><b>${r.pos}.</b> ${esc(r.fio)}<div class="tx">${esc(r.group)} · в ${tm(r.ts)}</div></div>
-      <div class="actrow">
-        ${closed ? '' : `<button class="abtn" data-call="${r.id}">Вызвать</button>`}
-        <button class="abtn bad" data-rm="${r.id}" title="Убрать из очереди" aria-label="Убрать из очереди">${svg('x')}</button>
-      </div>
-    </div>`;
-  pb.innerHTML = `
-    <div class="card room lvbord${s.level}" style="cursor:default">
-      <div class="room-top">${lvlBadge(s.level, s.discipline)} ${stBadge(s.status)} <span class="badge">${esc(discShort(s.discipline))}</span></div>
-      <div class="room-title">${esc(s.title || s.subject)}</div>
-      <div class="room-meta">${mi('door', esc(s.room || '—'))}${mi('calendar', esc(dstr(s.date)) + ', ' + esc(s.time))}${s.group ? mi('users', esc(s.group)) : ''}${mi('clock', s.slotMin + ' мин на ответ')}</div>
-      <div class="room-meta">
-        <span class="badge">${d.waiting.length} ждут</span><span class="badge ok">${d.done.length} принято</span>
-        ${d.absent.length ? `<span class="badge warn">${d.absent.length} не пришли</span>` : ''}
-        <span class="badge">в среднем ${d.stats.avgMin} мин</span>
-        ${d.stats.avgScore != null ? `<span class="badge">средний балл ${d.stats.avgScore}</span>` : ''}
-      </div>
-      ${closed ? '' : `
-      <label class="lbl">Серьёзность — меняется на лету, студенты увидят сразу</label>
-      <div class="lvpick" id="lvLive">${META.levels.map((l) => `<button class="lvopt lvopt${l.id} ${s.level === l.id ? 'on' : ''}" data-setlv="${l.id}"><b>${l.id}</b><span>${esc(lvlLabel(l.id, s.discipline))}</span></button>`).join('')}</div>`}
-    </div>
-    ${d.called.length ? `<div class="card"><div class="tx-head"><span>Сейчас отвечают</span>
-      <button class="linkbtn" id="sndBtn">${svg(tSoundOn() ? 'speaker' : 'x')}Звук ${tSoundOn() ? 'вкл' : 'выкл'}</button></div>${d.called.map(calledCard).join('')}</div>` : ''}
-    ${closed ? '' : `
-    <div style="margin:0 14px 12px">
-      <button class="btn pri big" id="callNext" ${d.waiting.length ? '' : 'disabled'}>${d.waiting.length ? svg('speaker') + 'Вызвать: ' + esc(d.waiting[0].fio.split(' ').slice(0, 2).join(' ')) : 'Очередь пуста'}</button>
-      ${d.called.length && d.waiting.length ? '<div class="warn-note">Уже есть вызванный студент</div>' : ''}
-    </div>`}
-    <div class="card">
-      <div class="tx" style="margin-bottom:8px">Очередь (${d.waiting.length}):</div>
-      ${d.waiting.length ? d.waiting.map(waitRow).join('') : '<div class="tx">Пока никого.</div>'}
-    </div>
-    ${d.absent.length ? `<div class="card"><div class="tx" style="margin-bottom:8px">Не пришли (${d.absent.length}):</div>${d.absent.map((r) => `
-      <div class="lstrow" style="cursor:default"><div>${esc(r.fio)}<div class="tx">${esc(r.group)}</div></div>
-      ${closed ? '' : `<button class="abtn" data-rq="${r.id}">В очередь</button>`}</div>`).join('')}</div>` : ''}
-    ${d.done.length ? `<div class="card"><div class="tx-head"><span>Принято (${d.done.length})</span>
-      <button class="linkbtn" id="csvBtn">${svg('clipboard')}Ведомость CSV</button></div>${d.done.map((r) => `
-      <div class="lstrow" style="cursor:default;align-items:flex-start"><div>${esc(r.fio)}<div class="tx">${esc(r.group)} · ${r.doneAt ? tm(r.doneAt) : ''}${r.durSec ? ' · ' + mmss(r.durSec) : ''}</div>
-      ${r.comment ? `<div class="fbk sm">${esc(r.comment)}</div>` : ''}</div>
-      <span class="badge ok">${r.score != null ? r.score + ' б.' : 'Принят'}</span></div>`).join('')}</div>` : ''}
-    ${closed ? (d.done.length ? '' : '') : `
-    <div class="card">
-      <div class="row2">
-        <div><label class="lbl">Аудитория</label><input class="inp" id="edRoom" value="${esc(s.room || '')}" maxlength="40"></div>
-        <div><label class="lbl">Минут на ответ</label><input class="inp" id="edSlot" type="number" min="1" max="60" value="${s.slotMin}"></div>
-      </div>
-      <div class="row2">
-        <div><label class="lbl">Предупредить за, сек</label><input class="inp" id="edWarn" type="number" min="0" max="600" value="${warnSec}"></div>
-        <div><label class="lbl">Лимит очереди</label><input class="inp" id="edCap" type="number" min="0" max="500" value="${s.capacity}"></div>
-      </div>
-      <button class="btn ghost" id="edSave" style="margin-bottom:10px">Сохранить настройки</button>
-      <div class="row2">
-        <button class="btn ghost" id="pauseBtn">${s.status === 'paused' ? svg('play') + 'Возобновить' : svg('pause') + 'Пауза записи'}</button>
-        <button class="btn danger-ghost" id="closeBtn">Закрыть комнату</button>
-      </div>
-    </div>`}`;
-
-  const patch = async (body, msg) => {
-    try { await api('/teacher/sessions/' + id, { method: 'PATCH', body }); if (msg) toast(msg); paintTRoom(id, true, true); }
-    catch (e) { toast(e.message, true); }
-  };
-  const act = async (eid, action, body, msg) => {
-    try { await api('/teacher/queue/' + eid + '/' + action, { method: 'POST', body: body || {} }); if (msg) toast(msg); paintTRoom(id, true, true); }
-    catch (e) { toast(e.message, true); }
-  };
-  pb.querySelectorAll('[data-setlv]').forEach((b) => (b.onclick = () => {
-    const lv = Number(b.dataset.setlv);
-    if (lv !== s.level) patch({ level: lv }, 'Серьёзность: ' + lvlLabel(lv, s.discipline));
-  }));
-  const cn = document.getElementById('callNext');
-  if (cn) cn.onclick = async () => {
-    cn.disabled = true;
-    askNotify();
-    try { await api('/teacher/sessions/' + id + '/call-next', { method: 'POST', body: {} }); toast('Студент вызван — ему пришло уведомление'); }
-    catch (e) { toast(e.message, true); }
-    paintTRoom(id, true, true);
-  };
-  pb.querySelectorAll('[data-call]').forEach((b) => (b.onclick = () => act(b.dataset.call, 'call', {}, 'Студент вызван')));
-  pb.querySelectorAll('[data-start]').forEach((b) => (b.onclick = () => act(b.dataset.start, 'start', {}, 'Таймер запущен')));
-  pb.querySelectorAll('[data-ext]').forEach((b) => (b.onclick = () => {
-    delete tAlerted[b.dataset.ext]; // после продления предупреждения сработают заново
-    act(b.dataset.ext, 'extend', { sec: Number(b.dataset.sec) }, 'Время продлено');
-  }));
-  pb.querySelectorAll('[data-acc]').forEach((b) => (b.onclick = () => {
-    const eid = b.dataset.acc;
-    const raw = (pb.querySelector('[data-sc="' + eid + '"]') || {}).value || '';
-    const comment = ((pb.querySelector('[data-cm="' + eid + '"]') || {}).value || '').trim();
-    const body = {};
-    if (raw.trim() !== '') body.score = Number(raw);
-    if (comment) body.comment = comment;
-    b.blur();
-    act(eid, 'accept', body, raw.trim() === '' ? 'Принят' : 'Принят, балл ' + raw + ' записан в успеваемость');
-  }));
-  pb.querySelectorAll('.sc').forEach((inp) => (inp.onkeydown = (e) => { if (e.key === 'Enter') pb.querySelector('[data-acc="' + inp.dataset.sc + '"]').click(); }));
-  pb.querySelectorAll('[data-abs]').forEach((b) => (b.onclick = () => act(b.dataset.abs, 'absent', {}, 'Отмечен как отсутствующий')));
-  pb.querySelectorAll('[data-rq]').forEach((b) => (b.onclick = () => act(b.dataset.rq, 'requeue', { front: !!b.dataset.front }, b.dataset.front ? 'Возвращён в начало очереди' : 'Возвращён в конец очереди')));
-  pb.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => { if (confirm('Убрать студента из очереди?')) act(b.dataset.rm, 'remove', {}, 'Убран из очереди'); }));
-  const snd = document.getElementById('sndBtn');
-  if (snd) snd.onclick = () => { lsSet('ku_tsound', tSoundOn() ? '0' : '1'); paintTRoom(id, true, true); };
-  const csv = document.getElementById('csvBtn');
-  if (csv) csv.onclick = () => downloadCsv(id);
-  const es = document.getElementById('edSave');
-  if (es) es.onclick = () => patch({ room: v('edRoom'), slotMin: Number(v('edSlot')), warnSec: Number(v('edWarn')), capacity: Number(v('edCap')) }, 'Сохранено');
-  const pz = document.getElementById('pauseBtn');
-  if (pz) pz.onclick = () => patch({ status: s.status === 'paused' ? 'open' : 'paused' }, s.status === 'paused' ? 'Запись возобновлена' : 'Запись на паузе — очередь сохранена');
-  const cl = document.getElementById('closeBtn');
-  if (cl) cl.onclick = () => {
-    const n = d.waiting.length + d.called.length;
-    if (confirm(n ? `Закрыть комнату? ${n} студ. в очереди получат отмену.` : 'Закрыть комнату?')) patch({ status: 'closed' }, 'Комната закрыта');
-  };
-  tickTeacherTimers();
 }
 
 /* --- преподаватель: расписание --- */
@@ -1356,14 +652,14 @@ function viewProfile() {
         <div class="pf-sub">${esc(u.email)}</div>
       </div>
     </div>
-    ${u.role === 'teacher' ? `<a class="card lstrow" style="display:flex" href="#/t/queue"><div>📋 Экзамен</div><div class="chev">${svg('chev')}</div></a>` : `<a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Экзамен</div><div class="chev">${svg('chev')}</div></a>`}
+    <a class="card lstrow" style="display:flex" href="#/exam"><div>📝 Экзамен</div><div class="chev">${svg('chev')}</div></a>
     <a class="card lstrow" style="display:flex" href="#/ai"><div>🤖 AI-помощник</div><div class="chev">${svg('chev')}</div></a>
     <div style="margin:10px 14px"><button class="btn danger-ghost" id="outBtn">Выйти из аккаунта</button></div>
     <div class="tx" style="text-align:center;margin-top:14px">KU Portal v1.0 · Kozybayev University</div>
     ${navHTML('profile')}`;
   document.getElementById('outBtn').onclick = async () => {
     try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
-    Live.stop(); closeCallAlert(); localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
+    localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; goHome();
   };
 }
 
@@ -1386,18 +682,13 @@ function route() {
     case 'schedule': return viewSchedule();
     case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
     case 'rating': return viewRating();
-    case 'exam':
-      if (S.user.role === 'teacher') return viewTQueue();
-      if (parts[1] === 'tab') return viewExamList(parts[2]);
-      if (parts[1] === 'results') return viewMyResults();
-      if (parts[1] === 'm' && parts[2]) return viewQueueModule('student', parts[2].split('?')[0]);
-      return parts[1] ? viewExamDetail(parts[1]) : viewExamList();
+    case 'exam': return viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
     case 'ai': return viewAI();
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
-      if (parts[1] === 'room' && parts[2]) return viewTRoom(parts[2]);
-      if (parts[1] === 'm' && parts[2]) return viewQueueModule('teacher', parts[2].split('?')[0]);
-      return parts[1] === 'schedule' ? viewTSchedule() : parts[1] === 'grades' ? viewTGrades() : viewTQueue();
+      if (parts[1] === 'schedule') return viewTSchedule();
+      if (parts[1] === 'grades') return viewTGrades();
+      return viewExam(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile();
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
@@ -1406,7 +697,7 @@ function route() {
 window.addEventListener('hashchange', route);
 (async function init() {
   if (S.token) {
-    try { S.user = (await api('/me')).user; Live.start(); }
+    try { S.user = (await api('/me')).user; }
     catch { S.token = null; localStorage.removeItem('ku_token'); }
   }
   if (!location.hash) location.hash = '#/';

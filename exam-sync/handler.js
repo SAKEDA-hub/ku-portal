@@ -63,6 +63,7 @@ function createExamSync({ base = '/exam-sync', dataFile, seedFile = path.join(__
       res.end(fs.readFileSync(INDEX));
       return true;
     }
+    if (req.method === 'HEAD' && (u === '/' || u === '/api/state')) { res.writeHead(200, { 'Cache-Control': 'no-store' }); res.end(); return true; } // проверка доступности
     if (req.method === 'GET' && u === '/api/state') { json(res, state()); return true; }
     if (req.method === 'GET' && u === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
