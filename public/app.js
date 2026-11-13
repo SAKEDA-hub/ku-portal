@@ -47,6 +47,7 @@ const I = {
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>',
   trash: '<path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2c.1.8.7 1.3 1.5 1.3h6.2c.8 0 1.4-.5 1.5-1.3L17.5 7"/>',
   cap: '<path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.6v4.2c2.9 2.3 8.1 2.3 11 0v-4.2M21.5 9.5v5"/>',
+  spark: '<path d="M12 3.5c.5 3.9 2.6 6 6.5 6.5-3.9.5-6 2.6-6.5 6.5-.5-3.9-2.6-6-6.5-6.5 3.9-.5 6-2.6 6.5-6.5z"/><path d="M18.5 15.5c.2 1.5 1 2.3 2.5 2.5-1.5.2-2.3 1-2.5 2.5-.2-1.5-1-2.3-2.5-2.5 1.5-.2 2.3-1 2.5-2.5z"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
 };
 function svg(name, cls) {
@@ -732,23 +733,26 @@ function aiText(m) {
   return tv(m.content);
 }
 let aiHistory = null;
+/* Быстрые вопросы — показываются, пока в чате только приветствие */
+const AI_SUGGEST = ['Как поступить в университет?', 'Какие есть специальности?', 'Есть ли общежитие?', 'Сколько стоит обучение?'];
 async function viewAI() {
   stopPoll();
   aiHistory = aiHistory ? AI_INIT.concat(aiHistory.slice(AI_INIT.length)) : AI_INIT.slice();
   app.innerHTML = `
-    <div class="chatpage" style="height:100vh">
+    <div class="chatpage">
       <div class="chathead">
-        <div class="avatar bird-avatar"><img src="/bird-idle.png" alt="" /></div>
-        <div style="flex:1">
+        <div class="ai-ava lg">${svg('spark')}</div>
+        <div class="chathead-t">
           <b>${t('AI-помощник')}</b>
           <div class="st"><span class="dot" id="aidot"></span><span id="aist">${t('уточняю статус…')}</span></div>
         </div>
-        <a class="back" style="padding:0" href="#/">${svg('back')}</a>
+        <button class="chat-act" id="chatnew" type="button" title="${t('Новый чат')}">${svg('plus')}<span>${t('Новый чат')}</span></button>
+        <a class="chat-act" href="#/" title="${t('На главную')}">${svg('back')}<span>${t('На главную')}</span></a>
       </div>
       <div class="chatbody" id="chatbody"><div class="chatwrap" id="chatwrap"></div></div>
       <div class="chatbar">
         <input class="inp" id="chatinp" placeholder="${t('Задайте вопрос…')}" autocomplete="off">
-        <button class="sendbtn" id="chatsend">${svg('send')}</button>
+        <button class="sendbtn" id="chatsend" type="button" title="${t('Отправить')}">${svg('send')}<span>${t('Отправить')}</span></button>
       </div>
     </div>`;
   paintChat();
@@ -756,7 +760,9 @@ async function viewAI() {
   body.scrollTop = body.scrollHeight;
   const inp = document.getElementById('chatinp');
   inp.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
-  document.getElementById('chatsend').onclick = sendChat;
+  document.getElementById('chatsend').onclick = () => sendChat();
+  document.getElementById('chatnew').onclick = () => { aiHistory = AI_INIT.slice(); paintChat(); inp.focus(); };
+  if (matchMedia('(min-width: 1024px)').matches) inp.focus();
   api('/ai/status').then((st) => {
     const dot = document.getElementById('aidot'), stt = document.getElementById('aist');
     if (!dot) return;
@@ -767,19 +773,24 @@ async function viewAI() {
 function paintChat() {
   const w = document.getElementById('chatwrap');
   if (!w) return;
-  w.innerHTML = aiHistory.map((m) =>
-    `<div class="msg ${m.role === 'user' ? 'user' : 'bot'}" style="align-self:${m.role === 'user' ? 'flex-end' : 'flex-start'}">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`
-  ).join('');
+  w.innerHTML = aiHistory.map((m) => m.role === 'user'
+    ? `<div class="msg user">${esc(aiText(m))}</div>`
+    : `<div class="msgrow"><div class="ai-ava">${svg('spark')}</div><div class="msg bot">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div></div>`
+  ).join('') + (aiHistory.length === AI_INIT.length
+    ? `<div class="ai-sugg">${AI_SUGGEST.map((q) => `<button class="ai-q" type="button" data-q="${esc(t(q))}">${esc(t(q))}</button>`).join('')}</div>`
+    : '');
+  w.querySelectorAll('.ai-q').forEach((b) => { b.onclick = () => sendChat(b.dataset.q); });
 }
-async function sendChat() {
+async function sendChat(preset) {
   const inp = document.getElementById('chatinp');
   if (!inp) return;
-  const t = inp.value.trim();
+  const t = (typeof preset === 'string' ? preset : inp.value).trim();
   if (!t) return;
   inp.value = '';
   aiHistory.push({ role: 'user', content: t });
+  paintChat();
   const w = document.getElementById('chatwrap');
-  w.insertAdjacentHTML('beforeend', `<div class="msg bot" id="typing"><span class="typing"><i></i><i></i><i></i></span></div>`);
+  w.insertAdjacentHTML('beforeend', `<div class="msgrow" id="typing"><div class="ai-ava">${svg('spark')}</div><div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
   const body = document.getElementById('chatbody');
   body.scrollTop = body.scrollHeight;
   try {
