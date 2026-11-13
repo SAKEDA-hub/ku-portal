@@ -732,23 +732,26 @@ function aiText(m) {
   return tv(m.content);
 }
 let aiHistory = null;
+/* Быстрые вопросы — показываются, пока в чате только приветствие */
+const AI_SUGGEST = ['Как поступить в университет?', 'Какие есть специальности?', 'Есть ли общежитие?', 'Сколько стоит обучение?'];
 async function viewAI() {
   stopPoll();
   aiHistory = aiHistory ? AI_INIT.concat(aiHistory.slice(AI_INIT.length)) : AI_INIT.slice();
   app.innerHTML = `
-    <div class="chatpage" style="height:100vh">
+    <div class="chatpage">
       <div class="chathead">
-        <div class="avatar bird-avatar"><img src="/bird-idle.png" alt="" /></div>
-        <div style="flex:1">
+        <div class="bird-avatar"><img src="/bird-idle.png" alt="" /></div>
+        <div class="chathead-t">
           <b>${t('AI-помощник')}</b>
           <div class="st"><span class="dot" id="aidot"></span><span id="aist">${t('уточняю статус…')}</span></div>
         </div>
-        <a class="back" style="padding:0" href="#/">${svg('back')}</a>
+        <button class="chat-act" id="chatnew" type="button" title="${t('Новый чат')}">${svg('plus')}<span>${t('Новый чат')}</span></button>
+        <a class="chat-act" href="#/" title="${t('На главную')}">${svg('back')}<span>${t('На главную')}</span></a>
       </div>
       <div class="chatbody" id="chatbody"><div class="chatwrap" id="chatwrap"></div></div>
       <div class="chatbar">
         <input class="inp" id="chatinp" placeholder="${t('Задайте вопрос…')}" autocomplete="off">
-        <button class="sendbtn" id="chatsend">${svg('send')}</button>
+        <button class="sendbtn" id="chatsend" type="button" title="${t('Отправить')}">${svg('send')}<span>${t('Отправить')}</span></button>
       </div>
     </div>`;
   paintChat();
@@ -756,7 +759,9 @@ async function viewAI() {
   body.scrollTop = body.scrollHeight;
   const inp = document.getElementById('chatinp');
   inp.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
-  document.getElementById('chatsend').onclick = sendChat;
+  document.getElementById('chatsend').onclick = () => sendChat();
+  document.getElementById('chatnew').onclick = () => { aiHistory = AI_INIT.slice(); paintChat(); inp.focus(); };
+  if (matchMedia('(min-width: 1024px)').matches) inp.focus();
   api('/ai/status').then((st) => {
     const dot = document.getElementById('aidot'), stt = document.getElementById('aist');
     if (!dot) return;
@@ -767,19 +772,24 @@ async function viewAI() {
 function paintChat() {
   const w = document.getElementById('chatwrap');
   if (!w) return;
-  w.innerHTML = aiHistory.map((m) =>
-    `<div class="msg ${m.role === 'user' ? 'user' : 'bot'}" style="align-self:${m.role === 'user' ? 'flex-end' : 'flex-start'}">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`
-  ).join('');
+  w.innerHTML = aiHistory.map((m) => m.role === 'user'
+    ? `<div class="msg user">${esc(aiText(m))}</div>`
+    : `<div class="msgrow"><div class="ai-ava"><img src="/bird-idle.png" alt="" /></div><div class="msg bot">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div></div>`
+  ).join('') + (aiHistory.length === AI_INIT.length
+    ? `<div class="ai-sugg">${AI_SUGGEST.map((q) => `<button class="ai-q" type="button" data-q="${esc(t(q))}">${esc(t(q))}</button>`).join('')}</div>`
+    : '');
+  w.querySelectorAll('.ai-q').forEach((b) => { b.onclick = () => sendChat(b.dataset.q); });
 }
-async function sendChat() {
+async function sendChat(preset) {
   const inp = document.getElementById('chatinp');
   if (!inp) return;
-  const t = inp.value.trim();
+  const t = (typeof preset === 'string' ? preset : inp.value).trim();
   if (!t) return;
   inp.value = '';
   aiHistory.push({ role: 'user', content: t });
+  paintChat();
   const w = document.getElementById('chatwrap');
-  w.insertAdjacentHTML('beforeend', `<div class="msg bot" id="typing"><span class="typing"><i></i><i></i><i></i></span></div>`);
+  w.insertAdjacentHTML('beforeend', `<div class="msgrow" id="typing"><div class="ai-ava"><img src="/bird-idle.png" alt="" /></div><div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
   const body = document.getElementById('chatbody');
   body.scrollTop = body.scrollHeight;
   try {
