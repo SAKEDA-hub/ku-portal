@@ -473,6 +473,23 @@ function serveStatic(req, res, url) {
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json') });
+const publicAIRate = new Map();
+
+function allowPublicAI(req) {
+  const ip = clientIp(req) || 'unknown';
+  const now = Date.now();
+  let window = publicAIRate.get(ip);
+  if (!window || now - window.startedAt >= 60_000) {
+    window = { startedAt: now, count: 0 };
+    publicAIRate.set(ip, window);
+  }
+  if (window.count >= 30) return false;
+  window.count++;
+  if (publicAIRate.size > 10_000) {
+    for (const [key, value] of publicAIRate) if (now - value.startedAt >= 60_000) publicAIRate.delete(key);
+  }
+  return true;
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -577,6 +594,24 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/ai/status' && req.method === 'GET') {
       return ok(res, await aiStatus());
+    }
+
+    // Public static university site uses the assistant without a KU Portal login.
+    if (p === '/api/ai/chat' && req.method === 'POST') {
+      if (!allowPublicAI(req)) return bad(res, 429, 'Слишком много запросов. Попробуйте позже.');
+      const q = String(body.message || '').trim().slice(0, 1000);
+      if (!q) return bad(res, 400, 'Пустой вопрос');
+      try {
+        const r = await aiReply(q);
+        return ok(res, r);
+      } catch (e) {
+        lmModelCache = { at: 0, model: null };
+        console.error('[AI] Запрос к LM Studio не выполнен:', e.name === 'TimeoutError' ? 'таймаут' : (e.cause?.code || e.message));
+        return ok(res, {
+          reply: 'Модель Gemma сейчас недоступна. Проверьте, что LM Studio запущена и сервер доступен порталу.',
+          src: 'offline',
+        });
+      }
     }
 
     if (!u) return bad(res, 401, 'Не авторизован');
@@ -781,22 +816,6 @@ const server = http.createServer(async (req, res) => {
         .forEach((x) => pushInbox(x, { type: 'schedule', subject: sub.name, day: e.day, start: e.start, end: e.end, room: e.room, lessonType: e.type }));
       saveDB();
       return ok(res, { id: e.id });
-    }
-
-    if (p === '/api/ai/chat' && req.method === 'POST') {
-      const q = String(body.message || '').trim().slice(0, 1000);
-      if (!q) return bad(res, 400, 'Пустой вопрос');
-      try {
-        const r = await aiReply(q);
-        return ok(res, r);
-      } catch (e) {
-        lmModelCache = { at: 0, model: null };
-        console.error('[AI] Запрос к LM Studio не выполнен:', e.name === 'TimeoutError' ? 'таймаут' : (e.cause?.code || e.message));
-        return ok(res, {
-          reply: 'Модель Gemma сейчас недоступна. Проверьте, что LM Studio запущена и сервер доступен порталу.',
-          src: 'offline',
-        });
-      }
     }
 
     if (p === '/api/ai/status' && req.method === 'GET') {
