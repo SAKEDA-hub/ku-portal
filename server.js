@@ -434,7 +434,9 @@ async function aiReply(q) {
       input: question,
       temperature: 0.2,
       max_output_tokens: 700,
-      reasoning: 'low',
+      // Gemma 4 in LM Studio supports only "off" or "on" (not "low").
+      // Reasoning output is intentionally omitted from the returned student reply.
+      reasoning: 'on',
       context_length: 8192,
       store: false,
     }),
