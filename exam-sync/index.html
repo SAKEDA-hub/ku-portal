@@ -6,12 +6,12 @@
 <meta name="theme-color" content="#1C1C1E">
 <meta name="color-scheme" content="dark">
 <script>/* Тема = цвет × режим (+ размер текста, «меньше анимации», контраст).
-   Цвет: incampus (Kozybayev University) | intl (University of Arizona) | emerald | violet | coral | graphite
-   (последние четыре — палитры KU Portal). Режим: auto (родной: inCampus — тёмный, остальные — светлые) | light | dark | system.
+   Цвет: incampus (Kozybayev University) | intl (University of Arizona) | emerald | violet | coral | graphite | pink
+   (последние пять — палитры KU Portal). Режим: auto (родной: inCampus — тёмный, остальные — светлые) | light | dark | system.
    Из KU Portal приходят ?from=ku-portal&theme=<цвет>&mode=<режим>&fs=<sm|md|lg|xl>&still=<0|1> — хранятся на сессию
    вкладки (sessionStorage edu-*-ku), иначе — выбор пользователя (localStorage edu-theme / edu-mode, edu-prefs:<id>).
    Итог: data-theme = incampus | incampus-light | intl | intl-dark; для палитр портала ещё data-accent=<цвет>. */
-window.EDU_COLORS=['incampus','intl','emerald','violet','coral','graphite'];
+window.EDU_COLORS=['incampus','intl','emerald','violet','coral','graphite','pink'];
 window.eduThemeOf=function(c,m){var sd=!!(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var d=m==='dark'||(m==='system'&&sd)||(m!=='light'&&m!=='system'&&m!=='dark'&&c==='incampus');return c==='intl'?(d?'intl-dark':'intl'):(d?'incampus':'incampus-light')};
 window.eduPaint=function(c,m){var r=document.documentElement;if(EDU_COLORS.indexOf(c)<0)c='incampus';r.dataset.theme=eduThemeOf(c,m);if(c==='incampus'||c==='intl')delete r.dataset.accent;else r.dataset.accent=c};
 try{var q=new URLSearchParams(location.search),t=q.get('theme'),md=q.get('mode'),fs=q.get('fs'),st=q.get('still');
@@ -98,12 +98,13 @@ eduPaint(c,m);var f=sessionStorage.getItem('edu-fs-ku');if(f&&f!=='md')document.
   --chip-mid-bg:#FFF1D6;--chip-mid-tx:#A86F00;--chip-mid-bd:#FFF1D6;
   --locked:#18283F;--called-bg:rgba(242,184,75,.08);--toast-bg:#E8EEF7;--toast-tx:#0A1424;
 }}
-/* ===== Палитры KU Portal (data-accent): изумрудный, фиолетовый, коралловый, графит.
+/* ===== Палитры KU Portal (data-accent): изумрудный, фиолетовый, коралловый, графит, розовый.
    Основа — светлая (incampus-light) или тёмная (incampus) тема, меняются только акцентные цвета. ===== */
 :root[data-accent="emerald"]{--acc:#1f9d6b;--acc-deep:#0f6b47;--acc-l:#3cc18c}
 :root[data-accent="violet"]{--acc:#6d4bd8;--acc-deep:#452c9c;--acc-l:#9b82ee}
 :root[data-accent="coral"]{--acc:#e0603f;--acc-deep:#a23d23;--acc-l:#f08a6d}
 :root[data-accent="graphite"]{--acc:#3f4a56;--acc-deep:#262d35;--acc-l:#8d9bab}
+:root[data-accent="pink"]{--acc:#d63384;--acc-deep:#9c1f5e;--acc-l:#ef7ab3}
 @media screen{:root[data-accent][data-theme]{
   --ac:var(--acc);--ac-h:var(--acc-deep);--ac-d:color-mix(in srgb,var(--acc) 10%,transparent);--ac-dd:color-mix(in srgb,var(--acc) 7%,#fff);--on-ac:#FFFFFF;
   --navy:var(--acc-deep);--bar:var(--acc);--avatar:var(--acc);
@@ -600,6 +601,13 @@ button.me{border:0;background:none;padding:0;margin:0;color:inherit;text-align:l
 .me-t b{font-size:15px;font-weight:700;white-space:nowrap}
 .me-t small{font-size:12px;color:var(--tx2)}
 @media (min-width:1000px){.me-t{display:flex}}
+button.me{padding:3px 6px 3px 3px;gap:8px;transition:background .15s}
+@media (hover:hover){button.me:hover{background:var(--s2)}button.me:hover .me-gear{color:var(--tx)}}
+.me-gear{display:inline-flex;color:var(--tx3)}
+.me-gear svg.i{width:20px;height:20px}
+button.brand{border:0;background:none;padding:2px 6px 2px 0;margin:0;color:inherit;font:inherit;border-radius:var(--rs);text-align:left}
+@media (hover:hover){button.brand:hover .brand-t{text-decoration:underline;text-underline-offset:4px}}
+.st-me .grow{flex:1;min-width:0}
 .avatar{width:38px;height:38px;border-radius:var(--rs);background:var(--avatar);color:var(--avatar-tx);font-weight:700;font-size:15px;display:inline-flex;align-items:center;justify-content:center;flex:none}
 .avatar.teacher{background:var(--avatar-t);color:var(--avatar-t-tx)}
 .avatar.sm{width:32px;height:32px;font-size:13px}
@@ -628,11 +636,12 @@ button.me{border:0;background:none;padding:0;margin:0;color:inherit;text-align:l
 .st-prev i{display:block;height:7px;border-radius:4px}.st-prev i:first-child{width:50%}.st-prev i:nth-child(2){width:85%}.st-prev i:nth-child(3){width:65%}
 .st-prev-incampus{background:#1C1C1E}.st-prev-incampus i:first-child{background:#19A9BD}.st-prev-incampus i:not(:first-child){background:#4A4A4D}
 .st-prev-intl{background:#F6F7F8;border-top:10px solid #0C234B}.st-prev-intl i:first-child{background:#006FBF}.st-prev-intl i:not(:first-child){background:#CDD5DC}
-.st-prev-emerald,.st-prev-violet,.st-prev-coral,.st-prev-graphite{background:#F6F7F8}.st-prev-emerald i:not(:first-child),.st-prev-violet i:not(:first-child),.st-prev-coral i:not(:first-child),.st-prev-graphite i:not(:first-child){background:#CDD5DC}
+.st-prev-emerald,.st-prev-violet,.st-prev-coral,.st-prev-graphite,.st-prev-pink{background:#F6F7F8}.st-prev-emerald i:not(:first-child),.st-prev-violet i:not(:first-child),.st-prev-coral i:not(:first-child),.st-prev-graphite i:not(:first-child),.st-prev-pink i:not(:first-child){background:#CDD5DC}
 .st-prev-emerald{border-top:10px solid #0f6b47}.st-prev-emerald i:first-child{background:#1f9d6b}
 .st-prev-violet{border-top:10px solid #452c9c}.st-prev-violet i:first-child{background:#6d4bd8}
 .st-prev-coral{border-top:10px solid #a23d23}.st-prev-coral i:first-child{background:#e0603f}
 .st-prev-graphite{border-top:10px solid #262d35}.st-prev-graphite i:first-child{background:#3f4a56}
+.st-prev-pink{border-top:10px solid #9c1f5e}.st-prev-pink i:first-child{background:#d63384}
 .st-themes.six{grid-template-columns:repeat(3,1fr)}
 @media (max-width:420px){.st-themes.six{grid-template-columns:1fr 1fr}}
 .st-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:var(--s2);border:1px solid var(--line);border-radius:var(--r)}
@@ -912,6 +921,7 @@ const COLOR_INFO = {
   violet: [() => L('Фиолетовый', 'Violet', 'Күлгін'), () => 'KU Portal'],
   coral: [() => L('Коралловый', 'Coral', 'Маржан'), () => 'KU Portal'],
   graphite: [() => L('Графит', 'Graphite', 'Графит'), () => 'KU Portal'],
+  pink: [() => L('Розовый', 'Pink', 'Қызғылт'), () => 'KU Portal'],
 };
 const callv = v => typeof v === 'function' ? v() : v;
 const themeName = t => callv((COLOR_INFO[t] || COLOR_INFO.incampus)[0]);
@@ -1046,7 +1056,7 @@ function settingsHTML(){
   return `<div class="setp-b" role="dialog" aria-modal="true" aria-labelledby="st-h">
     <div class="ov-h"><button class="xclose" data-close aria-label="${L('Закрыть', 'Close', 'Жабу')}">${ico('backc')}</button><h3 id="st-h">${L('Настройки', 'Settings', 'Баптаулар')}</h3></div>
     <div class="setp-scroll">
-      <div class="st-me"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span><b>${esc(u.name)}</b><small>${roleName(u)} · ${esc(u.login)}</small></span></div>
+      <div class="st-me"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span class="grow"><b>${esc(u.name)}</b><small>${roleName(u)} · ${esc(u.login)}</small></span><button class="btn sec sm" data-st="logout">${ico('logout')}${L('Выйти', 'Log out', 'Шығу')}</button></div>
 
       <section class="st-sec"><h4>${ico('palette')}${L('Оформление', 'Appearance', 'Безендіру')}</h4>
         <div class="st-lbl">${L('Цвет', 'Color', 'Түс')}</div>
@@ -1080,7 +1090,6 @@ function settingsHTML(){
 
       <section class="st-sec"><h4>${ico('shield')}${L('Аккаунт', 'Account', 'Аккаунт')}</h4>
         <button class="st-row link" data-st="password"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту')}</b></span>${ico('chev')}</button>
-        <button class="st-row link danger" data-st="logout"><span class="st-ic">${ico('logout')}</span><span class="st-t"><b>${L('Выйти', 'Log out', 'Шығу')}</b></span></button>
       </section>
     </div></div>`;
 }
@@ -1627,12 +1636,9 @@ function renderTop(){
   const u = ME;
   document.getElementById('topbar').innerHTML = `<div class="tb-in">
     ${KU_BACK ? `${kuBackBtn()}<span class="tb-sep" aria-hidden="true"></span>` : ''}
-    ${u ? `<button class="tb-ib" data-act="tab" data-v="exam" aria-label="${L('На главную', 'Home', 'Басты бетке')}" title="${L('На главную', 'Home', 'Басты бетке')}">${ico('home')}</button><span class="tb-sep" aria-hidden="true"></span>` : ''}
-    <span class="brand"><span class="brand-ic">${ico('cap')}</span><span class="brand-t">${L('Онлайн-экзамен', 'Online Exam', 'Онлайн емтихан')}</span></span>
+    ${u ? `<button class="brand home" data-act="tab" data-v="exam" aria-label="${L('Онлайн-экзамен — на главную', 'Online Exam — home', 'Онлайн емтихан — басты бетке')}" title="${L('На главную', 'Home', 'Басты бетке')}">` : '<span class="brand">'}<span class="brand-ic">${ico('cap')}</span><span class="brand-t">${L('Онлайн-экзамен', 'Online Exam', 'Онлайн емтихан')}</span>${u ? '</button>' : '</span>'}
     <span class="grow"></span>${langSwitch()}
-    ${u ? `<span class="tb-sep hide-s" aria-hidden="true"></span><button class="me" data-act="account" title="${L('Личный кабинет и настройки', 'Profile and settings', 'Жеке кабинет және баптаулар')}" aria-label="${L('Личный кабинет и настройки', 'Profile and settings', 'Жеке кабинет және баптаулар')}: ${esc(u.name)} · ${roleName(u)}"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span class="me-t"><b>${esc(u.name)}</b><small>${roleName(u)}</small></span></button>
-      <button class="tb-ib" data-act="account" aria-label="${L('Настройки', 'Settings', 'Баптаулар')}" title="${L('Настройки', 'Settings', 'Баптаулар')}">${ico('gear')}</button>
-      <button class="tb-ib" data-act="logout" aria-label="${L('Выйти', 'Log out', 'Шығу')}" title="${L('Выйти', 'Log out', 'Шығу')}">${ico('logout')}</button>` : ''}</div>`;
+    ${u ? `<span class="tb-sep hide-s" aria-hidden="true"></span><button class="me" data-act="account" title="${L('Профиль и настройки', 'Profile and settings', 'Профиль және баптаулар')}" aria-label="${L('Профиль и настройки', 'Profile and settings', 'Профиль және баптаулар')}: ${esc(u.name)} · ${roleName(u)}"><span class="avatar ${u.role}">${esc(initials(u.name))}</span><span class="me-t"><b>${esc(u.name)}</b><small>${roleName(u)}</small></span><span class="me-gear" aria-hidden="true">${ico('gear')}</span></button>` : ''}</div>`;
 }
 /* виджет в стиле Brightspace: белая панель с заголовком */
 const W = (title, body, o = {}) => `<section class="widget ${o.cls || ''}" ${o.id ? `id="${o.id}"` : ''}>${title || o.right ? `<div class="w-h"><h2>${title || ''}</h2>${o.right || ''}</div>` : ''}${body}</section>`;
@@ -1946,7 +1952,7 @@ function vRun(){
   return `<div class="runhead"><div class="row">
       <button class="ib ghost" data-act="back" data-fb="${r.tab}" aria-label="${L('Выйти из теста', 'Exit test', 'Тесттен шығу')}">${ico('x')}</button>
       <div class="t"><b>${esc(t.title)}</b><small>${L('Задание', 'Question', 'Тапсырма')} ${r.pos + 1} ${L('из', 'of', '/')} ${n}</small></div>
-      <button class="btn ghost sm" data-act="finish">${L('Завершить', 'Finish', 'Аяқтау')}</button></div>
+      ${last ? '<span class="ib ghost" aria-hidden="true"></span>' : `<button class="btn ghost sm" data-act="finish">${L('Завершить', 'Finish', 'Аяқтау')}</button>`}</div>
     <div class="tstrip"><span class="tm" id="tm" title="${t.timeLimit ? L('Осталось времени', 'Time left', 'Қалған уақыт') : L('Прошло времени', 'Time elapsed', 'Өткен уақыт')}">${ico(t.timeLimit ? 'hourglass' : 'clock')}<b>00:00</b></span><span class="muted">${t.timeLimit ? L('осталось', 'left', 'қалды') : L('прошло', 'elapsed', 'өтті')}</span><span class="grow"></span><span id="answered">${L('Отвечено', 'Answered', 'Жауап берілді')} ${answeredCount(r)} ${L('из', 'of', '/')} ${n}</span></div>
     ${t.timeLimit ? '<div class="tline" id="tline"><i style="width:100%"></i></div>' : ''}
     <div class="qnav" role="tablist" aria-label="${L('Задания', 'Questions', 'Тапсырмалар')}">${r.order.map((k, p) => `<button class="qd ${p === r.pos ? 'cur' : ''} ${isAnswered(t.questions[k], r.answers[k]) ? 'done' : ''}" data-act="goQ" data-p="${p}" aria-label="${L('Задание', 'Question', 'Тапсырма')} ${p + 1}" ${p === r.pos ? 'aria-current="step"' : ''}>${p + 1}</button>`).join('')}</div></div>
@@ -2213,7 +2219,7 @@ function vResult(){
       <div class="legend"><span><i class="b-ok"></i>${L('верно', 'correct', 'дұрыс')} ${cnt('correct')}</span><span><i class="b-mid"></i>${L('частично', 'partial', 'ішінара')} ${cnt('partial')}</span><span><i class="b-low"></i>${L('неверно', 'wrong', 'қате')} ${cnt('wrong')}</span><span><i class="b-none"></i>${L('без ответа', 'no answer', 'жауапсыз')} ${cnt('empty')}</span></div>
       ${a.auto ? `<div class="chips"><span class="chip mid">${ico('clock')}${L('Время вышло', 'Time’s up', 'Уақыт бітті')}</span></div>` : ''}
       <div class="fhint">${L('Итоговый балл за тестовую часть выставляет преподаватель.', 'The final score for the test part is set by the teacher.', 'Тест бөлімі бойынша қорытынды ұпайды оқытушы қояды.')}</div></div>
-    <div class="btns res-btns"><button class="btn" data-act="back" data-fb="${back}">${L('Готово', 'Done', 'Дайын')}</button></div>`;
+    ${S.params.fresh ? `<div class="btns res-btns"><button class="btn" data-act="back" data-fb="${back}">${L('Готово', 'Done', 'Дайын')}</button></div>` : ''}`;
   const review = W(L('Разбор', 'Review', 'Талдау'), (errs && errs < n ? `<div class="seg"><button class="${S.rvTab !== 'err' ? 'on' : ''}" data-act="rvTab" data-t="all">${L('Все', 'All', 'Барлығы')} <span class="cnt">${n}</span></button><button class="${S.rvTab === 'err' ? 'on' : ''}" data-act="rvTab" data-t="err">${L('Ошибки', 'Mistakes', 'Қателер')} <span class="cnt low">${errs}</span></button></div>` : '')
     + reviewList(a, isT(), S.rvTab));
   return header(L('Результат', 'Result', 'Нәтиже'), { back, sub: fmtDate(a.finishedAt) }) + cols(review, score, {sideFirst:true});
@@ -2262,7 +2268,7 @@ function vExamT(){
     : emptyBox('door', L('Комнат пока нет', 'No rooms yet', 'Әзірге бөлмелер жоқ'), L('Создайте комнату экзамена и выберите, из каких частей она состоит.', 'Create an exam room and choose which parts it includes.', 'Емтихан бөлмесін жасап, оның қандай бөлімдерден тұратынын таңдаңыз.'), `<button class="btn" data-act="newRoom">${ico('plus')}${L('Создать комнату', 'Create room', 'Бөлме жасау')}</button>`);
   const waiting = D.queue.filter(q => q.status !== 'done').length;
   return header(L('Экзамен', 'Exam', 'Емтихан'), { sub:`${D.rooms.length} ${pl(D.rooms.length, 'комната', 'комнаты', 'комнат', 'room', 'rooms', 'бөлме')} · ${L('в очереди', 'in queue', 'кезекте')}: ${waiting}`,
-      right:`<button class="btn sm" data-act="newRoom">${ico('plus')}<span class="hide-s">${L('Новая комната', 'New room', 'Жаңа бөлме')}</span></button>` }) +
+      right: D.rooms.length ? `<button class="btn sm" data-act="newRoom">${ico('plus')}<span class="hide-s">${L('Новая комната', 'New room', 'Жаңа бөлме')}</span></button>` : '' }) +
     cols(W(L('Комнаты экзамена', 'Exam rooms', 'Емтихан бөлмелері'), list), queueWidget(null) + studentsWidget());
 }
 

@@ -96,6 +96,7 @@ const PALETTES = {
   violet: { name: 'Фиолетовый', color: '#6d4bd8' },
   coral: { name: 'Коралловый', color: '#e0603f' },
   graphite: { name: 'Графит', color: '#3f4a56' },
+  pink: { name: 'Розовый', color: '#d63384' },
 };
 const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как в системе' }; // названия — через t() при выводе
 

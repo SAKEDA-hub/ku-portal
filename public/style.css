@@ -95,6 +95,10 @@
   --accent: #3f4a56; --accent-strong: #333c46; --accent-deep: #262d35;
   --accent-dim: rgba(63, 74, 86, 0.1); --accent-ring: rgba(63, 74, 86, 0.2); --brand: #3f4a56;
 }
+:root[data-palette="pink"] {
+  --accent: #d63384; --accent-strong: #c02674; --accent-deep: #9c1f5e;
+  --accent-dim: rgba(214, 51, 132, 0.1); --accent-ring: rgba(214, 51, 132, 0.2); --brand: #d63384;
+}
 
 /* ---------- Тёмный режим (data-mode="dark") ----------
    Нейтральные цвета — тёмные; акцентные тексты осветляются, чтобы читались на тёмном фоне. */
