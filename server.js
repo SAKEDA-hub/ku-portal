@@ -439,7 +439,10 @@ async function aiReply(q) {
       store: false,
     }),
   });
-  if (!response.ok) throw new Error(`LM Studio HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 400);
+    throw new Error(`LM Studio HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+  }
   const result = await response.json();
   const answer = Array.isArray(result.output)
     ? result.output.filter((item) => item.type === 'message').map((item) => String(item.content || '')).join('\n').trim()
