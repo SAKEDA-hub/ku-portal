@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const COLS = ['users', 'tests', 'rooms', 'attempts', 'writings', 'queue', 'grades'];
+const COLS = ['users', 'tests', 'rooms', 'attempts', 'writings', 'queue', 'grades', 'timers'];
 const MAX_BODY = 5 * 1024 * 1024;
 const keyOf = (x) => x.id || [x.roomId, x.userId, x.testId || x.part || ''].join('|');
 

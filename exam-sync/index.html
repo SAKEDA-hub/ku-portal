@@ -998,6 +998,14 @@ function notifyUser(title, body, o = {}){
 }
 /* сравнение состояния до и после синхронизации: вызов на speaking и открытие экзамена (только для студента) */
 function notifyDiff(prev, next){
+  if(ME && ME.role === 'teacher' && prev && next){
+    const was = new Set((prev.timers || []).filter(t => t.awayAt).map(t => t.id));
+    (next.timers || []).filter(t => t.awayAt && !was.has(t.id)).forEach(t => {
+      const u = (next.users || []).find(x => x.id === t.userId);
+      notifyUser((u ? u.name : L('Студент', 'Student', 'Студент')) + ' ' + L('вышел', 'left', 'шықты') + ': ' + tmPartName(t), L('Время идёт — его можно остановить на странице «Экзамен»', 'Time is running — you can stop it on the Exam page', 'Уақыт жүріп жатыр — оны «Емтихан» бетінде тоқтатуға болады'), { sound:prefsGet().sndCall });
+    });
+    return;
+  }
   if(!ME || ME.role !== 'student' || !prev || !next) return;
   const p = prefsGet();
   if(p.sndCall){
@@ -1285,7 +1293,7 @@ function freshDB(){
             { id:'u-teacher', login:'teacher', password:'admin', name:'Преподаватель', role:'teacher' },
             // дополнительные студенты — чтобы проверять очередь и вызов нескольких учеников
             ...[1, 2, 3, 4].map(i => ({ id:'u-student' + i, login:'user' + i, password:'1', name:'Студент ' + i, role:'student' })) ],
-    tests:examTests(false), rooms:[demoRoom()], attempts:[], writings:[], queue:[], grades:[], learn:seedLearn(), quiz:{} };
+    tests:examTests(false), rooms:[demoRoom()], attempts:[], writings:[], queue:[], grades:[], timers:[], learn:seedLearn(), quiz:{} };
 }
 function normRoom(r){
   const n = newRoom();
@@ -1294,7 +1302,7 @@ function normRoom(r){
   return r;
 }
 function normDB(d){ // защита от неполных данных
-  ['users','tests','rooms','attempts','writings','queue','grades'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
+  ['users','tests','rooms','attempts','writings','queue','grades','timers'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
   if(!d.learn || typeof d.learn !== 'object') d.learn = seedLearn();
   ['rules','idioms','words'].forEach(k => { if(!Array.isArray(d.learn[k])) d.learn[k] = []; });
   if(!d.quiz || typeof d.quiz !== 'object') d.quiz = {};
@@ -1343,7 +1351,7 @@ const partIcon = p => ({ test:'tests', writing:'pen', speaking:'mic' })[p];
 const roomParts = r => PARTS.filter(p => r[p] && r[p].on);
 const roomMax = r => r2(roomParts(r).reduce((s, p) => s + (+r[p].max || 0), 0));
 function newRoom(){ return { id:uid(), title:'', description:'', open:true, createdAt:Date.now(),
-  test:{ on:true, testIds:[], max:40 }, writing:{ on:true, prompt:'', minWords:120, max:30 }, speaking:{ on:true, prompt:'', minutes:5, max:30 } }; }
+  test:{ on:true, testIds:[], max:40 }, writing:{ on:true, prompt:'', minWords:120, max:30, minutes:0 }, speaking:{ on:true, prompt:'', minutes:5, max:30 } }; }
 const roomTests = r => r.test && r.test.on ? r.test.testIds.map(testById).filter(Boolean) : [];
 const attemptFor = (roomId, userId, testId) => D.attempts.find(a => a.roomId === roomId && a.userId === userId && a.testId === testId);
 const writingFor = (roomId, userId) => D.writings.find(w => w.roomId === roomId && w.userId === userId);
@@ -1373,6 +1381,53 @@ function progress(r, userId){
   return p;
 }
 const partDone = (p, k) => k === 'speaking' ? p.speaking.done : !!(p[k] && p[k].done);
+
+/* ---------- таймеры частей с ограничением времени (тест с лимитом, письменная работа с лимитом) ----------
+   Хранятся в общих данных (D.timers, синхронизируются между устройствами), поэтому время идёт и когда студент
+   вышел из теста / со страницы письменной работы, закрыл вкладку или сбросил прохождение — начать заново
+   с полным временем нельзя. Выход отмечается (awayAt): преподаватель получает уведомление и может
+   «остановить время» (frozen) — тогда время вне экзамена (с момента выхода до возвращения) не засчитывается. */
+const tmId = (roomId, userId, part, testId) => ['tm', roomId, userId, part, testId || ''].join('|');
+const timerOf = (roomId, userId, part, testId) => D.timers.find(t => t.id === tmId(roomId, userId, part, testId));
+const tmById = id => id ? D.timers.find(t => t.id === id) : null;
+const tmElapsed = (t, now = Date.now()) => Math.max(0, (t.awayAt && t.frozen ? t.awayAt : now) - t.startedAt - (t.pauseMs || 0));
+const tmLeft = (t, now = Date.now()) => t.limit * 60000 - tmElapsed(t, now);
+function tmStart(roomId, part, testId, limit, title){
+  let t = timerOf(roomId, ME.id, part, testId); if(t) return t;
+  t = { id:tmId(roomId, ME.id, part, testId), roomId, userId:ME.id, part, testId:testId || '', title:title || '', limit, startedAt:Date.now(), pauseMs:0, awayAt:null, frozen:false };
+  D.timers.push(t); persist(); return t;
+}
+function tmDone(t){ if(t) D.timers = D.timers.filter(x => x.id !== t.id); }
+// студент «на месте»: тест — на экране прохождения этого теста, письменная работа — на странице своего экзамена
+const tmHere = t => t.part === 'test' ? S.view === 'run' && !!S.run && S.run.timerId === t.id : S.view === 'room' && S.params.id === t.roomId;
+function tmPresence(leaving){
+  if(!ME || ME.role !== 'student' || !D) return;
+  const now = Date.now(); let ch = false;
+  D.timers.filter(t => t.userId === ME.id).forEach(t => {
+    const here = !leaving && tmHere(t);
+    if(!here && !t.awayAt){ t.awayAt = now; t.frozen = false; ch = true; }
+    else if(here && t.awayAt){ if(t.frozen) t.pauseMs = (t.pauseMs || 0) + (now - t.awayAt); t.awayAt = null; t.frozen = false; delete t.frozenAt; delete t.frozenBy; ch = true; }
+  });
+  if(ch) persist();
+}
+// время вышло, пока студент был вне части: тест завершается с сохранёнными ответами, письменная работа сдаётся черновиком
+function tmExpire(){
+  if(!ME || ME.role !== 'student') return;
+  const now = Date.now();
+  D.timers.filter(t => t.userId === ME.id && tmLeft(t, now) <= 0).forEach(t => {
+    if(t.part === 'writing'){ const r = roomById(t.roomId); if(!r || r.open) autoSubmitWriting(t); }
+    else if(S.pendingRun && S.pendingRun.timerId === t.id && !(S.run && S.run.timerId === t.id)){ const r = S.pendingRun; S.pendingRun = null; S.run = r; finish(true); }
+    // если прохождения на этом устройстве нет — таймер остаётся: при новом старте тест сразу завершится
+  });
+}
+function autoSubmitWriting(t){
+  const r = roomById(t.roomId);
+  if(r && !writingFor(r.id, ME.id)){ const text = draftGet(r.id).trim();
+    D.writings.push({ id:uid(), roomId:r.id, userId:ME.id, text, words:wc(text), submittedAt:Date.now(), auto:true }); draftSet(r.id, '');
+    toast(L('Время письменной работы вышло — работа сдана автоматически', 'Writing time is up — your work was submitted automatically', 'Жазбаша жұмыс уақыты бітті — жұмыс автоматты түрде тапсырылды')); }
+  tmDone(t); persist(); render();
+}
+const tmPartName = t => t.part === 'test' ? L('Тест', 'Test', 'Тест') + ' «' + t.title + '»' : partName('writing');
 const pctOf = (v, max) => max ? Math.round(v / max * 100) : 0;
 
 /* ---------- стартовые данные: создаются при первом заходе на сайт ---------- */
@@ -1554,9 +1609,9 @@ function formModal(title, fields, vals, onSave, o = {}){
     ${o.text ? `<p>${esc(o.text)}</p>` : ''}
     <form class="fm" novalidate>${fields.map(f => `<label class="f" for="fm-${f.k}">${esc(f.label)}</label>${f.multi
         ? `<textarea class="field" id="fm-${f.k}" rows="${f.rows || 3}">${esc(vals[f.k] || '')}</textarea>`
-        : `<input class="field" id="fm-${f.k}" type="${f.type || 'text'}" value="${esc(vals[f.k] || '')}" autocomplete="${f.ac || 'off'}" ${f.type === 'password' ? '' : 'autocapitalize="off"'}>`}`).join('')}
+        : `<input class="field" id="fm-${f.k}" type="${f.type || 'text'}" value="${esc(vals[f.k] || '')}" autocomplete="${f.ac || 'off'}" ${f.im ? `inputmode="${f.im}"` : ''} ${f.type === 'password' ? '' : 'autocapitalize="off"'}>`}`).join('')}
       <div class="lg-err" id="fm-err" role="alert"></div>
-      <div class="btns fm-btns"><button type="button" class="btn sec" data-close>${L('Отмена', 'Cancel', 'Болдырмау')}</button><button class="btn" type="submit">${esc(o.ok || L('Сохранить', 'Save', 'Сақтау'))}</button></div></form></div>`);
+      <div class="btns fm-btns"><button type="button" class="btn sec" data-close>${esc(o.cancel || L('Отмена', 'Cancel', 'Болдырмау'))}</button><button class="btn" type="submit">${esc(o.ok || L('Сохранить', 'Save', 'Сақтау'))}</button></div></form></div>`);
   const form = ov.querySelector('form');
   form.addEventListener('submit', e => {
     e.preventDefault();
@@ -1588,12 +1643,14 @@ let HIST = true;
 const curDepth = () => { try{ return (history.state && history.state.depth) || 0; }catch(e){ return 0; } };
 const isDirty = () => (S.view === 'editor' && !!S.draft && JSON.stringify(S.draft) !== S.draftBase) || (S.view === 'roomEditor' && !!S.rdraft && JSON.stringify(S.rdraft) !== S.rdraftBase);
 function guardFor(view){
+  if(S.view === 'run' && S.run && S.run.timerId && view !== 'run') return { title:L('Выйти из теста?', 'Leave the test?', 'Тесттен шығу керек пе?'), text:L('Ответы сохранятся, но время теста продолжит идти. Преподаватель получит уведомление о выходе и, если вы вышли случайно, сможет остановить время. Вернуться к тесту можно со страницы экзамена.', 'Your answers are saved, but the test time keeps running. The teacher will be notified and, if you left by accident, can stop the time. You can return to the test from the exam page.', 'Жауаптар сақталады, бірақ тест уақыты жүре береді. Оқытушыға шыққаныңыз туралы хабар барады, кездейсоқ шықсаңыз, ол уақытты тоқтата алады. Тестке емтихан бетінен оралуға болады.'), ok:L('Выйти', 'Leave', 'Шығу'), cancel:L('Продолжить тест', 'Continue test', 'Тестті жалғастыру') };
   if(S.view === 'run' && S.run && view !== 'run') return { title:L('Прервать тест?', 'Quit the test?', 'Тестті тоқтату керек пе?'), text:L('Ответы не сохранятся, попытка не будет засчитана.', 'Your answers won’t be saved and the attempt won’t count.', 'Жауаптар сақталмайды, әрекет есептелмейді.'), ok:L('Прервать', 'Quit', 'Тоқтату'), cancel:L('Продолжить тест', 'Continue test', 'Тестті жалғастыру') };
   if(view !== S.view && isDirty()) return { title:L('Выйти без сохранения?', 'Leave without saving?', 'Сақтамай шығу керек пе?'), text:L('Изменения будут потеряны.', 'Your changes will be lost.', 'Өзгерістер жоғалады.'), ok:L('Не сохранять', 'Discard', 'Сақтамау'), cancel:L('Остаться', 'Stay', 'Қалу') };
   return null;
 }
 function dropGuarded(){
-  if(S.view === 'run' && S.run){ stopTimer(); S.run = null; dropRunSave(); }
+  if(S.view === 'run' && S.run && S.run.timerId){ stopTimer(); commitQTime(); saveRun(); S.pendingRun = S.run; S.run = null; }
+  else if(S.view === 'run' && S.run){ stopTimer(); S.run = null; dropRunSave(); }
   if(S.view === 'editor') S.draft = null;
   if(S.view === 'roomEditor') S.rdraft = null;
 }
@@ -1656,6 +1713,7 @@ function render(){
   if(!ME) S.view = 'login';
   else if(S.view === 'login') S.view = 'exam';
   if(ME && ((TEACHER_ONLY[S.view] && !isT()) || (STUDENT_ONLY[S.view] && isT()))){ S.view = 'exam'; S.params = {}; }
+  tmPresence(false);
   const V = { login:vLogin, exam: () => isT() ? vExamT() : vExamS(), room: () => isT() ? vRoomT() : vRoomS(), run:vRun, result:vResult, results:vResults,
     learn:vLearn, editorList:vEditorList, editor:vEditor, roomEditor:vRoomEditor, scores:vScores, grade:vGrade }[S.view] || (() => isT() ? vExamT() : vExamS());
   app.innerHTML = V();
@@ -1676,6 +1734,9 @@ function animateMeters(){
 // раз в секунду: таймеры спикинга и обратный отсчёт доступа к оценкам
 function tick(){
   const now = Date.now();
+  if(D && ME){ tmExpire();
+    document.querySelectorAll('[data-tm]').forEach(el => { const t = tmById(el.dataset.tm); if(!t) return; const left = tmLeft(t, now);
+      el.textContent = fmtT(Math.max(0, left)); el.classList.toggle('over', left < 60000); }); }
   document.querySelectorAll('[data-live]').forEach(el => {
     const ms = now - (+el.dataset.live), lim = (+el.dataset.lim || 0) * 60000;
     el.textContent = fmtT(ms); el.classList.toggle('over', lim > 0 && ms > lim);
@@ -1737,6 +1798,7 @@ function doLogin(){
   toast(L('Вы вошли как ', 'Signed in as ', 'Сіз кірдіңіз: ') + u.name);
 }
 function doLogout(){
+  tmPresence(true);
   stopTimer(); S.run = null; S.draft = null; S.rdraft = null; S.pendingRun = null; S.quiz = null; S.fc = null;
   ME = null; sesSet(null); applyTheme();
   go('login', {}, {force:true, replace:true});
@@ -1886,14 +1948,20 @@ function startTest(id, o = {}){
     }
   });
   const now = Date.now();
+  // тест с лимитом: время берётся из общего таймера — сброс или повторный старт его не обнуляют
+  const tm = t.timeLimit > 0 ? tmStart(room.id, 'test', id, t.timeLimit, t.title) : null;
   S.pendingRun = null; dropRunSave();
-  S.run = { test:t, roomId:room.id, tab:'exam', order, pos:0, answers:{}, aux, startedAt:now, qStart:now, qTime:{}, msel:null };
+  S.run = { test:t, roomId:room.id, tab:'exam', order, pos:0, answers:{}, aux, startedAt:tm ? tm.startedAt : now, qStart:now, qTime:{}, msel:null, timerId:tm ? tm.id : null };
+  if(tm && tmLeft(tm) <= 0){ finish(true); return; } // время на тест уже истекло (например, после сброса) — попытка засчитывается
   saveRun(); startTimer();
   go('run', {id, room:room.id}, {force:true});
 }
 function resumeRun(){
   const r = S.pendingRun; if(!r) return;
-  S.pendingRun = null; r.qStart = Date.now(); r.msel = null; S.run = r; startTimer();
+  S.pendingRun = null; r.qStart = Date.now(); r.msel = null; S.run = r;
+  const tm = tmById(r.timerId); if(tm) r.startedAt = tm.startedAt;
+  if(tm && tmLeft(tm) <= 0){ finish(true); return; } // время вышло, пока студент был вне теста
+  startTimer();
   go('run', {id:r.test.id}, {force:true});
 }
 function commitQTime(){ const r = S.run, i = r.order[r.pos], now = Date.now(); r.qTime[i] = (r.qTime[i] || 0) + (now - r.qStart); r.qStart = now; }
@@ -1907,9 +1975,10 @@ function isAnswered(q, a){
   return true;
 }
 const answeredCount = r => r.order.filter(k => isAnswered(r.test.questions[k], r.answers[k])).length;
+const runElapsed = r => { const t = tmById(r.timerId); return t ? tmElapsed(t) : Date.now() - r.startedAt; };
 function updateTimer(){
   const r = S.run; if(!r) return;
-  const el = Date.now() - r.startedAt, lim = r.test.timeLimit * 60000;
+  const el = runElapsed(r), lim = r.test.timeLimit * 60000;
   if(lim > 0 && lim - el <= 0){ finish(true); return; }
   const tm = document.getElementById('tm'); if(!tm) return;
   if(lim > 0){
@@ -1974,13 +2043,14 @@ function finish(auto){
   const r = S.run; if(!r) return;
   closeOverlays(); commitQTime(); stopTimer();
   const t = r.test, now = Date.now(), lim = t.timeLimit * 60000;
-  const duration = lim > 0 ? Math.min(now - r.startedAt, lim) : now - r.startedAt;
+  const duration = lim > 0 ? Math.min(runElapsed(r), lim) : runElapsed(r);
   const details = r.order.map(i => { const q = t.questions[i], g = grade(q, r.answers[i], r.aux[i]); return Object.assign({ text:q.text, type:q.type, time:r.qTime[i] || 0 }, g); });
   const score = r2(details.reduce((s, d) => s + d.earned, 0)), max = maxPoints(t);
   const percent = max ? Math.round(score / max * 100) : 0;
   const att = { id:uid(), userId:ME.id, roomId:r.roomId, testId:t.id, testTitle:t.title, startedAt:r.startedAt, finishedAt:now, duration, auto:!!auto, timeLimit:t.timeLimit,
     score, max, percent, passed:percent >= t.passPercent, passPercent:t.passPercent, showAnswers:t.showAnswers, details };
   if(attemptFor(r.roomId, ME.id, t.id)){ S.run = null; dropRunSave(); toast(L('Тест уже был сдан в другой вкладке', 'The test was already submitted in another tab', 'Тест басқа қойындыда тапсырылып қойған')); go('room', {id:r.roomId}, {force:true, replace:true}); return; }
+  tmDone(tmById(r.timerId));
   D.attempts.unshift(att); persist(); S.run = null; dropRunSave();
   if(auto) toast(L('Время вышло — тест завершён автоматически', 'Time’s up — the test was finished automatically', 'Уақыт бітті — тест автоматты түрде аяқталды'));
   S.rvTab = 'all';
@@ -2085,7 +2155,7 @@ function resumeBanner(roomId){
   const pr = S.pendingRun; if(!pr || (roomId && pr.roomId !== roomId)) return '';
   const r = roomById(pr.roomId);
   return `<div class="widget hello banner"><span class="sico">${ico('play')}</span><div class="grow"><b class="ell" style="display:block">${esc(pr.test.title)}</b>
-    <div class="sub">${r ? esc(r.title) + ' · ' : ''}${L('тест не завершён · отвечено ', 'unfinished · answered ', 'тест аяқталмаған · жауап берілді ')}${answeredCount(pr)}${L(' из ', ' of ', ' / ')}${pr.order.length}</div></div>
+    <div class="sub">${r ? esc(r.title) + ' · ' : ''}${L('тест не завершён · отвечено ', 'unfinished · answered ', 'тест аяқталмаған · жауап берілді ')}${answeredCount(pr)}${L(' из ', ' of ', ' / ')}${pr.order.length}${tmById(pr.timerId) ? ` · ${L('осталось', 'time left', 'қалды')} <b class="num" data-tm="${pr.timerId}">${fmtT(Math.max(0, tmLeft(tmById(pr.timerId))))}</b>` : ''}</div></div>
     <div class="btns"><button class="btn sec sm" data-act="dropRun">${L('Сбросить', 'Discard', 'Тастау')}</button><button class="btn sm" data-act="resume">${ico('play')}${L('Продолжить', 'Resume', 'Жалғастыру')}</button></div></div>`;
 }
 const howWidget = () => W(L('Как проходит экзамен', 'How the exam works', 'Емтихан қалай өтеді'), `<ol class="steps">
@@ -2120,9 +2190,13 @@ function partTestS(r, p, n, closed){
     { right: p.test.done ? doneChip() : `<span class="chip">${p.test.n} / ${p.test.of}</span>`, cls:'part' });
 }
 function partWritingS(r, p, n, closed){
-  const w = p.writing.w;
+  const w = p.writing.w, lim = +r.writing.minutes || 0, tw = timerOf(r.id, ME.id, 'writing');
+  // с лимитом времени задание видно только после «Начать» — таймер идёт и вне страницы
+  if(!w && !closed && lim > 0 && !tw) return W(stepTitle(n, 'writing'), `<div class="statebox lock">${ico('timer')}<div><b>${L('Время на работу', 'Time for the work', 'Жұмысқа берілетін уақыт')}: ${lim} ${L('мин', 'min', 'мин')}</b><div class="sub">${L('Задание откроется после нажатия «Начать». Таймер не останавливается, даже если уйти со страницы, — преподаватель получит уведомление о выходе.', 'The task opens after you press “Start”. The timer does not stop even if you leave the page — the teacher will be notified.', 'Тапсырма «Бастау» батырмасын басқаннан кейін ашылады. Беттен кетсеңіз де таймер тоқтамайды — оқытушыға хабар барады.')}</div></div></div>
+    <button class="btn" data-act="startWriting" data-room="${r.id}">${ico('play')}${L('Начать письменную работу', 'Start writing', 'Жазбаша жұмысты бастау')}</button>`, { right:`<span class="chip">${L('Не сдано', 'Not submitted', 'Тапсырылмаған')}</span>`, cls:'part' });
   let body = `<div class="prompt">${esc(r.writing.prompt)}</div>`;
-  if(w) body += `<div class="essay">${esc(w.text)}</div><div class="meta">${L('Сдано', 'Submitted', 'Тапсырылды')} ${fmtDate(w.submittedAt)} · ${wordsTxt(w.words)}</div>`;
+  if(!w && !closed && tw) body = `<div class="tstrip" style="margin:0 0 12px"><span class="tm">${ico('hourglass')}<b class="num" data-tm="${tw.id}">${fmtT(Math.max(0, tmLeft(tw)))}</b></span><span class="muted">${L('осталось', 'left', 'қалды')}</span></div>` + body;
+  if(w) body += `<div class="essay">${esc(w.text)}</div><div class="meta">${L('Сдано', 'Submitted', 'Тапсырылды')} ${fmtDate(w.submittedAt)} · ${wordsTxt(w.words)}${w.auto ? ' · ' + L('время вышло', 'time’s up', 'уақыт бітті') : ''}</div>`;
   else if(closed) body += `<div class="note">${ico('lock')}<span>${L('Экзамен закрыт — сдать работу нельзя.', 'The exam is closed — submissions are not accepted.', 'Емтихан жабық — жұмысты тапсыру мүмкін емес.')}</span></div>`;
   else { const dr = draftGet(r.id), c = wc(dr);
     body += `<label class="f" for="essay">${L('Ваш ответ', 'Your answer', 'Сіздің жауабыңыз')}</label><textarea class="field essay-in" id="essay" data-inp="essay" data-room="${r.id}" placeholder="${L('Напишите работу здесь…', 'Write your work here…', 'Жұмысыңызды осында жазыңыз…')}">${esc(dr)}</textarea>
@@ -2254,8 +2328,19 @@ function queueWidget(roomId){
   const items = D.queue.filter(q => q.status !== 'done' && (!roomId || q.roomId === roomId)).sort((a, b) => qRank[a.status] - qRank[b.status] || a.addedAt - b.addedAt);
   const done = roomId ? D.queue.filter(q => q.status === 'done' && q.roomId === roomId).sort((a, b) => b.endedAt - a.endedAt) : [];
   return W(L('Очередь на спикинг', 'Speaking queue', 'Спикинг кезегі'), (items.length ? `<div class="queue">${items.map(q => queueItem(q, !roomId)).join('')}</div>` : `<div class="cal-empty">${L('Очередь пуста.', 'The queue is empty.', 'Кезек бос.')}</div>`) +
-    (done.length ? `<div class="sect"><h2>${L('Завершены', 'Finished', 'Аяқталғандар')}</h2></div>${done.map(q => { const u = userById(q.userId); return u ? `<div class="donerow" role="button" tabindex="0" data-act="openGrade" data-room="${q.roomId}" data-user="${q.userId}"><span class="avatar sm">${esc(initials(u.name))}</span><span class="grow ell">${esc(u.name)}</span><span class="num">${fmtT(q.duration)}</span>${gradeFor(q.roomId, q.userId, 'speaking') ? ico('check', 'okic') : `<span class="chip mid">${L('оценить', 'grade', 'бағалау')}</span>`}</div>` : ''; }).join('')}` : ''),
+    (done.length ? `<div class="sect"><h2>${L('Завершены', 'Finished', 'Аяқталғандар')}</h2></div>${done.map(q => { const u = userById(q.userId); return u ? `<div class="donerow" role="button" tabindex="0" data-act="openGrade" data-room="${q.roomId}" data-user="${q.userId}"><span class="avatar sm">${esc(initials(u.name))}</span><span class="grow ell">${esc(u.name)}</span><span class="num">${fmtT(q.duration)}</span>${gradeFor(q.roomId, q.userId, 'speaking') ? ico('check', 'okic') : `<button class="btn sm" data-act="quickGrade" data-room="${q.roomId}" data-user="${q.userId}" data-part="speaking">${L('Оценить спикинг', 'Grade speaking', 'Спикингті бағалау')}</button>`}</div>` : ''; }).join('')}` : ''),
     { right: items.length ? `<span class="chip ac">${items.length}</span>` : '', cls:'qwidget' });
+}
+function awayWidget(roomId){
+  const list = D.timers.filter(t => t.awayAt && (!roomId || t.roomId === roomId) && userById(t.userId) && roomById(t.roomId)).sort((a, b) => a.awayAt - b.awayAt);
+  if(!list.length) return '';
+  return W(L('Вышли во время экзамена', 'Left during the exam', 'Емтихан кезінде шыққандар'), `<div class="queue">${list.map(t => { const u = userById(t.userId), r = roomById(t.roomId);
+    return `<div class="qitem ${t.frozen ? '' : 'st-called'}"><div class="row"><span class="avatar sm">${esc(initials(u.name))}</span><div class="grow"><b class="ell">${esc(u.name)}</b><small class="ell">${esc(tmPartName(t))}${roomId ? '' : ' · ' + esc(r.title)}</small></div>
+      ${t.frozen ? `<span class="chip ac">${ico('stop')}${L('Время остановлено', 'Time stopped', 'Уақыт тоқтатылды')}</span>` : `<span class="chip mid">${ico('clock')}${L('Время идёт', 'Time running', 'Уақыт жүріп жатыр')}</span>`}</div>
+      <div class="qlive"><span class="muted">${L('Вышел', 'Left at', 'Шықты')} ${new Date(t.awayAt).toLocaleTimeString(LOC(), {hour:'2-digit', minute:'2-digit'})} · ${L('осталось', 'left', 'қалды')}</span><b class="num" data-tm="${t.id}">${fmtT(Math.max(0, tmLeft(t)))}</b></div>
+      <div class="btns q-btns">${t.frozen ? `<button class="btn sec sm" data-act="tmResume" data-id="${esc(t.id)}">${ico('play')}${L('Возобновить время', 'Resume time', 'Уақытты жалғастыру')}</button>` : `<button class="btn sm" data-act="tmFreeze" data-id="${esc(t.id)}">${ico('stop')}${L('Остановить время', 'Stop time', 'Уақытты тоқтату')}</button>`}</div></div>`; }).join('')}</div>
+    <div class="fhint">${L('Если студент вышел случайно, остановите время: время вне экзамена не засчитается, он продолжит с того же остатка.', 'If the student left by accident, stop the time: time away won’t count and they continue with the same time left.', 'Студент кездейсоқ шықса, уақытты тоқтатыңыз: емтиханнан тыс уақыт есептелмейді, ол сол қалған уақыттан жалғастырады.')}</div>`,
+    { right:`<span class="chip mid">${list.length}</span>`, cls:'awaywidget' });
 }
 function studentsWidget(){
   const st = students();
@@ -2269,7 +2354,7 @@ function vExamT(){
   const waiting = D.queue.filter(q => q.status !== 'done').length;
   return header(L('Экзамен', 'Exam', 'Емтихан'), { sub:`${D.rooms.length} ${pl(D.rooms.length, 'комната', 'комнаты', 'комнат', 'room', 'rooms', 'бөлме')} · ${L('в очереди', 'in queue', 'кезекте')}: ${waiting}`,
       right: D.rooms.length ? `<button class="btn sm" data-act="newRoom">${ico('plus')}<span class="hide-s">${L('Новая комната', 'New room', 'Жаңа бөлме')}</span></button>` : '' }) +
-    cols(W(L('Комнаты экзамена', 'Exam rooms', 'Емтихан бөлмелері'), list), queueWidget(null) + studentsWidget());
+    cols(awayWidget(null) + W(L('Комнаты экзамена', 'Exam rooms', 'Емтихан бөлмелері'), list), queueWidget(null) + studentsWidget());
 }
 
 /* --- комната (преподаватель): прогресс студентов + очередь --- */
@@ -2295,12 +2380,12 @@ function vRoomT(){
   const table = st.length ? `<div class="tbl-wrap"><table class="sheet prog"><thead><tr><th scope="col">${L('Студент', 'Student', 'Студент')}</th>${parts.map(k => `<th scope="col">${partShort(k)}<small>/ ${fmtN(r[k].max)}</small></th>`).join('')}<th scope="col">${L('Итого', 'Total', 'Барлығы')}</th><th scope="col"><span class="sr">${L('Действия', 'Actions', 'Әрекеттер')}</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
     : emptyBox('users', L('Студентов нет', 'No students', 'Студенттер жоқ'), L('Добавьте студентов на странице «Экзамен».', 'Add students on the Exam page.', '«Емтихан» бетінде студенттерді қосыңыз.'));
   const info = W(L('Состав экзамена', 'Exam parts', 'Емтихан құрамы'), parts.map(k => `<div class="sumrow"><span class="sico sm">${ico(partIcon(k))}</span><span class="grow">${partName(k)}<small>${
-      k === 'test' ? roomTests(r).map(t => esc(t.title)).join(', ') : k === 'writing' ? `${L('минимум', 'minimum', 'кемінде')} ${wordsTxt(r.writing.minWords)}` : `${r.speaking.minutes} ${L('мин на ответ', 'min per answer', 'мин жауапқа')}`}</small></span><b class="num">${fmtN(r[k].max)}</b></div>`).join('') +
+      k === 'test' ? roomTests(r).map(t => esc(t.title)).join(', ') : k === 'writing' ? `${L('минимум', 'minimum', 'кемінде')} ${wordsTxt(r.writing.minWords)}${+r.writing.minutes > 0 ? ` · ${r.writing.minutes} ${L('мин', 'min', 'мин')}` : ''}` : `${r.speaking.minutes} ${L('мин на ответ', 'min per answer', 'мин жауапқа')}`}</small></span><b class="num">${fmtN(r[k].max)}</b></div>`).join('') +
     `<div class="sumtotal"><span class="grow">${L('Максимум', 'Maximum', 'Максимум')}</span><b class="num">${fmtN(roomMax(r))}</b></div>
     <div class="btns col"><button class="btn sec" data-act="toggleRoom" data-id="${r.id}">${ico(r.open ? 'lock' : 'unlock')}${r.open ? L('Закрыть экзамен', 'Close exam', 'Емтиханды жабу') : L('Открыть экзамен', 'Open exam', 'Емтиханды ашу')}</button>
     <button class="btn sec" data-act="editRoom" data-id="${r.id}">${ico('edit')}${L('Редактировать', 'Edit', 'Өңдеу')}</button></div>`);
   return header(r.title, { back:'exam', sub:`<span class="chip ${r.open ? 'ac' : ''}">${r.open ? L('Открыт для студентов', 'Open to students', 'Студенттер үшін ашық') : L('Закрыт', 'Closed', 'Жабық')}</span>` }) +
-    cols(W(L('Прогресс студентов', 'Student progress', 'Студенттердің үлгерімі'), table) , queueWidget(r.id) + info);
+    cols(awayWidget(r.id) + W(L('Прогресс студентов', 'Student progress', 'Студенттердің үлгерімі'), table) , queueWidget(r.id) + info);
 }
 
 /* --- проверка работы и выставление баллов --- */
@@ -2330,7 +2415,7 @@ function gradePart(r, u, p, k, n){
     body += gradeForm(r, u, p, k, p.test.auto);
   } else if(k === 'writing'){
     const w = p.writing.w;
-    body = `<div class="prompt">${esc(r.writing.prompt)}</div>` + (w ? `<div class="essay">${esc(w.text)}</div><div class="meta">${wordsTxt(w.words)} ${w.words < r.writing.minWords ? `<span class="c-mid">(${L('меньше минимума', 'below minimum', 'ең аз шектен төмен')} ${r.writing.minWords})</span>` : ''}<span class="dot">·</span>${L('сдано', 'submitted', 'тапсырылды')} ${fmtDate(w.submittedAt)}</div>` : '') + gradeForm(r, u, p, k);
+    body = `<div class="prompt">${esc(r.writing.prompt)}</div>` + (w ? `<div class="essay">${esc(w.text)}</div><div class="meta">${w.auto ? `<span class="c-mid">${L('сдано автоматически — время вышло', 'auto-submitted — time’s up', 'автоматты түрде тапсырылды — уақыт бітті')}</span><span class="dot">·</span>` : ''}${wordsTxt(w.words)} ${w.words < r.writing.minWords ? `<span class="c-mid">(${L('меньше минимума', 'below minimum', 'ең аз шектен төмен')} ${r.writing.minWords})</span>` : ''}<span class="dot">·</span>${L('сдано', 'submitted', 'тапсырылды')} ${fmtDate(w.submittedAt)}</div>` : '') + gradeForm(r, u, p, k);
   } else {
     const q = p.speaking.q;
     body = `<div class="prompt">${esc(r.speaking.prompt)}</div>` +
@@ -2434,7 +2519,7 @@ function testMenu(id){
       L('Удалить', 'Delete', 'Жою'), () => { D.tests = D.tests.filter(x => x !== t); D.rooms.forEach(r => r.test.testIds = r.test.testIds.filter(x => x !== id)); persist(); render(); toast(L('Тест удалён', 'Test deleted', 'Тест жойылды')); }, {danger:true}) }
   ]);
 }
-function deleteRoomData(id){ ['attempts','writings','queue','grades'].forEach(k => D[k] = D[k].filter(x => x.roomId !== id)); }
+function deleteRoomData(id){ ['attempts','writings','queue','grades','timers'].forEach(k => D[k] = D[k].filter(x => x.roomId !== id)); }
 function roomMenu(id){
   const r = roomById(id); if(!r) return;
   sheet(r.title, [
@@ -2482,7 +2567,9 @@ function vRoomEditor(){
       <div class="fhint">${L('Выберите готовый вариант или включите части вручную. Спикинг у студента откроется только после теста и письменной работы.', 'Pick a preset or switch parts on manually. Speaking unlocks for a student only after the test and writing.', 'Дайын нұсқаны таңдаңыз немесе бөлімдерді қолмен қосыңыз. Студенттің спикингі тек тест пен жазбаша жұмыстан кейін ашылады.')}</div></div>
     ${partCard('test', `<label class="f">${L('Тесты в этой комнате', 'Tests in this room', 'Осы бөлмедегі тесттер')}</label>${testsPick}<div class="cols">${numF('test.max', d.test.max, L('Максимальный балл', 'Max score', 'Ең жоғары ұпай'), {step:0.5})}</div>`)}
     ${partCard('writing', `<label class="f" for="rf-writing.prompt">${L('Задание', 'Task', 'Тапсырма')}</label><textarea class="field" id="rf-writing.prompt" data-rpath="writing.prompt" rows="4" placeholder="${L('Например: напишите эссе на тему…', 'e.g. Write an essay on…', 'Мысалы: мына тақырыпқа эссе жазыңыз…')}">${esc(d.writing.prompt)}</textarea>
-      <div class="cols">${numF('writing.minWords', d.writing.minWords, L('Минимум слов', 'Minimum words', 'Сөздердің ең аз саны'))}${numF('writing.max', d.writing.max, L('Максимальный балл', 'Max score', 'Ең жоғары ұпай'), {step:0.5})}</div>`)}
+      <div class="cols">${numF('writing.minWords', d.writing.minWords, L('Минимум слов', 'Minimum words', 'Сөздердің ең аз саны'))}${numF('writing.max', d.writing.max, L('Максимальный балл', 'Max score', 'Ең жоғары ұпай'), {step:0.5})}</div>
+      <div class="cols">${numF('writing.minutes', d.writing.minutes || 0, L('Время на работу, мин', 'Time limit, min', 'Жұмыс уақыты, мин'))}</div>
+      <div class="fhint">${L('0 — без ограничения. С ограничением студент увидит задание после «Начать», время идёт и при выходе со страницы.', '0 — no limit. With a limit the student sees the task after “Start”; time keeps running if they leave the page.', '0 — шектеусіз. Шектеу болса, студент тапсырманы «Бастау» батырмасынан кейін көреді, беттен шықса да уақыт жүреді.')}</div>`)}
     ${partCard('speaking', `<label class="f" for="rf-speaking.prompt">${L('Тема и вопросы', 'Topic and questions', 'Тақырып және сұрақтар')}</label><textarea class="field" id="rf-speaking.prompt" data-rpath="speaking.prompt" rows="4">${esc(d.speaking.prompt)}</textarea>
       <div class="fhint">${L('Студент увидит тему только когда вы вызовете его из очереди.', 'The student sees the topic only when you call them from the queue.', 'Студент тақырыпты сіз оны кезектен шақырғанда ғана көреді.')}</div>
       <div class="cols">${numF('speaking.minutes', d.speaking.minutes, L('Время ответа, мин', 'Speaking time, min', 'Жауап уақыты, мин'), {min:1})}${numF('speaking.max', d.speaking.max, L('Максимальный балл', 'Max score', 'Ең жоғары ұпай'), {step:0.5})}</div>`)}
@@ -2506,7 +2593,7 @@ function userMenu(id){
   sheet(u.name, [
     { icon:'edit', label:L('Изменить', 'Edit', 'Өзгерту'), fn:() => userForm(u) },
     { icon:'trash', label:L('Удалить', 'Delete', 'Жою'), danger:true, fn:() => ask(L('Удалить студента?', 'Delete student?', 'Студентті жою керек пе?'), L('Удалятся его попытки, работы, место в очереди и баллы.', 'Their attempts, work, queue place and scores will be deleted.', 'Оның әрекеттері, жұмыстары, кезектегі орны және ұпайлары жойылады.'), L('Удалить', 'Delete', 'Жою'), () => {
-      D.users = D.users.filter(x => x !== u); ['attempts','writings','queue','grades'].forEach(k => D[k] = D[k].filter(x => x.userId !== id)); persist(); render(); toast(L('Студент удалён', 'Student deleted', 'Студент жойылды')); }, {danger:true}) }
+      D.users = D.users.filter(x => x !== u); ['attempts','writings','queue','grades','timers'].forEach(k => D[k] = D[k].filter(x => x.userId !== id)); persist(); render(); toast(L('Студент удалён', 'Student deleted', 'Студент жойылды')); }, {danger:true}) }
   ]);
 }
 
@@ -2604,18 +2691,34 @@ function addToQueue(roomId, userId){
   D.queue.push({ id:uid(), roomId, userId, status:'waiting', addedAt:Date.now(), by:ME.id }); persist(); render();
   toast(isT() ? L('Студент поставлен в очередь', 'Student added to the queue', 'Студент кезекке қойылды') : L('Вы в очереди на спикинг', 'You joined the speaking queue', 'Сіз спикинг кезегіне тұрдыңыз'));
 }
+function putGrade(r, u, part, score, comment){
+  const old = gradeFor(r.id, u.id, part);
+  const g = { roomId:r.id, userId:u.id, part, score, max:+r[part].max, comment, gradedAt:Date.now(), by:ME.id };
+  if(old) Object.assign(old, g); else D.grades.push(g);
+  persist(); render(); toast(L('Балл выставлен: ', 'Score saved: ', 'Ұпай қойылды: ') + partName(part) + ' — ' + fmtN(score) + ' / ' + fmtN(+r[part].max));
+}
+// оценка одной части (спикинг) без проверки всей работы: тест и письмо можно проверить позже
+function quickGrade(roomId, userId, part){
+  const r = roomById(roomId), u = userById(userId); if(!r || !u || !r[part]) return;
+  const max = +r[part].max, old = gradeFor(r.id, u.id, part); let val = null;
+  formModal(partName(part) + ': ' + u.name, [
+    { k:'score', label:L('Балл', 'Score', 'Ұпай') + ` (0–${fmtN(max)})`, im:'decimal' },
+    { k:'comment', label:L('Комментарий для студента', 'Comment for the student', 'Студентке пікір'), multi:true, rows:2 }],
+    old ? { score:fmtN(old.score), comment:old.comment || '' } : {}, v => {
+      const raw = String(v.score).replace(',', '.'), n = /^\d+(\.\d+)?$/.test(raw) ? parseFloat(raw) : NaN;
+      if(raw === '' || isNaN(n) || n < 0 || n > max) return L(`Балл должен быть от 0 до ${fmtN(max)}`, `Score must be between 0 and ${fmtN(max)}`, `Ұпай 0 мен ${fmtN(max)} аралығында болуы керек`);
+      val = { score:r2(n), comment:v.comment };
+    }, { ok:L('Выставить балл', 'Save score', 'Ұпай қою'), cancel:L('Позже', 'Later', 'Кейінірек'),
+      text:L('Оценивается только эта часть. Тест и письменную работу можно проверить позже — балл за неё сохранится.', 'Only this part is graded. The test and writing can be checked later — this score is kept.', 'Тек осы бөлім бағаланады. Тест пен жазбаша жұмысты кейін тексеруге болады — бұл ұпай сақталады.'),
+      after:() => { if(val) withGradeAuth(() => putGrade(r, u, part, val.score, val.comment)); } });
+}
 function saveGrade(part){
   const r = roomById(S.params.room), u = userById(S.params.user); if(!r || !u) return;
   const inp = document.getElementById('sc-' + part), cm = document.getElementById('cm-' + part);
   const raw = String(inp.value).replace(',', '.').trim(), v = /^\d+(\.\d+)?$/.test(raw) ? parseFloat(raw) : NaN, max = +r[part].max;
   if(raw === '' || isNaN(v) || v < 0 || v > max){ toast(L(`Балл должен быть от 0 до ${fmtN(max)}`, `Score must be between 0 and ${fmtN(max)}`, `Ұпай 0 мен ${fmtN(max)} аралығында болуы керек`)); inp.focus(); return; }
   const comment = cm.value.trim(), score = r2(v);
-  withGradeAuth(() => {
-    const old = gradeFor(r.id, u.id, part);
-    const g = { roomId:r.id, userId:u.id, part, score, max, comment, gradedAt:Date.now(), by:ME.id };
-    if(old) Object.assign(old, g); else D.grades.push(g);
-    persist(); render(); toast(L('Балл выставлен: ', 'Score saved: ', 'Ұпай қойылды: ') + partName(part) + ' — ' + fmtN(score) + ' / ' + fmtN(max));
-  });
+  withGradeAuth(() => putGrade(r, u, part, score, comment));
 }
 const ACT = {
   lang: el => setLang(el.dataset.l),
@@ -2626,7 +2729,7 @@ const ACT = {
   openRoom: el => go('room', {id:el.dataset.id}),
   start: el => startTest(el.dataset.id, {roomId:el.dataset.room}),
   resume: () => { const r = S.pendingRun; if(!r) return; if(!testById(r.test.id) || !roomById(r.roomId)){ S.pendingRun = null; dropRunSave(); render(); toast(L('Тест или экзамен был удалён', 'The test or exam was deleted', 'Тест немесе емтихан жойылды')); return; } resumeRun(); },
-  dropRun: () => ask(L('Сбросить незавершённый тест?', 'Discard the unfinished test?', 'Аяқталмаған тестті тастау керек пе?'), L('Ответы будут удалены. Тест можно будет начать заново.', 'Your answers will be deleted. You can start the test again.', 'Жауаптар жойылады. Тестті қайта бастауға болады.'), L('Сбросить', 'Discard', 'Тастау'), () => { S.pendingRun = null; dropRunSave(); render(); }, {danger:true}),
+  dropRun: () => ask(L('Сбросить незавершённый тест?', 'Discard the unfinished test?', 'Аяқталмаған тестті тастау керек пе?'), S.pendingRun && S.pendingRun.timerId ? L('Ответы будут удалены. Время теста не обнулится — оно продолжит идти.', 'Your answers will be deleted. The test time is not reset — it keeps running.', 'Жауаптар жойылады. Тест уақыты нөлденбейді — ол жүре береді.') : L('Ответы будут удалены. Тест можно будет начать заново.', 'Your answers will be deleted. You can start the test again.', 'Жауаптар жойылады. Тестті қайта бастауға болады.'), L('Сбросить', 'Discard', 'Тастау'), () => { S.pendingRun = null; dropRunSave(); render(); }, {danger:true}),
   openRes: el => { S.rvTab = 'all'; go('result', {id:el.dataset.id, tab:NAV_OF[S.view] || 'exam'}); },
   rvTab: el => { S.rvTab = el.dataset.t; render(); },
   // письменная работа
@@ -2634,14 +2737,19 @@ const ACT = {
     const r = roomById(el.dataset.room); if(!r || !r.open) return;
     const text = draftGet(r.id).trim(), n = wc(text);
     if(!text){ toast(L('Работа пустая', 'The work is empty', 'Жұмыс бос')); document.getElementById('essay').focus(); return; }
-    const doIt = () => { if(writingFor(r.id, ME.id)) return; D.writings.push({ id:uid(), roomId:r.id, userId:ME.id, text, words:n, submittedAt:Date.now() }); persist(); draftSet(r.id, ''); render(); toast(L('Работа сдана', 'Work submitted', 'Жұмыс тапсырылды')); };
+    const doIt = () => { if(writingFor(r.id, ME.id)) return; tmDone(timerOf(r.id, ME.id, 'writing')); D.writings.push({ id:uid(), roomId:r.id, userId:ME.id, text, words:n, submittedAt:Date.now() }); persist(); draftSet(r.id, ''); render(); toast(L('Работа сдана', 'Work submitted', 'Жұмыс тапсырылды')); };
     if(n < r.writing.minWords) ask(L('Меньше минимума слов', 'Below the word minimum', 'Сөздер саны ең аз шектен аз'), L(`В работе ${wordsTxt(n)} при минимуме ${r.writing.minWords}. Всё равно сдать? Изменить текст после сдачи будет нельзя.`, `Your work has ${wordsTxt(n)}, the minimum is ${r.writing.minWords}. Submit anyway? You can’t edit it after submitting.`, `Жұмыста ${wordsTxt(n)}, ал ең аз саны — ${r.writing.minWords}. Бәрібір тапсыру керек пе? Тапсырғаннан кейін мәтінді өзгерту мүмкін болмайды.`), L('Сдать', 'Submit', 'Тапсыру'), doIt);
     else ask(L('Сдать работу?', 'Submit your work?', 'Жұмысты тапсыру керек пе?'), L('После сдачи изменить текст будет нельзя.', 'You won’t be able to edit it after submitting.', 'Тапсырғаннан кейін мәтінді өзгерту мүмкін болмайды.'), L('Сдать', 'Submit', 'Тапсыру'), doIt);
   },
   // очередь на спикинг
+  startWriting: el => { const r = roomById(el.dataset.room); if(!r || !r.open || writingFor(r.id, ME.id)) return;
+    tmStart(r.id, 'writing', '', +r.writing.minutes || 0, r.title); render(); const e = document.getElementById('essay'); if(e) e.focus(); },
   joinQueue: el => addToQueue(el.dataset.room, ME.id),
   leaveQueue: el => { const q = qById(el.dataset.id); if(!q || q.status !== 'waiting') return; ask(L('Выйти из очереди?', 'Leave the queue?', 'Кезектен шығу керек пе?'), '', L('Выйти', 'Leave', 'Шығу'), () => { D.queue = D.queue.filter(x => x !== q); persist(); render(); }); },
   qAdd: el => addToQueue(el.dataset.room, el.dataset.user),
+  tmFreeze: el => { const t = tmById(el.dataset.id); if(!t || !t.awayAt) return; t.frozen = true; t.frozenAt = Date.now(); t.frozenBy = ME.id; persist(); render();
+    toast(L('Время остановлено — время вне экзамена не будет засчитано', 'Time stopped — time away won’t count', 'Уақыт тоқтатылды — емтиханнан тыс уақыт есептелмейді')); },
+  tmResume: el => { const t = tmById(el.dataset.id); if(!t) return; t.frozen = false; delete t.frozenAt; delete t.frozenBy; persist(); render(); toast(L('Время снова идёт', 'Time is running again', 'Уақыт қайта жүріп жатыр')); },
   qCall: el => { const q = qById(el.dataset.id); if(!q) return; q.status = 'called'; q.calledAt = Date.now(); persist(); render(); const u = userById(q.userId); toast(L('Вызван: ', 'Called: ', 'Шақырылды: ') + (u ? u.name : '')); },
   qBack: el => { const q = qById(el.dataset.id); if(!q) return; q.status = 'waiting'; q.addedAt = Date.now(); delete q.calledAt; persist(); render(); toast(L('Студент перемещён в конец очереди', 'Student moved to the end of the queue', 'Студент кезектің соңына жылжытылды')); },
   qStart: el => { const q = qById(el.dataset.id); if(!q) return;
@@ -2649,8 +2757,9 @@ const ACT = {
     q.status = 'live'; q.startedAt = Date.now(); persist(); render(); },
   qStop: el => { const q = qById(el.dataset.id); if(!q || q.status !== 'live') return;
     q.status = 'done'; q.endedAt = Date.now(); q.duration = q.endedAt - q.startedAt; persist(); render();
-    const u = userById(q.userId);
-    ask(L('Спикинг завершён', 'Speaking finished', 'Спикинг аяқталды'), L(`${u ? u.name : ''}: ${fmtT(q.duration)}. Выставить балл сейчас?`, `${u ? u.name : ''}: ${fmtT(q.duration)}. Grade now?`, `${u ? u.name : ''}: ${fmtT(q.duration)}. Ұпайды қазір қою керек пе?`), L('Оценить', 'Grade', 'Бағалау'), () => go('grade', {room:q.roomId, user:q.userId}), {cancel:L('Позже', 'Later', 'Кейінірек')}); },
+    toast(L('Спикинг завершён', 'Speaking finished', 'Спикинг аяқталды') + ': ' + fmtT(q.duration));
+    quickGrade(q.roomId, q.userId, 'speaking'); },
+  quickGrade: el => quickGrade(el.dataset.room, el.dataset.user, el.dataset.part || 'speaking'),
   qRemove: el => { const q = qById(el.dataset.id); if(!q) return; ask(L('Убрать из очереди?', 'Remove from the queue?', 'Кезектен алып тастау керек пе?'), q.status === 'live' ? L('Спикинг идёт — время не сохранится.', 'Speaking is in progress — the time won’t be saved.', 'Спикинг жүріп жатыр — уақыт сақталмайды.') : '', L('Убрать', 'Remove', 'Алып тастау'), () => { D.queue = D.queue.filter(x => x !== q); persist(); render(); }, {danger:true}); },
   // проверка
   openGrade: el => go('grade', {room:el.dataset.room, user:el.dataset.user, tab:el.dataset.tab || NAV_OF[S.view] || 'exam'}),
@@ -2815,7 +2924,7 @@ setInterval(() => { tick(); if(S.syncPending && !fieldFocused() && !document.que
 /* ===== СИНХРОНИЗАЦИЯ С СЕРВЕРОМ (добавлено): общая очередь, румы, студенты, баллы между устройствами =====
    Если сервера нет (файл открыт с диска) — приложение работает как раньше, только на localStorage. */
 const SYNC = { on:false, last:{} };
-const SYNC_COLS = ['users','tests','rooms','attempts','writings','queue','grades'];
+const SYNC_COLS = ['users','tests','rooms','attempts','writings','queue','grades','timers'];
 const syncKey = x => x.id || [x.roomId, x.userId, x.testId || x.part || ''].join('|');
 function syncSnapOf(db){ const o = {}; SYNC_COLS.forEach(c => { o[c] = {}; (db[c] || []).forEach(x => { o[c][syncKey(x)] = JSON.stringify(x); }); }); return o; }
 const syncSig = o => JSON.stringify(Object.keys(o).sort().map(c => [c, Object.keys(o[c]).sort().map(k => o[c][k])]));
@@ -2828,7 +2937,7 @@ async function syncPush(){
     if(up.length || del.length){ ch[c] = { up, del }; any = true; } });
   if(!any) return;
   SYNC.last = cur;
-  try{ const r = await fetch('api/sync', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ changes:ch }) }); if(!r.ok) throw 0; }
+  try{ const r = await fetch('api/sync', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ changes:ch }), keepalive:true }); if(!r.ok) throw 0; }
   catch(e){ SYNC.last = prev; }
 }
 function syncApply(db, force){
@@ -2850,6 +2959,7 @@ async function syncStart(){
   }catch(e){}
 }
 
+window.addEventListener('pagehide', () => { try{ tmPresence(true); }catch(e){} });
 /* ---------- старт ---------- */
 (function init(){
   applyLang(); applyTheme();
