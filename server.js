@@ -478,6 +478,23 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
 
+  // Public student chat is hosted on GitHub Pages and calls this API cross-origin.
+  // Keep the browser allowlist exact; do not expose the portal's authenticated APIs.
+  if (p.startsWith('/api/ai/')) {
+    const origin = req.headers.origin || '';
+    const allowedOrigins = new Set(['https://stikech.github.io', 'http://localhost:8000']);
+    if (allowedOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Vary', 'Origin');
+    }
+    if (req.method === 'OPTIONS') {
+      if (!allowedOrigins.has(origin)) { res.writeHead(403); res.end(); return; }
+      res.writeHead(204); res.end(); return;
+    }
+  }
+
   // «Онлайн-экзамен» (exam-sync), встроенный в портал: /exam-sync/...
   if (await examSync(req, res)) return;
 
