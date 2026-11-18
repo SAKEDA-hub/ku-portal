@@ -1,21 +1,23 @@
 /*
- * KU Portal — мессенджер, файлы, клубы и общежитие (API под /api/chat, /api/files, /api/clubs, /api/dorm).
- * Подключается из server.js: createFeatures(ctx) → async handle(p, req, res, u, body, url) → true, если запрос обработан.
- * Данные — в общей базе db.json (db.chat, db.files, db.clubs, db.dorm); файлы — в data/uploads/.
+ * KU Portal — мессенджер, файлы и общежитие (API под /api/chat, /api/files, /api/dorm); клубы — portal-clubs.js.
+ * Подключается из server.js: createFeatures(ctx) → async handle(p, req, res, u, body, url) → false, если запрос не наш.
+ * Данные — в общей базе db.json (db.chat, db.files, db.dorm); файлы — в data/uploads/.
  *
- * Каналы мессенджера:
- *   s:<subjectId>:<group> — канал предмета для группы (есть в расписании); пишут все участники,
- *                           преподаватель предмета ещё публикует задания на дату, закрепляет и удаляет сообщения;
- *   d:<id1>:<id2>         — личные сообщения преподавателя и студента группы, которую он ведёт.
- * Роль «Администрация общежития» и организатора клубов пока выполняет преподаватель.
+ * Мессенджер:
+ *   s:<subjectId>:<group> — канал предмета для группы (есть в расписании). Только чтение для студентов:
+ *                           преподаватель предмета публикует материалы (лекции, практики) и задания на дату.
+ *   d:<id1>:<id2>         — личная переписка студента с преподавателем его группы (студенты между собой не пишут).
+ * Роль «Администрация общежития» пока выполняет преподаватель.
  */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { createClubs } = require('./portal-clubs');
 
 const MAX_TEXT = 2000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const FILE_EXT = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'rtf', 'odt', 'odp', 'ods', 'csv', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'zip', 'rar', '7z'];
+const MATERIAL_KINDS = ['lecture', 'practice', 'other'];
 const DORM_STATUSES = ['new', 'work', 'done', 'rejected'];
 const DORM_KINDS = ['repair', 'complaint', 'request'];
 const DORM_TAGS = ['important', 'info', 'event'];
@@ -23,22 +25,8 @@ const DAY_MS = 86400000;
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
-const isTime = (s) => /^\d{2}:\d{2}$/.test(String(s || ''));
 const clip = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
 
-/* ------------------------------ Демо-данные ------------------------------ */
-const CLUB_SEED = [
-  { id: 'football', name: 'Футбол', icon: 'ball', desc: 'Сборная университета и любительские матчи между факультетами. Новичкам рады.', weekly: { day: 2, time: '18:00', place: 'Стадион KU', title: 'Тренировка' } },
-  { id: 'basketball', name: 'Баскетбол', icon: 'hoop', desc: 'Тренировки, турниры 3×3 и игры с командами других вузов Костаная.', weekly: { day: 3, time: '17:30', place: 'Спортзал, корпус 1', title: 'Тренировка' } },
-  { id: 'volunteer', name: 'Волонтёрство', icon: 'heart', desc: 'Помощь приютам, экологические субботники, сопровождение университетских мероприятий.', weekly: { day: 5, time: '11:00', place: 'Студенческий центр', title: 'Встреча волонтёров' } },
-  { id: 'debate', name: 'Дебатный клуб', icon: 'msg', desc: 'Учимся аргументировать, выступать публично и готовимся к турнирам на трёх языках.', weekly: { day: 1, time: '16:00', place: 'Ауд. 214', title: 'Игра в формате АПФ' } },
-  { id: 'chess', name: 'Шахматы', icon: 'crown', desc: 'Блиц по пятницам, разбор партий и рейтинговый турнир каждый семестр.', weekly: { day: 4, time: '15:00', place: 'Библиотека, читальный зал', title: 'Блиц-турнир' } },
-];
-const CLUB_EXTRA_EVENTS = [
-  ['football', 9, 'Кубок факультетов: полуфинал', '16:00', 'Стадион KU', 60],
-  ['volunteer', 6, 'Субботник в городском парке', '10:00', 'Центральный парк, у входа', 30],
-  ['debate', 12, 'Открытый турнир KU Debate', '14:00', 'Актовый зал', 24],
-];
 function dormNewsSeed(now) {
   return [
     { id: 'n1', tag: 'important', title: 'Плановое отключение горячей воды', text: 'В корпусе №2 горячей воды не будет с 10:00 до 16:00 — профилактика бойлерной.', at: now - 2 * 3600e3, author: 'Администрация' },
@@ -52,25 +40,17 @@ function createFeatures(ctx) {
   const { getDB, saveDB, nid, ok, bad, isOnline, pushInbox, subjName, teacherFio, DATA } = ctx;
   const UPLOADS = path.join(DATA, 'uploads');
   if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true });
+  const clubs = createClubs(ctx);
 
   function store() {
     const db = getDB();
     db.chat = db.chat || {};
     db.chat.msgs = db.chat.msgs || [];
+    db.chat.materials = db.chat.materials || [];
     db.chat.tasks = db.chat.tasks || [];
     db.chat.reads = db.chat.reads || {};
     db.files = db.files || [];
-    if (!db.clubs) db.clubs = CLUB_SEED.map((c) => Object.assign({ members: [], events: [] }, c));
     if (!db.dorm) db.dorm = { news: dormNewsSeed(Date.now()), requests: [] };
-    if (!db.clubsSeeded) {
-      const today = new Date();
-      for (const [cid, days, title, time, place, limit] of CLUB_EXTRA_EVENTS) {
-        const c = db.clubs.find((x) => x.id === cid);
-        if (c) c.events.push({ id: nid('ev'), title, date: ymd(new Date(today.getTime() + days * DAY_MS)), time, place, limit, people: [], by: null });
-      }
-      db.clubsSeeded = true;
-      saveDB();
-    }
     return db;
   }
   const userById = (id) => getDB().users.find((x) => x.id === id);
@@ -84,7 +64,7 @@ function createFeatures(ctx) {
     const seen = new Map();
     for (const r of rows) {
       const id = `s:${r.subjectId}:${r.group}`;
-      if (!seen.has(id)) seen.set(id, { id, kind: 'subject', title: subjName(r.subjectId), group: r.group, teacher: teacherFio(r.teacherId), teacherId: r.teacherId, subjectId: r.subjectId });
+      if (!seen.has(id)) seen.set(id, { id, kind: 'subject', title: subjName(r.subjectId), group: r.group, teacher: teacherFio(r.teacherId), teacherId: r.teacherId });
     }
     return [...seen.values()];
   }
@@ -117,21 +97,24 @@ function createFeatures(ctx) {
     }
     return { ok: false };
   }
+  /* Последняя запись и непрочитанное: в канале — материалы и задания, в личке — сообщения */
   function lastAndUnread(u, ch) {
     const db = store();
     const read = (db.chat.reads[u.id] || {})[ch] || 0;
+    const rows = ch.startsWith('s:')
+      ? db.chat.materials.filter((m) => m.ch === ch).map((m) => ({ at: m.at, from: m.teacherId, text: m.title, kind: m.kind }))
+        .concat(db.chat.tasks.filter((t) => t.ch === ch).map((t) => ({ at: t.at, from: t.teacherId, text: t.title, kind: 'task' })))
+      : db.chat.msgs.filter((m) => m.ch === ch).map((m) => ({ at: m.at, from: m.from, text: m.text || (m.file ? '📎 ' + m.file.name : '') }));
     let last = null, unread = 0;
-    for (const m of db.chat.msgs) {
-      if (m.ch !== ch) continue;
-      last = m;
-      if (m.at > read && m.from !== u.id) unread++;
+    for (const r of rows) {
+      if (!last || r.at > last.at) last = r;
+      if (r.at > read && r.from !== u.id) unread++;
     }
-    return { unread, last: last ? { text: last.text || (last.file ? '📎 ' + last.file.name : ''), at: last.at, from: last.from } : null };
+    return { unread, last };
   }
-  const pubMsg = (m) => ({ id: m.id, from: m.from, fromFio: (userById(m.from) || {}).fio || '—', fromRole: (userById(m.from) || {}).role || '', text: m.text, file: m.file || null, at: m.at, pinned: !!m.pinned });
-  function pubTask(t, u) {
-    return { id: t.id, title: t.title, text: t.text, due: t.due, file: t.file || null, at: t.at, done: (t.done || []).includes(u.id), doneCount: (t.done || []).length };
-  }
+  const pubMsg = (m) => ({ id: m.id, from: m.from, fromFio: (userById(m.from) || {}).fio || '—', fromRole: (userById(m.from) || {}).role || '', text: m.text, file: m.file || null, at: m.at });
+  const pubMaterial = (m) => ({ id: m.id, kind: m.kind, title: m.title, text: m.text, file: m.file || null, at: m.at, teacher: teacherFio(m.teacherId) });
+  const pubTask = (t, u) => ({ id: t.id, title: t.title, text: t.text, due: t.due, file: t.file || null, at: t.at, done: (t.done || []).includes(u.id), doneCount: (t.done || []).length });
   function attachFile(u, fileId, ch) {
     if (!fileId) return null;
     const f = store().files.find((x) => x.id === fileId && x.owner === u.id);
@@ -144,64 +127,76 @@ function createFeatures(ctx) {
     db.chat.reads[u.id] = db.chat.reads[u.id] || {};
     db.chat.reads[u.id][ch] = Date.now();
   }
-  function notifyChannel(a, item, exceptId) {
-    const db = getDB();
-    const ids = a.kind === 'dm' ? [a.other.id] : db.users.filter((x) => x.role === 'student' && x.group === a.group).map((x) => x.id);
-    for (const id of ids) if (id !== exceptId) { const x = userById(id); if (x) pushInbox(x, item); }
+  function notifyGroup(group, item) {
+    getDB().users.filter((x) => x.role === 'student' && x.group === group).forEach((x) => pushInbox(x, item));
+  }
+  function channelView(db, ch, a, u) {
+    return {
+      kind: 'subject', manage: a.manage, title: a.subject ? a.subject.name : '', group: a.group,
+      teacher: a.subject ? teacherFio(a.subject.teacherId) : '',
+      members: db.users.filter((x) => x.role === 'student' && x.group === a.group).length,
+      materials: db.chat.materials.filter((m) => m.ch === ch).sort((x, y) => y.at - x.at).map(pubMaterial),
+      tasks: db.chat.tasks.filter((t) => t.ch === ch).sort((x, y) => x.due.localeCompare(y.due)).map((t) => pubTask(t, u)),
+    };
   }
 
   async function chat(p, req, res, u, body, url) {
     const db = store();
     if (p === '/api/chat/list' && req.method === 'GET') {
+      const today = ymd(new Date());
       const channels = subjectChannels(u).map((c) => Object.assign(c, lastAndUnread(u, c.id),
-        { tasksDue: db.chat.tasks.filter((t) => t.ch === c.id && t.due >= ymd(new Date()) && !(t.done || []).includes(u.id)).length }));
-      const contacts = contactsOf(u).map((x) => Object.assign(person(x), { ch: dmId(u.id, x.id) }, lastAndUnread(u, dmId(u.id, x.id))))
-        .sort((a, b) => ((b.last && b.last.at) || 0) - ((a.last && a.last.at) || 0) || a.fio.localeCompare(b.fio));
+        { tasksDue: u.role === 'student' ? db.chat.tasks.filter((t) => t.ch === c.id && t.due >= today && !(t.done || []).includes(u.id)).length : 0 }));
+      const contacts = contactsOf(u).map((x) => Object.assign(person(x), { ch: dmId(u.id, x.id) }, lastAndUnread(u, dmId(u.id, x.id))));
       return ok(res, { channels, contacts });
     }
     if (p === '/api/chat/messages' && req.method === 'GET') {
       const ch = url.searchParams.get('ch');
       const a = access(u, ch);
       if (!a.ok) return bad(res, 403, 'Нет доступа к чату');
-      const all = db.chat.msgs.filter((m) => m.ch === ch);
       markRead(u, ch); ctx.markDirty();
-      const out = { items: all.slice(-200).map(pubMsg), manage: a.manage, kind: a.kind };
-      if (a.kind === 'subject') {
-        out.title = a.subject ? a.subject.name : '';
-        out.group = a.group;
-        out.pinned = all.filter((m) => m.pinned).map(pubMsg);
-        out.tasks = db.chat.tasks.filter((t) => t.ch === ch).sort((x, y) => x.due.localeCompare(y.due)).map((t) => pubTask(t, u));
-        out.members = db.users.filter((x) => x.role === 'student' && x.group === a.group).length;
-      } else {
-        out.other = person(a.other);
-      }
-      return ok(res, out);
+      if (a.kind === 'subject') return ok(res, channelView(db, ch, a, u));
+      return ok(res, { kind: 'dm', other: person(a.other), items: db.chat.msgs.filter((m) => m.ch === ch).slice(-300).map(pubMsg) });
     }
     if (p === '/api/chat/send' && req.method === 'POST') {
       const ch = String(body.ch || '');
       const a = access(u, ch);
       if (!a.ok) return bad(res, 403, 'Нет доступа к чату');
+      if (a.kind !== 'dm') return bad(res, 403, 'В канал предмета публикует только преподаватель');
       const text = clip(body.text, MAX_TEXT);
       const file = attachFile(u, body.fileId, ch);
       if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
       if (!text && !file) return bad(res, 400, 'Пустое сообщение');
-      const m = { id: nid('msg'), ch, from: u.id, text, file, at: Date.now(), pinned: false };
+      const m = { id: nid('msg'), ch, from: u.id, text, file, at: Date.now() };
       db.chat.msgs.push(m);
       markRead(u, ch);
-      if (a.kind === 'dm') notifyChannel(a, { type: 'msg', from: u.fio, text: text.slice(0, 80) || (file ? file.name : '') });
+      pushInbox(a.other, { type: 'msg', from: u.fio, text: text.slice(0, 80) || (file ? file.name : '') });
       saveDB();
       return ok(res, { item: pubMsg(m) });
     }
-    if (p === '/api/chat/pin' && req.method === 'POST') {
-      const m = db.chat.msgs.find((x) => x.id === body.id);
-      if (!m || !access(u, m.ch).manage) return bad(res, 403, 'Закреплять может преподаватель предмета');
-      m.pinned = !!body.on; saveDB();
-      return ok(res);
-    }
     if (p === '/api/chat/delete' && req.method === 'POST') {
       const m = db.chat.msgs.find((x) => x.id === body.id);
-      if (!m || !(m.from === u.id || access(u, m.ch).manage)) return bad(res, 403, 'Удалить можно только своё сообщение');
+      if (!m || m.from !== u.id) return bad(res, 403, 'Удалить можно только своё сообщение');
       db.chat.msgs = db.chat.msgs.filter((x) => x !== m); saveDB();
+      return ok(res);
+    }
+    if (p === '/api/chat/material' && req.method === 'POST') {
+      const ch = String(body.ch || '');
+      const a = access(u, ch);
+      if (!a.manage) return bad(res, 403, 'Материалы публикует преподаватель предмета');
+      const title = clip(body.title, 160);
+      if (title.length < 2) return bad(res, 400, 'Укажите название материала');
+      const file = attachFile(u, body.fileId, ch);
+      if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
+      const m = { id: nid('mat'), ch, teacherId: u.id, kind: MATERIAL_KINDS.includes(body.kind) ? body.kind : 'other', title, text: clip(body.text, MAX_TEXT), file, at: Date.now() };
+      db.chat.materials.push(m);
+      notifyGroup(a.group, { type: 'material', subject: a.subject ? a.subject.name : '', title, kind: m.kind });
+      saveDB();
+      return ok(res, { id: m.id });
+    }
+    if (p === '/api/chat/material/delete' && req.method === 'POST') {
+      const m = db.chat.materials.find((x) => x.id === body.id);
+      if (!m || !access(u, m.ch).manage) return bad(res, 403, 'Удалить материал может преподаватель предмета');
+      db.chat.materials = db.chat.materials.filter((x) => x !== m); saveDB();
       return ok(res);
     }
     if (p === '/api/chat/task' && req.method === 'POST') {
@@ -215,7 +210,7 @@ function createFeatures(ctx) {
       if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
       const t = { id: nid('task'), ch, teacherId: u.id, title, text: clip(body.text, MAX_TEXT), due: body.due, file, at: Date.now(), done: [] };
       db.chat.tasks.push(t);
-      notifyChannel(a, { type: 'task', subject: a.subject ? a.subject.name : '', title, due: t.due });
+      notifyGroup(a.group, { type: 'task', subject: a.subject ? a.subject.name : '', title, due: t.due });
       saveDB();
       return ok(res, { id: t.id });
     }
@@ -265,77 +260,6 @@ function createFeatures(ctx) {
       });
       fs.createReadStream(file).pipe(res);
       return true;
-    }
-    return false;
-  }
-
-  /* -------------------------------- Клубы --------------------------------- */
-  /* Регулярная встреча клуба: ближайшая дата по дню недели — создаётся, когда прошлая прошла */
-  function ensureWeekly(c) {
-    if (!c.weekly) return false;
-    const today = ymd(new Date());
-    if (c.events.some((e) => e.weekly && e.date >= today)) return false;
-    const d = new Date();
-    while ((d.getDay() + 6) % 7 !== c.weekly.day) d.setDate(d.getDate() + 1);
-    c.events.push({ id: nid('ev'), title: c.weekly.title, date: ymd(d), time: c.weekly.time, place: c.weekly.place, limit: 0, people: [], by: null, weekly: true });
-    return true;
-  }
-  function pubEvent(e, c, u) {
-    const out = { id: e.id, clubId: c.id, club: c.name, icon: c.icon, title: e.title, date: e.date, time: e.time, place: e.place, limit: e.limit || 0, count: e.people.length, going: e.people.includes(u.id), mine: e.by === u.id, weekly: !!e.weekly };
-    if (u.role === 'teacher') out.people = e.people.map((id) => (userById(id) || {}).fio).filter(Boolean);
-    return out;
-  }
-  async function clubs(p, req, res, u, body) {
-    const db = store();
-    const today = ymd(new Date());
-    if (p === '/api/clubs' && req.method === 'GET') {
-      if (db.clubs.map(ensureWeekly).some(Boolean)) saveDB();
-      const items = db.clubs.map((c) => ({
-        id: c.id, name: c.name, icon: c.icon, desc: c.desc, members: c.members.length, joined: c.members.includes(u.id),
-        meet: c.weekly ? { day: c.weekly.day, time: c.weekly.time, place: c.weekly.place } : null,
-      }));
-      const events = db.clubs.flatMap((c) => c.events.filter((e) => e.date >= today).map((e) => pubEvent(e, c, u)))
-        .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-      return ok(res, { items, events, canCreate: u.role === 'teacher' });
-    }
-    if (p === '/api/clubs/join' && req.method === 'POST') {
-      const c = db.clubs.find((x) => x.id === body.id);
-      if (!c) return bad(res, 404, 'Клуб не найден');
-      c.members = c.members.filter((x) => x !== u.id);
-      if (body.on) c.members.push(u.id);
-      saveDB();
-      return ok(res, { members: c.members.length });
-    }
-    if (p === '/api/clubs/event/register' && req.method === 'POST') {
-      const c = db.clubs.find((x) => x.events.some((e) => e.id === body.id));
-      const e = c && c.events.find((x) => x.id === body.id);
-      if (!e || e.date < today) return bad(res, 404, 'Мероприятие не найдено');
-      const was = e.people.includes(u.id);
-      if (body.on && !was && e.limit && e.people.length >= e.limit) return bad(res, 400, 'Мест больше нет');
-      e.people = e.people.filter((x) => x !== u.id);
-      if (body.on) e.people.push(u.id);
-      saveDB();
-      return ok(res, { count: e.people.length });
-    }
-    if (p === '/api/clubs/event' && req.method === 'POST') {
-      if (u.role !== 'teacher') return bad(res, 403, 'Мероприятия создаёт преподаватель-организатор');
-      const c = db.clubs.find((x) => x.id === body.clubId);
-      if (!c) return bad(res, 400, 'Выберите клуб');
-      const title = clip(body.title, 120);
-      if (title.length < 3) return bad(res, 400, 'Укажите название мероприятия');
-      if (!isDate(body.date) || body.date < today) return bad(res, 400, 'Укажите дату (не раньше сегодняшней)');
-      if (!isTime(body.time)) return bad(res, 400, 'Укажите время (ЧЧ:ММ)');
-      const limit = Math.max(0, Math.min(1000, Math.floor(Number(body.limit) || 0)));
-      c.events.push({ id: nid('ev'), title, date: body.date, time: body.time, place: clip(body.place, 120), limit, people: [], by: u.id });
-      saveDB();
-      return ok(res);
-    }
-    if (p === '/api/clubs/event/delete' && req.method === 'POST') {
-      const c = db.clubs.find((x) => x.events.some((e) => e.id === body.id));
-      const e = c && c.events.find((x) => x.id === body.id);
-      if (!e || e.by !== u.id) return bad(res, 403, 'Удалить можно только своё мероприятие');
-      c.events = c.events.filter((x) => x !== e); saveDB();
-      return ok(res);
     }
     return false;
   }
