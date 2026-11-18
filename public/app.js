@@ -2,6 +2,7 @@
 /* KU Portal — SPA без зависимостей */
 
 const app = document.getElementById('app');
+const API_BASE = window.KU_API_BASE || ''; // '' — API на том же адресе; на GitHub Pages — адрес сервера (public/config.js)
 const S = { token: localStorage.getItem('ku_token') || null, user: null };
 
 /* ------------------------------ Иконки ------------------------------ */
@@ -72,7 +73,7 @@ async function api(path, o) {
   o = o || {};
   o.headers = Object.assign({ 'Content-Type': 'application/json' }, S.token ? { Authorization: 'Bearer ' + S.token } : {}, o.headers || {});
   if (o.body && typeof o.body !== 'string') o.body = JSON.stringify(o.body);
-  const r = await fetch('/api' + path, o);
+  const r = await fetch(API_BASE + '/api' + path, o);
   if (r.status === 401 && S.token) { S.token = null; localStorage.removeItem('ku_token'); S.user = null; route(); throw new Error(t('Сессия истекла')); }
   const j = await r.json().catch(() => ({ error: 'Ошибка сервера' }));
   if (!r.ok) throw new Error(tv(j.error || 'Ошибка сервера')); // ошибки сервера — на русском, переводим по словарю
@@ -295,7 +296,7 @@ function headHTML() {
     </div>
   </div>
   <div class="uni">
-    <div class="mark brand-mark"><img src="/bird-idle.png" alt="" /></div>
+    <div class="mark brand-mark"><img src="bird-idle.png" alt="" /></div>
     <div class="uname">${esc(programOf(u).name)}</div>
   </div>`;
 }
@@ -310,7 +311,7 @@ function viewAuth(msg) {
   app.innerHTML = `
   <div class="auth">
     <div class="logo">
-      <div class="mark brand-mark"><img src="/bird-idle.png" alt="" /></div>
+      <div class="mark brand-mark"><img src="bird-idle.png" alt="" /></div>
       <div>
         <h1>KU Portal</h1>
         <div class="sub">Kozybayev University</div>
@@ -633,7 +634,7 @@ async function viewRating() {
  * встроенный в этот же сервер по адресу /exam-sync/ (exam-sync/handler.js).
  * Сайт экзаменов показывает кнопку «KU Portal» для возврата сюда (параметры from/back).
  */
-const EXAM_SYNC_PATH = '/exam-sync/';
+const EXAM_SYNC_PATH = API_BASE + '/exam-sync/'; // онлайн-экзамен живёт на сервере портала
 I.monitor = '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="m9.2 10.4 1.9 1.9 3.8-3.9"/>';
 I.external = '<path d="M13.5 4.5h6v6"/><path d="M19.5 4.5 11 13"/><path d="M17.5 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"/>';
 const EXAM_FEATURES = {
@@ -654,7 +655,7 @@ const EXAM_COLOR = { ku: 'incampus', arizona: 'intl' }; // палитра пор
 function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
-  u.searchParams.set('back', location.origin + '/#/exam');
+  u.searchParams.set('back', location.href.split('#')[0] + '#/exam'); // с учётом пути (GitHub Pages: /ku-portal/)
   u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
   // Оформление портала целиком: цвет (с учётом «Авто»), режим, размер текста, «меньше анимации».
   // Kozybayev → inCampus, Arizona → «Международный кампус», остальные палитры в экзамене называются так же.
@@ -741,7 +742,7 @@ async function viewAI() {
   app.innerHTML = `
     <div class="chatpage">
       <div class="chathead">
-        <div class="bird-avatar"><img src="/bird-idle.png" alt="" /></div>
+        <div class="bird-avatar"><img src="bird-idle.png" alt="" /></div>
         <div class="chathead-t">
           <b>${t('AI-помощник')}</b>
           <div class="st"><span class="dot" id="aidot"></span><span id="aist">${t('уточняю статус…')}</span></div>
@@ -775,7 +776,7 @@ function paintChat() {
   if (!w) return;
   w.innerHTML = aiHistory.map((m) => m.role === 'user'
     ? `<div class="msg user">${esc(aiText(m))}</div>`
-    : `<div class="msgrow"><div class="ai-ava"><img src="/bird-idle.png" alt="" /></div><div class="msg bot">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div></div>`
+    : `<div class="msgrow"><div class="ai-ava"><img src="bird-idle.png" alt="" /></div><div class="msg bot">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div></div>`
   ).join('') + (aiHistory.length === AI_INIT.length
     ? `<div class="ai-sugg">${AI_SUGGEST.map((q) => `<button class="ai-q" type="button" data-q="${esc(t(q))}">${esc(t(q))}</button>`).join('')}</div>`
     : '');
@@ -790,7 +791,7 @@ async function sendChat(preset) {
   aiHistory.push({ role: 'user', content: t });
   paintChat();
   const w = document.getElementById('chatwrap');
-  w.insertAdjacentHTML('beforeend', `<div class="msgrow" id="typing"><div class="ai-ava"><img src="/bird-idle.png" alt="" /></div><div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
+  w.insertAdjacentHTML('beforeend', `<div class="msgrow" id="typing"><div class="ai-ava"><img src="bird-idle.png" alt="" /></div><div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
   const body = document.getElementById('chatbody');
   body.scrollTop = body.scrollHeight;
   try {
@@ -1169,7 +1170,7 @@ function sessionsDlg() {
 }
 async function exportData() {
   try {
-    const r = await fetch('/api/export', { headers: { Authorization: 'Bearer ' + S.token } });
+    const r = await fetch(API_BASE + '/api/export', { headers: { Authorization: 'Bearer ' + S.token } });
     if (!r.ok) throw new Error(t('Не удалось скачать данные'));
     const blob = await r.blob();
     const a = document.createElement('a');

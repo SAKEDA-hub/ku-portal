@@ -48,5 +48,5 @@
 1. `node --check server.js`, `node --check public/app.js`, `node --check exam-sync/handler.js` проходят, `node server.js` запускается без ошибок.
 2. Вход под `teacher@demo.kz` / `1234` и `student@demo.kz` / `1234`: «Экзамен» сразу показывает вход в онлайн-экзамен, кнопка открывает `/exam-sync/`, там есть кнопка «KU Portal», она возвращает в портал.
 3. Главная, расписание, оценки, рейтинг, AI-помощник, профиль работают как раньше.
-4. Деплой — Render (`render.yaml`, `node server.js`, без зависимостей). Если автодеплой не сработал: Render → Manual Deploy → Deploy latest commit.
+4. Деплой — Render (`render.yaml`, `node server.js`, без зависимостей). Интерфейс дополнительно публикуется на GitHub Pages (`.github/workflows/pages.yml`): в `public/` пути к файлам — относительные (без начального `/`), запросы к API — через `API_BASE` (`public/config.js`), CORS — `PAGES_ORIGINS` в `server.js`. Новые ссылки и `fetch` в `public/` писать так же. Если автодеплой не сработал: Render → Manual Deploy → Deploy latest commit.
 5. Откат — см. `docs/ROLLBACK.md` (ветки `backup/*`, `git revert -m 1 <merge>`, Render → Rollback).
