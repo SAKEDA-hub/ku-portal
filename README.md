@@ -4,9 +4,7 @@
 
 Работает на чистом Node.js, внешние зависимости не нужны.
 
-**Сайт: https://ku-portal.onrender.com** (тестовый вход — на экране входа, пароль `1234`)
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/SAKEDA-hub/ku-portal)
+**Сайт: https://sakeda-hub.github.io/ku-portal/** (тестовый вход — на экране входа, пароль `1234`). Сервер — alwaysdata, см. «Публикация».
 
 | Вход | Раздел «Экзамен» | Онлайн-экзамен |
 |:---:|:---:|:---:|
@@ -79,33 +77,38 @@ node server.js
 
 ## Публикация для других людей
 
-Рабочая версия уже опубликована: https://ku-portal.onrender.com. Ниже — как развернуть свою копию.
+Схема: **сервер (API, вход, оценки, онлайн-экзамен) — [alwaysdata](https://www.alwaysdata.com)** (бесплатно, без карты, файлы базы сохраняются между перезапусками); **интерфейс — GitHub Pages**: https://sakeda-hub.github.io/ku-portal/. Портал целиком открывается и с самого сервера: `https://<аккаунт>.alwaysdata.net`.
 
-Целиком на GitHub Pages портал не поместится: ему нужен сервер. Поэтому схема такая: **сервер (API, онлайн-экзамен) — Render**, настройки в `render.yaml`; **интерфейс можно дополнительно открыть с GitHub Pages** (см. ниже).
+Обновление — автоматически при каждом push в `main` (`.github/workflows/deploy.yml`), ход — вкладка **Actions**, вручную — Actions → **Deploy** → **Run workflow**.
 
-1. Нажать кнопку **Deploy to Render** выше и войти через GitHub.
-2. Нажать **Apply**. Через пару минут появится ссылка вида `https://ku-portal-xxxx.onrender.com`, её можно отправлять людям.
-3. После каждого `git push` в `main` сайт обновляется сам. Если этого не происходит — в Render: **Manual Deploy → Deploy latest commit**, а на GitHub дайте приложению Render доступ к репозиторию (Settings → Applications → Render → Configure).
+### Первый запуск на alwaysdata (один раз)
 
-Ограничения бесплатного тарифа:
-- после 15 минут без посетителей сервер засыпает, первое открытие после этого занимает около минуты;
-- при перезапуске база (`data/db.json`, `data/exam-sync.json`) очищается, а тестовые аккаунты создаются заново. Чтобы данные сохранялись, нужен платный Persistent Disk или свой сервер.
+1. Зарегистрироваться на alwaysdata.com, тариф **Free** (нужна только почта). Имя аккаунта станет адресом: `<аккаунт>.alwaysdata.net`.
+2. **Remote access → SSH**: открыть пользователя (имя = аккаунт), задать пароль, включить вход по паролю.
+3. **Web → Sites**: открыть сайт `<аккаунт>.alwaysdata.net` (или **Add a site**) → тип **Node.js**:
+   - Command: `node /home/<аккаунт>/ku-portal/server.js`
+   - Working directory: `/home/<аккаунт>/ku-portal`
+   - Node.js version: 18 или новее. Сохранить. ID сайта — число в адресе страницы настроек сайта.
+4. **Profile → Tokens**: создать API-токен.
+5. GitHub → репозиторий → **Settings → Secrets and variables → Actions → New repository secret**: `ALWAYSDATA_ACCOUNT`, `ALWAYSDATA_SSH_PASSWORD`, `ALWAYSDATA_API_TOKEN`, `ALWAYSDATA_SITE_ID`.
+6. **Settings → Pages → Source: GitHub Actions**.
+7. Actions → **Deploy** → **Run workflow**. Шаг backend загрузит код в `~/ku-portal` и перезапустит сайт, шаг pages опубликует интерфейс с адресом сервера `https://<аккаунт>.alwaysdata.net`.
 
-### Интерфейс на GitHub Pages
-
-Адрес: **https://sakeda-hub.github.io/ku-portal/**. Это тот же портал (папка `public/`), данные и вход — с сервера на Render, поэтому функции те же. Ограничения Render (засыпание, очистка базы при перезапуске) остаются.
-
-- Включить один раз: репозиторий → **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-- Публикует workflow `.github/workflows/pages.yml` при каждом push в `main`, если менялась папка `public/`. Ход публикации — вкладка **Actions**, запустить вручную — Actions → «Deploy to GitHub Pages» → **Run workflow**.
-- Адрес сервера — одна строка `KU_BACKEND_URL` в `public/config.js`. Переезд сервера на другой хостинг = поменять её.
-- Сервер разрешает запросы только с адресов из `PAGES_ORIGINS` (по умолчанию `https://sakeda-hub.github.io`). Изменения в `server.js` попадают на Render только после его деплоя.
-- При открытии с самого сервера (Render, `localhost`) `config.js` ничего не меняет — всё работает как раньше.
+Заметки:
+- Сервер слушает IP и порт, которые задаёт alwaysdata (`IP`/`PORT` или `ALWAYSDATA_HTTPD_IP`/`ALWAYSDATA_HTTPD_PORT`).
+- `data/db.json` и `data/exam-sync.json` деплой не трогает — данные сохраняются.
+- Бесплатный тариф alwaysdata — только некоммерческое использование, один бесплатный аккаунт на человека.
+- AI-помощник с LM Studio по частному адресу (Tailscale/LAN) с хостинга недоступен — помощник отвечает выдержками с сайта ku.edu.kz. Для модели укажите публичный `https://` адрес туннеля в `LM_STUDIO_URL` (переменные окружения сайта в alwaysdata).
+- Другой адрес сервера для Pages — переменная репозитория `KU_BACKEND_URL` (Settings → Secrets and variables → Actions → Variables).
+- При открытии с самого сервера `public/config.js` ничего не меняет.
+- `render.yaml` оставлен для тех, кто хочет развернуть копию на Render (засыпает через 15 минут, база очищается при перезапуске).
 
 ## Настройки
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `PORT` | `3000` | Порт сервера |
+| `PORT` | `3000` | Порт сервера (на alwaysdata задаётся автоматически) |
+| `IP` | все интерфейсы | IP для прослушивания (на alwaysdata задаётся автоматически) |
 | `DEMO` | включено | `0` — не создавать тестовые аккаунты |
 | `LM_STUDIO_URL` | `http://100.86.38.5:1234` | Адрес LM Studio: частный IPv4/localhost (LAN, Tailscale) или `https://` адрес туннеля (Cloudflare Tunnel, Tailscale Funnel, ngrok). Окончание `/v1` допускается |
 | `LM_STUDIO_MODEL` | `google/gemma-4-e4b` | ID модели в LM Studio. Если точного совпадения нет, берётся похожая загруженная модель (в логе — предупреждение) |
@@ -121,16 +124,16 @@ node server.js
 - Данные экзаменов — `data/exam-sync.json` (создаётся сам; при первом запуске берутся демо-данные из `exam-sync/seed.json`).
 - Код: `exam-sync/` (интерфейс и сервер синхронизации), `public/services.js` (интеграция перехода из портала).
 
-Помощник использует Gemma через OpenAI-совместимый API LM Studio и локальный снимок базы официальных материалов университета (`data/ku-corpus.json.gz`, 1 565 фрагментов). Он не обходит сайт и не обращается к интернету при ответе. Обновление базы выполняется администратором и требует повторной выгрузки корпуса. LM Studio должна быть доступна серверу портала по частному IPv4-адресу; адрес `100.86.38.5` доступен только из сети Tailscale, поэтому обычный Render-хостинг не сможет подключиться без отдельного сетевого маршрута/VPN.
+Помощник использует Gemma через OpenAI-совместимый API LM Studio и локальный снимок базы официальных материалов университета (`data/ku-corpus.json.gz`, 1 565 фрагментов). Он не обходит сайт и не обращается к интернету при ответе. Обновление базы выполняется администратором и требует повторной выгрузки корпуса. LM Studio должна быть доступна серверу портала по частному IPv4-адресу; адрес `100.86.38.5` доступен только из сети Tailscale, поэтому облачный хостинг (alwaysdata) не сможет подключиться без отдельного сетевого маршрута/VPN.
 
-#### Подключение LM Studio к сайту на Render
+#### Подключение LM Studio к сайту на хостинге
 
-Render — облачный сервер, он не находится в вашей сети Tailscale/LAN, поэтому адрес `100.x.x.x` или `192.168.x.x` ему недоступен даже при включённом ПК. Нужен публичный HTTPS-туннель до LM Studio:
+alwaysdata — облачный сервер, он не находится в вашей сети Tailscale/LAN, поэтому адрес `100.x.x.x` или `192.168.x.x` ему недоступен даже при включённом ПК. Нужен публичный HTTPS-туннель до LM Studio:
 
 1. В LM Studio: **Developer → Start Server** (порт 1234), загрузить модель Gemma. Желательно включить **Require API key** и задать ключ.
 2. На ПК с LM Studio запустить туннель, например `cloudflared tunnel --url http://localhost:1234` (временный адрес `https://….trycloudflare.com`; для постоянного — именованный туннель Cloudflare) или `tailscale funnel 1234`.
-3. В Render → сервис → **Environment**: `LM_STUDIO_URL=https://<адрес туннеля>`, при ключе — `LM_STUDIO_API_KEY=<ключ>`. Сохранить (Render перезапустит сервис).
-4. Проверка: `https://<сайт>/api/ai/status` → `"online": true`. Если `false`, поле `reason` подскажет причину (`unreachable`, `timeout`, `auth`, `no_model`, `bad_response`), подробности — в логах Render (`[AI] LM Studio недоступна: …`).
+3. В alwaysdata → **Web → Sites** → сайт → **Environment**: `LM_STUDIO_URL=https://<адрес туннеля>`, при ключе — `LM_STUDIO_API_KEY=<ключ>`. Сохранить и перезапустить сайт.
+4. Проверка: `https://<сайт>/api/ai/status` → `"online": true`. Если `false`, поле `reason` подскажет причину (`unreachable`, `timeout`, `auth`, `no_model`, `bad_response`), подробности — в логах сайта (alwaysdata → Logs) (`[AI] LM Studio недоступна: …`).
 
 Если портал запущен на том же ПК или в той же сети, туннель не нужен: `LM_STUDIO_URL=http://localhost:1234` (для доступа с другой машины в LM Studio включить **Serve on Local Network**).
 

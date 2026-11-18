@@ -1,0 +1,134 @@
+# Деплой при каждом push в main (и вручную: Actions → Deploy → Run workflow).
+#
+# 1) backend — сервер (server.js, API, онлайн-экзамен) на alwaysdata по SSH.
+#    Секреты репозитория (Settings → Secrets and variables → Actions → Secrets):
+#      ALWAYSDATA_ACCOUNT       — имя аккаунта alwaysdata (сайт: https://<имя>.alwaysdata.net)
+#      ALWAYSDATA_SSH_PASSWORD  — пароль SSH-пользователя (alwaysdata → Remote access → SSH)
+#      ALWAYSDATA_API_TOKEN     — API-токен (alwaysdata → Profile → Tokens)
+#      ALWAYSDATA_SITE_ID       — ID сайта (число в адресе страницы сайта в панели alwaysdata)
+#    Пока секретов нет, шаг пропускается.
+#    Код кладётся в ~/ku-portal; data/db.json и data/exam-sync.json не трогаются (их нет в git).
+#
+# 2) pages — интерфейс (public/) на GitHub Pages. Один раз включить:
+#    Settings → Pages → Build and deployment → Source: GitHub Actions.
+#    Адрес сервера для Pages: переменная репозитория KU_BACKEND_URL (Settings → Secrets and variables → Actions → Variables),
+#    иначе https://<ALWAYSDATA_ACCOUNT>.alwaysdata.net, иначе значение из public/config.js.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JS syntax
+        run: |
+          for f in server.js exam-sync/handler.js public/config.js public/i18n.js public/services.js public/app.js; do
+            node --check "$f"
+          done
+
+  backend:
+    needs: check
+    runs-on: ubuntu-latest
+    concurrency:
+      group: backend
+      cancel-in-progress: false
+    env:
+      ACCOUNT: ${{ secrets.ALWAYSDATA_ACCOUNT }}
+      SSHPASS: ${{ secrets.ALWAYSDATA_SSH_PASSWORD }}
+      API_TOKEN: ${{ secrets.ALWAYSDATA_API_TOKEN }}
+      SITE_ID: ${{ secrets.ALWAYSDATA_SITE_ID }}
+    steps:
+      - name: Check secrets
+        id: cfg
+        run: |
+          if [ -z "$ACCOUNT" ] || [ -z "$SSHPASS" ]; then
+            echo "::notice::Секреты alwaysdata не заданы — деплой backend пропущен."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.skip != '1'
+
+      - name: Upload code to alwaysdata
+        if: steps.cfg.outputs.skip != '1'
+        run: |
+          sudo apt-get install -y -qq sshpass > /dev/null
+          HOST="ssh-${ACCOUNT}.alwaysdata.net"
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ${ACCOUNT}@${HOST}"
+          # только файлы из git: data/db.json и data/exam-sync.json на сервере остаются как есть
+          git archive --format=tar HEAD | $SSH 'mkdir -p ~/ku-portal && tar -xf - -C ~/ku-portal && echo "uploaded to ~/ku-portal"'
+
+      - name: Restart site
+        if: steps.cfg.outputs.skip != '1'
+        run: |
+          if [ -z "$API_TOKEN" ] || [ -z "$SITE_ID" ]; then
+            echo "::warning::Нет ALWAYSDATA_API_TOKEN или ALWAYSDATA_SITE_ID — перезапустите сайт вручную: alwaysdata → Web → Sites → Restart."
+            exit 0
+          fi
+          curl -fsS -X POST --basic --user "${API_TOKEN} account=${ACCOUNT}:" \
+            "https://api.alwaysdata.com/v1/site/${SITE_ID}/restart/"
+          echo "site restarted"
+
+      - name: Health check
+        if: steps.cfg.outputs.skip != '1'
+        run: |
+          URL="https://${ACCOUNT}.alwaysdata.net/api/demo"
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)
+            echo "try $i: $URL -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::warning::Сервер не ответил 200 — смотрите логи в alwaysdata (Web → Sites → Logs)."
+
+  pages:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      BACKEND_VAR: ${{ vars.KU_BACKEND_URL }}
+      ACCOUNT: ${{ secrets.ALWAYSDATA_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp -r public/. _site/
+          touch _site/.nojekyll
+          URL="$BACKEND_VAR"
+          if [ -z "$URL" ] && [ -n "$ACCOUNT" ]; then URL="https://${ACCOUNT}.alwaysdata.net"; fi
+          if [ -n "$URL" ]; then
+            URL="${URL%/}"
+            sed -i "s#var KU_BACKEND_URL = '[^']*';#var KU_BACKEND_URL = '${URL}';#" _site/config.js
+          fi
+          grep -n "var KU_BACKEND_URL" _site/config.js
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

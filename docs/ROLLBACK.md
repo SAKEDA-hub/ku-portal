@@ -3,7 +3,11 @@
 Обновление «Тема портала в онлайн-экзамене + рабочие настройки» влито в `main` одним merge-коммитом.
 Состояние **до** обновления сохранено в ветке `backup/before-settings-update` (коммит `0f9b14f`).
 
-## Способ 1. Render — быстрее всего (без git)
+## Способ 0. alwaysdata (текущий сервер)
+
+`git revert -m 1 <хеш merge-коммита>` → `git push origin main` — workflow Deploy загрузит прежний код и перезапустит сайт. Данные (`data/*.json`) деплой не трогает.
+
+## Способ 1. Render (если используется) — быстрее всего (без git)
 
 Render → сервис `ku-portal` → **Events** (или **Deploys**) → предыдущий успешный деплой → **Rollback**.
 Сайт сразу вернётся к прошлой версии. Код в GitHub при этом не меняется: следующий `git push` в `main`
@@ -15,7 +19,7 @@ Render → сервис `ku-portal` → **Events** (или **Deploys**) → пр
 git checkout main && git pull
 git log --merges --oneline -5          # найти «Merge: тема портала в онлайн-экзамене…»
 git revert -m 1 <хеш-merge-коммита>
-git push origin main                   # Render задеплоит откат автоматически
+git push origin main                   # workflow Deploy задеплоит откат автоматически
 ```
 
 Вернуть обновление обратно: `git revert <хеш-коммита-отката>` и `git push`.
