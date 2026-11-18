@@ -80,7 +80,7 @@ node server.js
 Схема: **сервер (API, вход, оценки, онлайн-экзамен) — [alwaysdata](https://www.alwaysdata.com)** (бесплатно, без карты, файлы базы сохраняются между перезапусками); **интерфейс — GitHub Pages**: https://sakeda-hub.github.io/ku-portal/. Портал целиком открывается и с самого сервера: `https://<аккаунт>.alwaysdata.net`.
 
 Обновление:
-- **сервер** — скрипт `deploy/alwaysdata-update.sh` по расписанию (alwaysdata → Advanced → Scheduled tasks, каждые 5 минут) забирает `main` из GitHub и перезапускает портал, если код изменился. Паролей и токенов в GitHub не нужно. Вручную — в терминале alwaysdata: `sh ~/ku-portal/deploy/alwaysdata-update.sh`;
+- **сервер** — скрипт `deploy/alwaysdata-update.sh` по расписанию (alwaysdata → Advanced → Scheduled tasks, каждые 5 минут) забирает `main` из GitHub и, если код изменился, обновляет файл `.restart` — сервер замечает это за ~5 с, сохраняет базу и завершается, alwaysdata запускает его заново (веб и SSH у alwaysdata — разные машины, поэтому так, а не через `pkill`). Паролей и токенов в GitHub не нужно. Вручную — в терминале alwaysdata: `sh ~/ku-portal/deploy/alwaysdata-update.sh`;
 - **интерфейс** — workflow `.github/workflows/deploy.yml` при каждом push в `main` (вкладка **Actions**).
 
 ### Первый запуск на alwaysdata (один раз)
