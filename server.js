@@ -865,3 +865,14 @@ loadDB();
 seedDemo();
 loadSessions();
 server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localhost'}:${PORT}`));
+
+/* Перезапуск после обновления кода: deploy/alwaysdata-update.sh обновляет файл .restart рядом с server.js.
+   Сервер сохраняет базу и завершается, хостинг (alwaysdata) запускает его заново уже с новым кодом.
+   Пока файл не трогают, ничего не происходит. */
+const RESTART_FILE = path.join(ROOT, '.restart');
+fs.watchFile(RESTART_FILE, { interval: 5000 }, (cur, prev) => {
+  if (!cur.mtimeMs || cur.mtimeMs === prev.mtimeMs) return;
+  console.log('[deploy] найден .restart — перезапуск');
+  try { saveDB(); } catch (e) { console.error('[deploy] saveDB:', e.message); }
+  process.exit(0);
+}).unref();

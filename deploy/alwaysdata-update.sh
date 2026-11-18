@@ -9,6 +9,7 @@ git fetch -q origin main
 if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
   git reset -q --hard origin/main
   echo "$(date '+%F %T') обновлено до $(git rev-parse --short HEAD)"
-  # alwaysdata сам запускает сайт заново после остановки процесса
-  pkill -u "$(id -u)" -f "node $APP/server.js" || true
+  # сайт работает на другой машине alwaysdata (общий только диск): сервер видит обновление .restart,
+  # сохраняет базу и завершается, alwaysdata запускает его заново
+  date > "$APP/.restart"
 fi
