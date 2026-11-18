@@ -1,5 +1,5 @@
 /*
- * KU Portal — клубы и секции (API под /api/clubs*). Подключается из portal-features.js: createClubs(ctx) → handler.
+ * Клубы и секции (API под /api/clubs*). Подключается из server.js: createClubs(ctx) → handler. Интерфейс — public/campus.js.
  * Данные — db.clubs: [{ id, name, icon, desc, weekly, members[], since{uid: ts}, events[] }],
  *   событие (объявление): { id, title, text, date 'YYYY-MM-DD', time 'HH:MM', endTime 'HH:MM', place, limit, hours, people[], absent[], by, weekly }.
  *
