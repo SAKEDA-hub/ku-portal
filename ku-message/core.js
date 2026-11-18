@@ -12,6 +12,15 @@ const PORTAL_URL = 'https://sakeda-hub.github.io/ku-portal/'; // если пор
 
 /* ------------------------------ Иконки ------------------------------ */
 const I = {
+  /* логотип KU Message — две реплики диалога (как «шапочка» у онлайн-экзамена) */
+  logo: '<path d="M3.5 6.2a2.2 2.2 0 0 1 2.2-2.2h8.6a2.2 2.2 0 0 1 2.2 2.2v5.1a2.2 2.2 0 0 1-2.2 2.2H9.2L5.8 16.3v-2.8h-.1a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M19.6 9.4h.2a2 2 0 0 1 2 2v4.6a2 2 0 0 1-2 2h-.3v2.6l-3.1-2.6h-4.3a2 2 0 0 1-1.9-1.4"/><path d="M7.2 8.6h5.6"/>',
+  user: '<circle cx="12" cy="8.3" r="3.8"/><path d="M5.6 20a6.4 6.4 0 0 1 12.8 0"/>',
+  palette: '<path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.8 0-1 .8-1.6 1.8-1.6h2c2.2 0 3.9-1.7 3.9-3.9 0-3.9-3.8-7-8.5-7z"/><circle cx="7.6" cy="11.3" r="1.1"/><circle cx="10.4" cy="7.6" r="1.1"/><circle cx="15" cy="7.9" r="1.1"/>',
+  bell: '<path d="M6.2 10.2a5.8 5.8 0 1 1 11.6 0c0 2.9.7 4.5 1.4 5.3.4.4.1 1.1-.5 1.1H5.3c-.6 0-.9-.7-.5-1.1.7-.8 1.4-2.4 1.4-5.3z"/><path d="M10.4 19.7a1.9 1.9 0 0 0 3.2 0"/>',
+  globe: '<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.3 2.4 3.4 5.3 3.4 8.6s-1.1 6.2-3.4 8.6c-2.3-2.4-3.4-5.3-3.4-8.6s1.1-6.2 3.4-8.6z"/>',
+  sun: '<circle cx="12" cy="12" r="3.8"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4"/>',
+  moon: '<path d="M19.5 14.6A7.6 7.6 0 0 1 9.4 4.5a7.6 7.6 0 1 0 10.1 10.1z"/>',
+  device: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/>',
   book: '<path d="M12 6.6C10.5 5.1 8.6 4.3 6.2 4.3c-1.1 0-2 .2-2.7.5v13.4c.8-.3 1.7-.5 2.7-.5 2.4 0 4.3.9 5.8 2.4 1.5-1.5 3.4-2.4 5.8-2.4 1 0 1.9.2 2.7.5V4.8c-.8-.3-1.7-.5-2.7-.5-2.4 0-4.3.9-5.8 2.4z"/><path d="M12 6.6v13.5"/>',
   chat: '<path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4.5 3.5v-3.5h-1z"/>',
   users: '<circle cx="9" cy="8.4" r="3.3"/><path d="M3.4 19.5a5.6 5.6 0 0 1 11.2 0"/><path d="M15.6 5.4a3.2 3.2 0 0 1 0 6.1M17.4 14.3a5.5 5.5 0 0 1 3.2 5.2"/>',
@@ -83,9 +92,9 @@ async function api(path, o) {
 }
 
 /* ------------------------------ Оформление ------------------------------
-   По умолчанию — как в KU Portal (тема и цвет приходят при переходе); можно выбрать свою тему в настройках. */
+   По умолчанию — как в KU Portal (тема и цвет приходят при переходе); в настройках можно выбрать свои тему и цвет. */
 const PALETTES = { ku: '#05a4ba', arizona: '#006FBF', emerald: '#1f9d6b', violet: '#6d4bd8', coral: '#e0603f', graphite: '#3f4a56', pink: '#d63384' };
-const PREF_DEFAULTS = { followPortal: true, mode: 'light', sound: true, push: false };
+const PREF_DEFAULTS = { followPortal: true, mode: 'light', palette: 'auto', enterSend: true, previews: true, sound: true, push: false };
 const prefsKey = () => 'kum_prefs:' + (M.user ? M.user.id : 'guest');
 function getPrefs() { try { return Object.assign({}, PREF_DEFAULTS, JSON.parse(localStorage.getItem(prefsKey()) || '{}')); } catch { return Object.assign({}, PREF_DEFAULTS); } }
 function setPref(k, v) { const p = getPrefs(); p[k] = v; try { localStorage.setItem(prefsKey(), JSON.stringify(p)); } catch { } applyTheme(); }
@@ -94,7 +103,8 @@ try { portalLook = JSON.parse(sessionStorage.getItem('kum_look') || 'null'); } c
 function applyTheme() {
   const p = getPrefs(), look = p.followPortal && portalLook ? portalLook : null;
   const program = M.user && M.user.program === 'arizona' ? 'arizona' : 'ku';
-  const palette = look && PALETTES[look.palette] ? look.palette : program;
+  const own = PALETTES[p.palette] ? p.palette : program; // «Авто» — цвет программы пользователя
+  const palette = look ? (PALETTES[look.palette] ? look.palette : program) : own;
   const mode = look ? look.mode : p.mode;
   const dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   const r = document.documentElement;
