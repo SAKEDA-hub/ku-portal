@@ -93,3 +93,11 @@
 
 /* главная преподавателя: карточка профиля на всю ширину */
 @media (min-width: 1024px) { .dash > .card.wide { grid-column: 1 / -1; height: auto; } }
+
+/* ---------- страница «KU Message» (message-launch.js): сводка и кнопки ---------- */
+.km-sum { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 4px 0 12px; }
+.km-sum:empty { display: none; }
+.km-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 7px 12px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--line); font-size: calc(12.5px * var(--fs)); color: var(--muted); font-weight: 600; }
+.km-chip b { font-size: calc(15px * var(--fs)); color: var(--text); }
+.km-chip.hot { background: var(--accent-dim); border-color: var(--accent); } .km-chip.hot b { color: var(--accent-deep); }
+button.oe-go, button.oe-new { width: 100%; font: inherit; font-weight: 700; cursor: pointer; }

@@ -18,7 +18,7 @@ function stopTimers() { Object.keys(T).forEach((k) => { if (T[k]) clearInterval(
 function viewLogin(msg) {
   stopTimers();
   app.innerHTML = `<div class="login"><div class="login-card">
-    <div class="brand"><span class="logo">KU</span><b>KU Message</b></div>
+    <div class="brand"><span class="logo lg">${svg('logo')}</span><b class="brand-t">KU Message</b></div>
     <p class="muted">${t('Лекции, практики и задания по предметам и личные вопросы преподавателям.')}</p>
     <a class="btn pri wide" href="${esc(backUrl())}">${t('Войти через KU Portal')}</a>
     <div class="or">${t('или')}</div>
@@ -45,9 +45,9 @@ function startApp() {
   app.innerHTML = `<div class="km" id="km">
     <aside class="side">
       <header class="side-h">
-        <div class="brand"><span class="logo">KU</span><b>KU Message</b></div>
+        <a class="brand" href="#/" title="KU Message"><span class="logo">${svg('logo')}</span><b class="brand-t">KU Message</b></a>
         <span class="grow"></span>
-        <button class="ib" id="setBtn" title="${t('Настройки')}">${svg('gear')}</button>
+        <a class="ib" href="#/settings" title="${t('Настройки')}">${svg('gear')}</a>
         <a class="ib" href="${esc(backUrl())}" title="KU Portal">${svg('home')}</a>
       </header>
       <div class="seg" id="sideTabs">${sideTabs().map(([k, l]) => `<button data-t="${k}">${t(l)}<em hidden></em></button>`).join('')}</div>
@@ -59,7 +59,6 @@ function startApp() {
   </div>`;
   document.getElementById('sideTabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { M.tab = b.dataset.t; paintTabs(); paintList(); } };
   document.getElementById('q').oninput = (e) => { M.q = e.target.value.trim().toLowerCase(); paintList(); };
-  document.getElementById('setBtn').onclick = settingsDlg;
   window.onhashchange = route;
   paintTabs();
   route();
@@ -78,6 +77,8 @@ function paintTabs() {
   document.title = (total ? `(${total}) ` : '') + 'KU Message';
 }
 function route() {
+  if (T.open) { clearInterval(T.open); T.open = null; }
+  if (location.hash === '#/settings') { M.ch = null; document.getElementById('km').classList.add('open'); paintTabs(); paintList(); return viewSettings(); }
   const m = /^#\/(s|d)\/(.+)$/.exec(location.hash);
   M.ch = m ? decodeURIComponent(m[2]) : null;
   if (m && M.tab === 'subjects' && m[1] === 'd') M.tab = teacher() && !(M.list && M.list.contacts.some((c) => c.ch === M.ch && c.last)) ? 'students' : 'chats';
@@ -97,7 +98,11 @@ function rowHTML(href, ico, name, sub, right, on, unread) {
   return `<a class="row ${on ? 'on' : ''} ${unread ? 'unread' : ''}" href="${href}">${ico}<span class="row-t"><b>${esc(name)}</b><small>${sub}</small></span><span class="row-r">${right}</span></a>`;
 }
 function personIco(p) { return `<span class="ava">${initials(p.fio)}${p.online ? '<i class="on"></i>' : ''}</span>`; }
-function lastText(c) { return c.last ? `${c.last.from === M.user.id ? t('Вы: ') : ''}${esc(c.last.text)}` : ''; }
+function lastText(c) {
+  if (!c.last) return '';
+  if (!getPrefs().previews) return c.unread ? t('Новые сообщения') : esc(c.role === 'teacher' ? t('Преподаватель') : c.group || '');
+  return `${c.last.from === M.user.id ? t('Вы: ') : ''}${esc(c.last.text)}`;
+}
 function paintList() {
   const box = document.getElementById('list'); if (!box) return;
   const d = M.list;
@@ -175,7 +180,7 @@ function paintSpace(first) {
       <div class="pane-t"><b>${esc(tv(d.title))}</b><small>${esc(d.teacher)} · ${esc(d.groups.join(', '))}${d.officeHours ? ' · ' + esc(t('консультации: {v}', { v: d.officeHours })) : ''}</small></div>
     </header>
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-k="${k}" class="${V.tab === k ? 'on' : ''}">${t(l)}<span>${count(d, k)}</span></button>`).join('')}
-      ${d.manage ? `<span class="grow"></span><button class="btn pri sm" id="addBtn">${svg('plus')}${t(V.tab === 'task' ? 'Задание' : 'Добавить')}</button>` : ''}</nav>
+      ${d.manage ? `<span class="grow"></span><button class="btn pri sm" id="addBtn" title="${t(V.tab === 'task' ? 'Задание' : 'Добавить')}">${svg('plus')}<span>${t(V.tab === 'task' ? 'Задание' : 'Добавить')}</span></button>` : ''}</nav>
     <div class="pane-b"><div class="col">${V.tab === 'task' ? tasksHTML(d) : postsHTML(d, V.tab)}</div></div>`;
   pane.querySelector('.tabs').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) { V.tab = b.dataset.k; paintSpace(false); } };
   const add = pane.querySelector('#addBtn'); if (add) add.onclick = () => (V.tab === 'task' ? taskDlg() : materialDlg(V.tab));
@@ -300,7 +305,11 @@ function paintDM(first) {
 function bindComposer() {
   const inp = document.getElementById('inp');
   inp.oninput = () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 160) + 'px'; };
-  inp.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } };
+  inp.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const enterSend = getPrefs().enterSend; // иначе — Ctrl+Enter
+    if ((enterSend && !e.shiftKey) || (!enterSend && (e.ctrlKey || e.metaKey))) { e.preventDefault(); sendMsg(); }
+  };
   document.getElementById('send').onclick = sendMsg;
   document.getElementById('attach').onclick = async () => {
     const f = await pickFile(); if (!f) return;
@@ -333,46 +342,7 @@ async function sendMsg() {
   V.sending = false;
 }
 
-/* ============================ Быстрые ответы и настройки ============================ */
+/* ============================ Быстрые ответы (шаблоны меняются в настройках — settings.js) ============================ */
 const QUICK_DEFAULT = ['Добрый день! Посмотрю и отвечу сегодня до конца дня.', 'Материалы уже на странице предмета — вкладка «Лекции».', 'Приходите на консультацию — время указано в моём профиле.'];
 const quickKey = () => 'kum_quick:' + M.user.id;
 function getQuick() { try { const v = JSON.parse(localStorage.getItem(quickKey()) || 'null'); return Array.isArray(v) && v.length ? v : QUICK_DEFAULT.map((x) => t(x)); } catch { return QUICK_DEFAULT.map((x) => t(x)); } }
-function settingsDlg() {
-  const p = getPrefs(), s = M.srv.settings;
-  const sw = (key, title, on, sub) => `<label class="set"><span><b>${t(title)}</b>${sub ? `<small>${t(sub)}</small>` : ''}</span><input type="checkbox" data-k="${key}" ${on ? 'checked' : ''}></label>`;
-  modal(t('Настройки'), `
-    <div class="set-h">${t('Оформление')}</div>
-    ${portalLook ? sw('followPortal', 'Как в KU Portal', p.followPortal, 'Тема и цвет — как в портале') : ''}
-    <div class="seg" id="sMode">${[['light', 'Светлая'], ['dark', 'Тёмная'], ['system', 'Как в системе']].map(([k, l]) => `<button data-m="${k}" class="${p.mode === k ? 'on' : ''}">${t(l)}</button>`).join('')}</div>
-    <div class="set-h">${t('Уведомления')}</div>
-    ${sw('sound', 'Звук', p.sound)}
-    ${sw('push', 'Уведомления браузера', p.push && 'Notification' in window && Notification.permission === 'granted', 'Когда вкладка свёрнута')}
-    <div class="set-h">${t('Конфиденциальность')}</div>
-    ${sw('showOnline', 'Показывать, что я в сети', s.showOnline)}
-    ${sw('readReceipts', 'Отметки о прочтении', s.readReceipts, 'Собеседник видит ✓✓, когда вы прочитали')}
-    ${teacher() ? `<div class="set-h">${t('Для преподавателя')}</div>
-      <label class="lbl">${t('Часы консультаций')}</label><input class="inp" id="sOffice" maxlength="80" placeholder="${t('Например: Пн, Ср 14:00–15:00, ауд. 214')}" value="${esc(s.officeHours || '')}">
-      <label class="lbl">${t('Быстрые ответы — по одному в строке')}</label><textarea class="inp" id="sQuick" rows="4">${esc(getQuick().join('\n'))}</textarea>
-      <button class="btn" id="sSave">${t('Сохранить')}</button>` : ''}
-    <div class="set-h">${t('Язык')}</div>
-    <div class="seg" id="sLang">${Object.entries(LANGS).map(([k, n]) => `<button data-l="${k}" class="${getLang() === k ? 'on' : ''}">${n}</button>`).join('')}</div>
-    <div class="set-foot"><a class="btn" href="${esc(backUrl())}">${t('Вернуться в KU Portal')}</a><button class="btn danger" id="sOut">${t('Выйти')}</button></div>`, (box, close) => {
-    box.querySelector('#sMode').onclick = (e) => { const b = e.target.closest('[data-m]'); if (!b) return; setPref('followPortal', false); setPref('mode', b.dataset.m); box.querySelectorAll('[data-m]').forEach((x) => x.classList.toggle('on', x === b)); const fp = box.querySelector('[data-k="followPortal"]'); if (fp) fp.checked = false; };
-    box.querySelectorAll('input[data-k]').forEach((cb) => (cb.onchange = async () => {
-      const k = cb.dataset.k, on = cb.checked;
-      if (k === 'showOnline' || k === 'readReceipts') {
-        try { M.srv.settings = (await api('/settings', { method: 'POST', body: { [k]: on } })).settings; } catch (e) { cb.checked = !on; toast(e.message, true); }
-        return;
-      }
-      if (k === 'push' && on && (!('Notification' in window) || (await Notification.requestPermission()) !== 'granted')) { cb.checked = false; return toast(t('Разрешение не выдано'), true); }
-      setPref(k, on);
-    }));
-    box.querySelector('#sLang').onclick = (e) => { const b = e.target.closest('[data-l]'); if (b) { setLang(b.dataset.l); close(); startApp(); } };
-    const save = box.querySelector('#sSave');
-    if (save) save.onclick = async () => {
-      try { localStorage.setItem(quickKey(), JSON.stringify(box.querySelector('#sQuick').value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 20))); } catch { }
-      try { M.srv.settings = (await api('/settings', { method: 'POST', body: { officeHours: box.querySelector('#sOffice').value } })).settings; toast(t('Сохранено')); } catch (e) { toast(e.message, true); }
-    };
-    box.querySelector('#sOut').onclick = async () => { close(); try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { } signOut(); };
-  });
-}

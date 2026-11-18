@@ -50,6 +50,7 @@ const I = {
   cap: '<path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.6v4.2c2.9 2.3 8.1 2.3 11 0v-4.2M21.5 9.5v5"/>',
   clip: '<path d="M20 11.5 12.3 19.2a5 5 0 0 1-7.1-7.1l8.1-8.1a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3"/>',
   pin: '<path d="M9 4h6l-1 6 3.5 3.5h-11L10 10z"/><path d="M12 13.5V20"/>',
+  kumsg: '<path d="M3.5 6.2a2.2 2.2 0 0 1 2.2-2.2h8.6a2.2 2.2 0 0 1 2.2 2.2v5.1a2.2 2.2 0 0 1-2.2 2.2H9.2L5.8 16.3v-2.8h-.1a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M19.6 9.4h.2a2 2 0 0 1 2 2v4.6a2 2 0 0 1-2 2h-.3v2.6l-3.1-2.6h-4.3a2 2 0 0 1-1.9-1.4"/><path d="M7.2 8.6h5.6"/>',
   chat: '<path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4.5 3.5v-3.5h-1z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
   ball: '<circle cx="12" cy="12" r="8.5"/><path d="m12 7.6 3.6 2.6-1.4 4.2H9.8l-1.4-4.2z"/><path d="M12 3.5v4.1M15.6 10.2l4.1-1.1M14.2 14.4l2.4 3.5M9.8 14.4l-2.4 3.5M8.4 10.2 4.3 9.1"/>',
   hoop: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5v17"/><path d="M6 6a8.5 8.5 0 0 1 0 12M18 6a8.5 8.5 0 0 0 0 12"/>',
@@ -286,23 +287,17 @@ async function askNotifPermission() {
 }
 
 /* ------------------------------ Общие блоки ------------------------------ */
-/* Верхнее меню. «KU Message» и «Экзамен» — не разделы портала, а переход в отдельный сервис (data-launch, см. ниже) */
+/* Верхнее меню. «KU Message» и «Экзамен» — страницы входа в отдельные сервисы (переход — кнопкой на странице) */
 function navHTML(active) {
-  const it = (href, key, icon, label, launch) => `<a href="${href}" data-nav="${key}" ${launch ? `data-launch="${launch}"` : ''} class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
+  const it = (href, key, icon, label) => `<a href="${href}" data-nav="${key}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
   return `<nav class="bnav">
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
-    ${it('#/', 'message', 'chat', 'KU Message', 'message')}
-    ${it('#/', 'exam', 'clipboard', 'Экзамен', 'exam')}
+    ${it('#/chats', 'message', 'kumsg', 'KU Message')}
+    ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
     ${it('#/profile', 'profile', 'user', 'Кабинет')}
   </nav>`;
 }
-document.addEventListener('click', (e) => {
-  const a = e.target.closest('[data-launch]');
-  if (!a || !S.user) return;
-  e.preventDefault();
-  if (a.dataset.launch === 'exam') examTransition(examLaunchUrl()); else openMessage();
-});
 function headHTML() {
   const u = S.user;
   return `
@@ -646,17 +641,32 @@ async function viewRating() {
 
 /* ============================ Экзамен → Онлайн-экзамен ============================ */
 /*
- * Пункт меню «Экзамен» — сразу переход в «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync),
+ * Раздел «Экзамен» — вход в сервис «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync),
  * встроенный в этот же сервер по адресу /exam-sync/ (exam-sync/handler.js).
  * Сайт экзаменов показывает кнопку «KU Portal» для возврата сюда (параметры from/back).
  */
 const EXAM_SYNC_PATH = API_BASE + '/exam-sync/'; // онлайн-экзамен живёт на сервере портала
+I.external = '<path d="M13.5 4.5h6v6"/><path d="M19.5 4.5 11 13"/><path d="M17.5 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"/>';
 I.monitor = '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="m9.2 10.4 1.9 1.9 3.8-3.9"/>';
+const EXAM_FEATURES = {
+  student: [
+    ['clipboard', 'Тесты онлайн', 'Grammar, vocabulary и другие тесты с таймером — прогресс сохраняется, если закрыть вкладку.'],
+    ['book', 'Writing', 'Письменная часть экзамена прямо в браузере, черновик не потеряется.'],
+    ['mic', 'Speaking-очередь', 'Комнаты экзамена с очередью на устную часть и live-обновлениями.'],
+    ['star', 'Результаты', 'Баллы по частям экзамена и разбор ответов.'],
+  ],
+  teacher: [
+    ['plus', 'Редактор тестов', 'Создание тестов с разными типами вопросов, импорт и экспорт.'],
+    ['door', 'Комнаты экзамена', 'Собираете экзамен из тестов, writing и speaking, открываете комнату группе.'],
+    ['users', 'Speaking-очередь', 'Вызов студентов, таймер ответа, оценка устной части.'],
+    ['chart', 'Ведомость', 'Сводные баллы студентов по всем частям экзамена.'],
+  ],
+};
 const EXAM_COLOR = { ku: 'incampus', arizona: 'intl' }; // палитра портала → цвет онлайн-экзамена
 function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
-  u.searchParams.set('back', location.href.split('#')[0] + '#/'); // с учётом пути (GitHub Pages: /ku-portal/)
+  u.searchParams.set('back', location.href.split('#')[0] + '#/exam'); // с учётом пути (GitHub Pages: /ku-portal/)
   u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
   // Оформление портала целиком: цвет (с учётом «Авто»), режим, размер текста, «меньше анимации».
   // Kozybayev → inCampus, Arizona → «Международный кампус», остальные палитры в экзамене называются так же.
@@ -689,6 +699,45 @@ function appTransition(href, o) {
   // Вернулись кнопкой «Назад» из bfcache — убрать оверлей
   window.addEventListener('pageshow', function h(e) { if (e.persisted) { ov.remove(); window.removeEventListener('pageshow', h); } });
 }
+function viewExam() {
+  stopPoll();
+  const teacher = S.user.role === 'teacher';
+  const href = examLaunchUrl();
+  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody">
+    <div class="card oe-hero">
+      <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
+      <div class="oe-kicker">${t('Сервис экзаменов')}</div>
+      <div class="oe-title">${t('Онлайн-экзамен')}</div>
+      <div class="tx oe-lead">${teacher
+        ? t('Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.')
+        : t('Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.')}</div>
+      <div class="oe-status" id="oeStatus"><i></i><span>${t('Проверяем доступность сайта…')}</span></div>
+      <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}${t('Перейти к онлайн-экзамену')}</a>
+      <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}${t('Открыть в новой вкладке')}</a>
+    </div>
+    <div class="oe-feat">
+      ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, ti, d]) => `
+        <div class="card oe-fi"><span class="oe-fic">${svg(ic)}</span><div><b>${esc(t(ti))}</b><div class="tx">${esc(t(d))}</div></div></div>`).join('')}
+    </div>
+    <div class="card oe-note">
+      <span class="oe-fic">${svg('info')}</span>
+      <div class="tx"><b>${t('Вход на сайте экзаменов отдельный.')}</b> ${t('Используйте логин и пароль, которые выдал преподаватель. Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.')}</div>
+    </div>
+  </div>${navHTML('exam')}`;
+
+  const st = document.getElementById('oeStatus');
+  const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
+  fetch(EXAM_SYNC_PATH + 'api/state', { method: 'HEAD', cache: 'no-store' })
+    .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? t('Сайт доступен') : t('Сайт экзаменов временно недоступен')))
+    .catch(() => setSt('bad', t('Не удалось связаться с сайтом экзаменов')));
+
+  document.getElementById('oeGo').addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // открыть в новой вкладке — как обычно
+    e.preventDefault();
+    examTransition(href);
+  });
+}
+
 /* --- преподаватель: расписание --- */
 async function viewTSchedule() {
   stopPoll();
@@ -1107,8 +1156,8 @@ function route() {
     case 'schedule': return viewSchedule();
     case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
     case 'rating': return viewRating();
-    // «Экзамен» и «KU Message» — переходы из меню; старые адреса этих разделов ведут на главную
-    case 'exam': case 'chats': case 'chat': return viewHome();
+    case 'exam': return viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
+    case 'chats': case 'chat': return viewMessage(); // KU Message — отдельное приложение (public/message-launch.js, ku-message/)
     case 'clubs': return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
