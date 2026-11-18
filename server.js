@@ -20,6 +20,22 @@ const CORPUS_FILE = path.join(DATA, 'ku-corpus.json.gz');
 
 if (!fs.existsSync(DATA)) fs.mkdirSync(DATA, { recursive: true });
 
+/* Версия кода, с которой запущен сервер (для проверки, что автообновление перезапустило сервер): /api/version.
+   Читается из .git один раз при старте; git на машине сайта не нужен. */
+function readCommit() {
+  try {
+    const head = fs.readFileSync(path.join(ROOT, '.git', 'HEAD'), 'utf8').trim();
+    if (!head.startsWith('ref: ')) return head.slice(0, 7);
+    const ref = head.slice(5);
+    const loose = path.join(ROOT, '.git', ref);
+    if (fs.existsSync(loose)) return fs.readFileSync(loose, 'utf8').trim().slice(0, 7);
+    const packed = fs.readFileSync(path.join(ROOT, '.git', 'packed-refs'), 'utf8');
+    const line = packed.split('\n').find((l) => l.endsWith(' ' + ref));
+    return line ? line.slice(0, 7) : null;
+  } catch { return null; }
+}
+const VERSION = { commit: readCommit(), startedAt: new Date().toISOString() };
+
 /* ---------------------------------- DB ---------------------------------- */
 
 let db = null;
@@ -614,6 +630,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/auth/logout' && req.method === 'POST') {
       dropSession(reqToken(req));
       return ok(res);
+    }
+
+    if (p === '/api/version' && req.method === 'GET') {
+      return ok(res, VERSION);
     }
 
     if (p === '/api/demo' && req.method === 'GET') {
