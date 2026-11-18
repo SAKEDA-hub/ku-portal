@@ -9,7 +9,9 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.ALWAYSDATA_HTTPD_PORT || 3000;
+// alwaysdata требует слушать конкретный IP из настроек сайта (переменные IP / ALWAYSDATA_HTTPD_IP); без них — все интерфейсы, как раньше
+const HOST = process.env.IP || process.env.ALWAYSDATA_HTTPD_IP || undefined;
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
@@ -862,4 +864,4 @@ const server = http.createServer(async (req, res) => {
 loadDB();
 seedDemo();
 loadSessions();
-server.listen(PORT, () => console.log(`KU Portal: http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localhost'}:${PORT}`));
