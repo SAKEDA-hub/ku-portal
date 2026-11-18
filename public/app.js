@@ -181,7 +181,7 @@ function fmtWhen(ts) {
    Как показывать — по настройкам «Уведомления»: тост в портале всегда, звук (notifSound),
    системное уведомление браузера (notifPush, нужно разрешение), фильтры по типам (notifGrades / notifSchedule / notifExam). */
 const NOTIF = { unread: 0, items: [], seen: null, timer: null, examOpen: null };
-const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam', msg: 'notifChat', task: 'notifTasks' };
+const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam', msg: 'notifChat', task: 'notifTasks', material: 'notifTasks' };
 const DORM_STATUS_TEXT = { new: 'Принята', work: 'В работе', done: 'Выполнена', rejected: 'Отклонена' };
 function notifText(n) {
   if (n.type === 'grade') return { title: t('Новая оценка'), body: `${tv(n.subject)} — ${n.score}` };
@@ -189,6 +189,7 @@ function notifText(n) {
   if (n.type === 'login') return { title: t('Новый вход в аккаунт'), body: [n.device, n.ip].filter(Boolean).join(' · ') };
   if (n.type === 'exam') return { title: t('Экзамен открыт'), body: n.title || '' };
   if (n.type === 'msg') return { title: t('Новое сообщение'), body: [n.from, n.text].filter(Boolean).join(': ') };
+  if (n.type === 'material') return { title: t('Новый материал'), body: `${tv(n.subject)} — ${n.title}` };
   if (n.type === 'task') return { title: t('Новое задание'), body: `${tv(n.subject)} — ${n.title}${n.due ? ' · ' + t('до {d}', { d: fmtDay(n.due) }) : ''}` };
   if (n.type === 'dorm') return { title: t('Обращение в общежитие'), body: [t(DORM_STATUS_TEXT[n.status] || ''), n.category ? tv(n.category) : '', n.reply].filter(Boolean).join(' · ') };
   return { title: t('Уведомление'), body: '' };
@@ -475,8 +476,8 @@ async function viewHome() {
     const srvs = [
       // «Экзамен» здесь не дублируем — он есть в главном меню
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['Сообщения', 'chat', '#/chats'], ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'],
-      ['Голосование', 'mic', '#/voting'], // демо-сервис (public/services.js)
+      ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'],
+      ['Голосование', 'mic', '#/voting'], // демо-сервис (public/services.js); «Сообщения» — в верхнем меню
     ];
 
     document.getElementById('pagebody').innerHTML = `
@@ -543,7 +544,7 @@ async function viewHomeT() {
     const srvs = [
       // «Экзамен» — в главном меню и в карточке выше; «Мои предметы» вели туда же, что и «Оценки»
       ['Добавить занятие', 'plus', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'], ['Расписание', 'calendar', '#/schedule'],
-      ['Сообщения', 'chat', '#/chats'], ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'],
+      ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'], // «Сообщения» — в верхнем меню
     ];
     document.getElementById('pagebody').innerHTML = `
       <div class="section-label">${t('Виджеты')}</div>
@@ -941,8 +942,8 @@ function paintProfile(section) {
           ${swRow('notifPush', 'bell', 'Уведомления браузера', esc(permText()), { raw: true })}
           ${u.role === 'student' ? swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл') : ''}
           ${u.role === 'student' ? swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Новые занятия вашей группы') : ''}
-          ${swRow('notifChat', 'chat', 'Личные сообщения', 'Когда вам пишут в мессенджере')}
-          ${u.role === 'student' ? swRow('notifTasks', 'clipboard', 'Новые задания', 'Когда преподаватель публикует задание в канале предмета') : ''}
+          ${swRow('notifChat', 'chat', 'Личные сообщения', u.role === 'student' ? 'Когда вам отвечает преподаватель' : 'Когда вам пишет студент')}
+          ${u.role === 'student' ? swRow('notifTasks', 'clipboard', 'Материалы и задания', 'Когда преподаватель публикует лекцию, практику или задание') : ''}
           ${swRow('notifExam', 'clipboard', 'Экзамены', 'Когда в онлайн-экзамене открывается комната')}
           ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
           ${linkRow('bell', 'Проверить уведомление', esc(t('Показать тестовое уведомление')), 'testNotif')}

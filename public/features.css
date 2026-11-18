@@ -136,3 +136,42 @@
 .dr-anon { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: calc(13.5px * var(--fs)); color: var(--text-2); cursor: pointer; }
 .campus .chips.svc-wrap .chip { flex: none; }
 @media (min-width: 1024px) { .campus-new { margin-left: 0; margin-right: 0; width: 100%; } .svc .tabs { margin-left: 0; margin-right: 0; } }
+
+/* ---------- канал предмета: материалы ---------- */
+.ml-k { font-weight: 600; color: var(--accent-deep); }
+.mc-mat { display: flex; flex-direction: column; gap: 6px; }
+.mc-mat > b { font-size: calc(15.5px * var(--fs)); }
+.mc-mat .badge, .mc-mat .badge svg { display: inline-flex; align-items: center; gap: 5px; }
+.mc-mat .badge svg { width: 14px; height: 14px; }
+.badge.mat-lecture { background: var(--accent-dim); color: var(--accent-deep); }
+.badge.mat-practice { background: var(--ok-dim); color: var(--ok); }
+.mchat .chatbody .mc-tasks-in { padding-top: 4px; }
+.mchat #mcBody:last-child { padding-bottom: 24px; } /* в канале нет поля ввода снизу */
+.mc-newtask .chips { margin: 0; }
+.mc-newtask > .btn.ghost { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.mc-newtask > .btn.ghost svg { margin: 0; }
+
+/* ---------- клубы: объявления, присутствие, профиль активности ---------- */
+.ev-text { font-size: calc(13.5px * var(--fs)); color: var(--text-2); line-height: 1.45; white-space: pre-wrap; }
+.ev-hint { margin-top: 4px; }
+.ev-att { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ev-att .chip { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; font-size: calc(12.5px * var(--fs)); }
+.ev-att .chip:not(.on) { color: var(--danger); border-color: var(--danger-line); text-decoration: line-through; }
+.ev-att .chip svg { width: 14px; height: 14px; }
+.club .chev, .act-club .chev { color: var(--muted); align-self: center; }
+.club .chev svg, .act-club .chev svg { width: 18px; height: 18px; }
+.club-lock { display: flex; gap: 12px; align-items: flex-start; background: var(--card-2); }
+.club-lock > svg { width: 24px; height: 24px; flex-shrink: 0; color: var(--muted); }
+.club-lock b { display: block; margin-bottom: 2px; }
+.act-sum { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.act-stat { padding: 12px; border-radius: 12px; background: var(--card-2); display: flex; flex-direction: column; gap: 2px; }
+.act-stat b { font-size: calc(22px * var(--fs)); color: var(--accent-deep); line-height: 1.15; }
+.act-stat span { font-size: calc(12.5px * var(--fs)); color: var(--muted); font-weight: 600; }
+.act-stat.vol { background: var(--ok-dim); }
+.act-stat.vol b { color: var(--ok); }
+.act-club { display: flex; gap: 12px; align-items: center; cursor: pointer; }
+.act-club:hover { border-color: var(--accent); }
+.act-hist .svc-log small { display: inline-flex; align-items: center; gap: 4px; }
+.act-hist .svc-log small svg { width: 13px; height: 13px; }
+.act-hist .svc-log.miss b { color: var(--muted); }
+@media (min-width: 640px) { .act-sum { grid-template-columns: repeat(4, 1fr); } }
