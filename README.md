@@ -79,20 +79,18 @@ node server.js
 
 Схема: **сервер (API, вход, оценки, онлайн-экзамен) — [alwaysdata](https://www.alwaysdata.com)** (бесплатно, без карты, файлы базы сохраняются между перезапусками); **интерфейс — GitHub Pages**: https://sakeda-hub.github.io/ku-portal/. Портал целиком открывается и с самого сервера: `https://<аккаунт>.alwaysdata.net`.
 
-Обновление — автоматически при каждом push в `main` (`.github/workflows/deploy.yml`), ход — вкладка **Actions**, вручную — Actions → **Deploy** → **Run workflow**.
+Обновление:
+- **сервер** — скрипт `deploy/alwaysdata-update.sh` по расписанию (alwaysdata → Advanced → Scheduled tasks, каждые 5 минут) забирает `main` из GitHub и перезапускает портал, если код изменился. Паролей и токенов в GitHub не нужно. Вручную — в терминале alwaysdata: `sh ~/ku-portal/deploy/alwaysdata-update.sh`;
+- **интерфейс** — workflow `.github/workflows/deploy.yml` при каждом push в `main` (вкладка **Actions**).
 
 ### Первый запуск на alwaysdata (один раз)
 
 1. Зарегистрироваться на alwaysdata.com, тариф **Free** (нужна только почта). Имя аккаунта станет адресом: `<аккаунт>.alwaysdata.net`.
-2. **Remote access → SSH**: открыть пользователя (имя = аккаунт), задать пароль, включить вход по паролю.
-3. **Web → Sites**: открыть сайт `<аккаунт>.alwaysdata.net` (или **Add a site**) → тип **Node.js**:
-   - Command: `node /home/<аккаунт>/ku-portal/server.js`
-   - Working directory: `/home/<аккаунт>/ku-portal`
-   - Node.js version: 18 или новее. Сохранить. ID сайта — число в адресе страницы настроек сайта.
-4. **Profile → Tokens**: создать API-токен.
-5. GitHub → репозиторий → **Settings → Secrets and variables → Actions → New repository secret**: `ALWAYSDATA_ACCOUNT`, `ALWAYSDATA_SSH_PASSWORD`, `ALWAYSDATA_API_TOKEN`, `ALWAYSDATA_SITE_ID`.
-6. **Settings → Pages → Source: GitHub Actions**.
-7. Actions → **Deploy** → **Run workflow**. Шаг backend загрузит код в `~/ku-portal` и перезапустит сайт, шаг pages опубликует интерфейс с адресом сервера `https://<аккаунт>.alwaysdata.net`.
+2. **Web → Sites** → сайт → тип **Node.js**, Command: `node /home/<аккаунт>/ku-portal/server.js`, Working directory: `ku-portal`.
+3. **Remote access → SSH → on the Web** (терминал в браузере): `git clone https://github.com/SAKEDA-hub/ku-portal.git ~/ku-portal`, затем перезапустить сайт (Web → Sites → ↻).
+4. **Advanced → Scheduled tasks** → команда `sh ~/ku-portal/deploy/alwaysdata-update.sh`, каждые 5 минут.
+5. Адрес сервера для Pages — `KU_BACKEND_URL` в `public/config.js` (сейчас `https://ku-portal.alwaysdata.net`).
+6. Альтернатива п. 3–4 — деплой из GitHub Actions по SSH (job `backend` в `deploy.yml`, секреты `ALWAYSDATA_*`); без секретов он пропускается.
 
 Заметки:
 - Сервер слушает IP и порт, которые задаёт alwaysdata (`IP`/`PORT` или `ALWAYSDATA_HTTPD_IP`/`ALWAYSDATA_HTTPD_PORT`).
