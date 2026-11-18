@@ -112,7 +112,7 @@ const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как �
 const PREF_DEFAULTS = {
   palette: 'auto', mode: 'light', fontSize: 'md', reduceMotion: false, compact: false,
   // уведомления (см. NOTIF); конфиденциальность, 2FA и оповещения о входе хранятся на сервере (/api/settings)
-  notifPush: false, notifGrades: true, notifSchedule: true, notifExam: true, notifSound: true, notifChat: true, notifTasks: true,
+  notifPush: false, notifGrades: true, notifSchedule: true, notifExam: true, notifSound: true,
 };
 const prefsKey = () => 'ku_prefs:' + (S.user ? S.user.id : 'guest');
 function getPrefs() {
@@ -181,7 +181,7 @@ function fmtWhen(ts) {
    Как показывать — по настройкам «Уведомления»: тост в портале всегда, звук (notifSound),
    системное уведомление браузера (notifPush, нужно разрешение), фильтры по типам (notifGrades / notifSchedule / notifExam). */
 const NOTIF = { unread: 0, items: [], seen: null, timer: null, examOpen: null };
-const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam', msg: 'notifChat', task: 'notifTasks', material: 'notifTasks' };
+const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam' };
 const DORM_STATUS_TEXT = { new: 'Принята', work: 'В работе', done: 'Выполнена', rejected: 'Отклонена' };
 function notifText(n) {
   if (n.type === 'grade') return { title: t('Новая оценка'), body: `${tv(n.subject)} — ${n.score}` };
@@ -286,16 +286,23 @@ async function askNotifPermission() {
 }
 
 /* ------------------------------ Общие блоки ------------------------------ */
+/* Верхнее меню. «KU Message» и «Экзамен» — не разделы портала, а переход в отдельный сервис (data-launch, см. ниже) */
 function navHTML(active) {
-  const it = (href, key, icon, label) => `<a href="${href}" data-nav="${key}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
+  const it = (href, key, icon, label, launch) => `<a href="${href}" data-nav="${key}" ${launch ? `data-launch="${launch}"` : ''} class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
   return `<nav class="bnav">
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
-    ${it('#/chats', 'chats', 'chat', 'Connect')}
-    ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
+    ${it('#/', 'message', 'chat', 'KU Message', 'message')}
+    ${it('#/', 'exam', 'clipboard', 'Экзамен', 'exam')}
     ${it('#/profile', 'profile', 'user', 'Кабинет')}
   </nav>`;
 }
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-launch]');
+  if (!a || !S.user) return;
+  e.preventDefault();
+  if (a.dataset.launch === 'exam') examTransition(examLaunchUrl()); else openMessage();
+});
 function headHTML() {
   const u = S.user;
   return `
@@ -400,7 +407,7 @@ async function renderDemoBox() {
   box.innerHTML = `
     <div class="demo-box">
       <b>${t('Бета-аккаунты')}</b>
-      <div class="tx">${esc(t('Пароль у всех: {p}. Группы ИСУ — направление IT, группы БТ — биотехнологии; инструменты в KU Connect зависят от направления.', { p: demoInfo.password }))}</div>
+      <div class="tx">${esc(t('Пароль у всех: {p}. Группы ИСУ — направление IT, группы БТ — биотехнологии.', { p: demoInfo.password }))}</div>
       <div class="demo-lbl">${t('Студенты')}</div>
       <div class="demo-grid">${demoInfo.accounts.filter((a) => a.role === 'student').map(btn).join('')}</div>
       <div class="demo-lbl">${t('Преподаватели')}</div>
@@ -503,7 +510,6 @@ async function viewHome() {
         <div class="foot">${svg('info')} ${t('Следующее занятие в расписании')}</div>
       </div>` : `
       <div class="card" style="border-left:8px solid var(--accent)"><div class="next-empty">${t('Ближайших занятий пока нет.')}<br>${esc(t('Преподаватель ещё не добавил расписание для группы {g}.', { g: d.group }))}</div></div>`}
-      <button class="card kc-widget" id="kcWidget"></button>
       <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
@@ -517,7 +523,6 @@ async function viewHome() {
         <div class="chev">${svg('chev')}</div>
       </a>`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
-    paintConnectWidget(document.getElementById('kcWidget'));
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
   }
@@ -552,7 +557,7 @@ async function viewHomeT() {
     ];
     document.getElementById('pagebody').innerHTML = `
       <div class="section-label">${t('Виджеты')}</div>
-      <div class="card scorecard">
+      <div class="card scorecard wide">
         <div>
           <div class="stud-fio">${esc(S.user.fio)}</div>
           <div class="stud-group">${t('Преподаватель')}</div>
@@ -563,20 +568,11 @@ async function viewHomeT() {
           <div class="tx">${t('предметов')}</div>
         </div>
       </div>
-      <a class="lesson" href="#/exam" style="display:block;color:inherit">
-        <div class="subj">${t('Онлайн-экзамен')}</div>
-        <div class="dt">${t('Тесты, writing, speaking и ведомость')}</div>
-        <hr class="rule">
-        <div class="row">${t('Создавайте тесты и открывайте комнаты экзамена для групп')}</div>
-        <div class="foot">${svg('info')} ${t('Раздел «Экзамен»')}</div>
-      </a>
-      <button class="card kc-widget" id="kcWidget"></button>
       <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
       </div>`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
-    paintConnectWidget(document.getElementById('kcWidget'));
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
   }
@@ -650,32 +646,17 @@ async function viewRating() {
 
 /* ============================ Экзамен → Онлайн-экзамен ============================ */
 /*
- * Раздел «Экзамен» — вход в сервис «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync),
+ * Пункт меню «Экзамен» — сразу переход в «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync),
  * встроенный в этот же сервер по адресу /exam-sync/ (exam-sync/handler.js).
  * Сайт экзаменов показывает кнопку «KU Portal» для возврата сюда (параметры from/back).
  */
 const EXAM_SYNC_PATH = API_BASE + '/exam-sync/'; // онлайн-экзамен живёт на сервере портала
 I.monitor = '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="m9.2 10.4 1.9 1.9 3.8-3.9"/>';
-I.external = '<path d="M13.5 4.5h6v6"/><path d="M19.5 4.5 11 13"/><path d="M17.5 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"/>';
-const EXAM_FEATURES = {
-  student: [
-    ['clipboard', 'Тесты онлайн', 'Grammar, vocabulary и другие тесты с таймером — прогресс сохраняется, если закрыть вкладку.'],
-    ['book', 'Writing', 'Письменная часть экзамена прямо в браузере, черновик не потеряется.'],
-    ['mic', 'Speaking-очередь', 'Комнаты экзамена с очередью на устную часть и live-обновлениями.'],
-    ['star', 'Результаты', 'Баллы по частям экзамена и разбор ответов.'],
-  ],
-  teacher: [
-    ['plus', 'Редактор тестов', 'Создание тестов с разными типами вопросов, импорт и экспорт.'],
-    ['door', 'Комнаты экзамена', 'Собираете экзамен из тестов, writing и speaking, открываете комнату группе.'],
-    ['users', 'Speaking-очередь', 'Вызов студентов, таймер ответа, оценка устной части.'],
-    ['chart', 'Ведомость', 'Сводные баллы студентов по всем частям экзамена.'],
-  ],
-};
 const EXAM_COLOR = { ku: 'incampus', arizona: 'intl' }; // палитра портала → цвет онлайн-экзамена
 function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
-  u.searchParams.set('back', location.href.split('#')[0] + '#/exam'); // с учётом пути (GitHub Pages: /ku-portal/)
+  u.searchParams.set('back', location.href.split('#')[0] + '#/'); // с учётом пути (GitHub Pages: /ku-portal/)
   u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
   // Оформление портала целиком: цвет (с учётом «Авто»), режим, размер текста, «меньше анимации».
   // Kozybayev → inCampus, Arizona → «Международный кампус», остальные палитры в экзамене называются так же.
@@ -689,7 +670,7 @@ function examLaunchUrl() {
 function examTransition(href) {
   appTransition(href, { icon: 'monitor', title: t('Открываем онлайн-экзамен…'), sub: t('Переходим в сервис экзаменов') });
 }
-/* Переход в отдельный сервис (онлайн-экзамен, KU Connect): мост «портал → сервис» и плавный уход со страницы */
+/* Переход в отдельный сервис (онлайн-экзамен, KU Message): мост «портал → сервис» и плавный уход со страницы */
 function appTransition(href, o) {
   const ov = document.createElement('div');
   ov.className = 'oe-ov';
@@ -708,45 +689,6 @@ function appTransition(href, o) {
   // Вернулись кнопкой «Назад» из bfcache — убрать оверлей
   window.addEventListener('pageshow', function h(e) { if (e.persisted) { ov.remove(); window.removeEventListener('pageshow', h); } });
 }
-function viewExam() {
-  stopPoll();
-  const teacher = S.user.role === 'teacher';
-  const href = examLaunchUrl();
-  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody">
-    <div class="card oe-hero">
-      <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
-      <div class="oe-kicker">${t('Сервис экзаменов')}</div>
-      <div class="oe-title">${t('Онлайн-экзамен')}</div>
-      <div class="tx oe-lead">${teacher
-        ? t('Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.')
-        : t('Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.')}</div>
-      <div class="oe-status" id="oeStatus"><i></i><span>${t('Проверяем доступность сайта…')}</span></div>
-      <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}${t('Перейти к онлайн-экзамену')}</a>
-      <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}${t('Открыть в новой вкладке')}</a>
-    </div>
-    <div class="oe-feat">
-      ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, ti, d]) => `
-        <div class="card oe-fi"><span class="oe-fic">${svg(ic)}</span><div><b>${esc(t(ti))}</b><div class="tx">${esc(t(d))}</div></div></div>`).join('')}
-    </div>
-    <div class="card oe-note">
-      <span class="oe-fic">${svg('info')}</span>
-      <div class="tx"><b>${t('Вход на сайте экзаменов отдельный.')}</b> ${t('Используйте логин и пароль, которые выдал преподаватель. Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.')}</div>
-    </div>
-  </div>${navHTML('exam')}`;
-
-  const st = document.getElementById('oeStatus');
-  const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
-  fetch(EXAM_SYNC_PATH + 'api/state', { method: 'HEAD', cache: 'no-store' })
-    .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? t('Сайт доступен') : t('Сайт экзаменов временно недоступен')))
-    .catch(() => setSt('bad', t('Не удалось связаться с сайтом экзаменов')));
-
-  document.getElementById('oeGo').addEventListener('click', (e) => {
-    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // открыть в новой вкладке — как обычно
-    e.preventDefault();
-    examTransition(href);
-  });
-}
-
 /* --- преподаватель: расписание --- */
 async function viewTSchedule() {
   stopPoll();
@@ -858,13 +800,11 @@ const CAB_SECTIONS = [
   ['appearance', 'palette', 'Оформление'],
   ['language', 'globe', 'Язык и регион'],
   ['notifications', 'bell', 'Уведомления'],
-  ['connect', 'chat', 'KU Connect'],
   ['security', 'shield', 'Безопасность'],
   ['privacy', 'eye', 'Конфиденциальность'],
   ['account', 'user', 'Аккаунт'],
 ];
-const SRV_KEYS = ['showInRating', 'showOnline', 'loginAlerts', 'readReceipts']; // хранятся на сервере (общие с KU Connect)
-const KC_STATUS = [['available', 'В сети'], ['busy', 'Занят'], ['away', 'Отошёл'], ['dnd', 'Не беспокоить']];
+const SRV_KEYS = ['showInRating', 'showOnline', 'loginAlerts']; // хранятся на сервере
 let SRV = null; // { settings, twoFactor, passChangedAt, demo }
 function prefVal(key) {
   if (SRV_KEYS.includes(key)) return !!(SRV && SRV.settings[key]);
@@ -954,23 +894,10 @@ function paintProfile(section) {
           ${swRow('notifPush', 'bell', 'Уведомления браузера', esc(permText()), { raw: true })}
           ${u.role === 'student' ? swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл') : ''}
           ${u.role === 'student' ? swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Новые занятия вашей группы') : ''}
-          ${swRow('notifChat', 'chat', 'Личные сообщения', u.role === 'student' ? 'Когда вам отвечает преподаватель' : 'Когда вам пишет студент')}
-          ${u.role === 'student' ? swRow('notifTasks', 'clipboard', 'Материалы и задания', 'Когда преподаватель публикует лекцию, практику или задание') : ''}
           ${swRow('notifExam', 'clipboard', 'Экзамены', 'Когда в онлайн-экзамене открывается комната')}
           ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
           ${linkRow('bell', 'Проверить уведомление', esc(t('Показать тестовое уведомление')), 'testNotif')}
           ${swRow('notifEmail', 'send', 'Email-рассылка', esc(t('Недоступно: на сервере не настроена отправка почты')), { locked: false, raw: true })}
-        </section>
-
-        <section class="card set-sec" id="set-connect">
-          ${secHead('connect', 'KU Connect')}
-          <div class="set-lbl">${t('Статус в мессенджере')}</div>
-          <div class="kc-status">${KC_STATUS.map(([k, l]) => `<button class="${srv.settings.status === k ? 'on' : ''}" data-kcst="${k}"><i class="st-${k}"></i>${t(l)}</button>`).join('')}</div>
-          <input class="inp" id="kcStText" maxlength="60" placeholder="${t('Подпись, например: на паре до 12:00')}" value="${esc(srv.settings.statusText || '')}">
-          ${u.role === 'teacher' ? `<input class="inp" id="kcOffice" maxlength="80" placeholder="${t('Часы консультаций, например: Пн, Ср 14:00–15:00')}" value="${esc(srv.settings.officeHours || '')}">` : ''}
-          <button class="btn ghost kc-save" id="kcSave">${t('Сохранить статус')}</button>
-          ${swRow('readReceipts', 'check', 'Отметки о прочтении', 'Собеседник видит ✓✓, когда вы прочитали сообщение')}
-          ${linkRow('chat', 'Открыть KU Connect', esc(t('Мессенджер: каналы предметов, задания, вопросы преподавателям')), 'connect')}
         </section>
 
         <section class="card set-sec" id="set-security">
@@ -1031,7 +958,6 @@ function paintProfile(section) {
     else if (a === 'sessions') sessionsDlg();
     else if (a === 'export') exportData();
     else if (a === 'delete') deleteAccountDlg();
-    else if (a === 'connect') openConnect(false);
   }));
   // оглавление: плавный переход к разделу без перерисовки страницы
   pb.querySelectorAll('[data-sec]').forEach((a) => (a.onclick = (e) => {
@@ -1044,14 +970,6 @@ function paintProfile(section) {
   const markSec = (id) => pb.querySelectorAll('[data-sec]').forEach((a) => a.classList.toggle('on', a.dataset.sec === id));
   markSec(section || 'appearance');
   document.getElementById('outBtn').onclick = logout;
-  pb.querySelectorAll('[data-kcst]').forEach((b) => (b.onclick = async () => {
-    try { SRV.settings = (await api('/settings', { method: 'POST', body: { status: b.dataset.kcst } })).settings; rerender(); toast(t('Статус обновлён')); } catch (e) { toast(e.message, true); }
-  }));
-  document.getElementById('kcSave').onclick = async () => {
-    const body = { statusText: v('kcStText') };
-    if (document.getElementById('kcOffice')) body.officeHours = v('kcOffice');
-    try { SRV.settings = (await api('/settings', { method: 'POST', body })).settings; toast(t('Сохранено')); } catch (e) { toast(e.message, true); }
-  };
   if (section) { const el = document.getElementById('set-' + section); if (el) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); }
 }
 
@@ -1189,15 +1107,14 @@ function route() {
     case 'schedule': return viewSchedule();
     case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
     case 'rating': return viewRating();
-    case 'exam': return viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
-    case 'chats': return viewConnect(); // KU Connect — отдельный портал (public/connect-launch.js, connect/)
-    case 'chat': return viewConnect();
+    // «Экзамен» и «KU Message» — переходы из меню; старые адреса этих разделов ведут на главную
+    case 'exam': case 'chats': case 'chat': return viewHome();
     case 'clubs': return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
       if (parts[1] === 'schedule') return viewTSchedule();
       if (parts[1] === 'grades') return viewTGrades();
-      return viewExam(); // #/t/queue, #/t/room/... — бывшая очередь
+      return viewHome(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
     case 'dorm': return viewDorm(); // public/campus.js
