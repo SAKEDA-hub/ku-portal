@@ -4,3 +4,4 @@ data/ku_context.json
 data/exam-sync.json
 *.log
 .DS_Store
+.restart
