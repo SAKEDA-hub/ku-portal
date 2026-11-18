@@ -5,3 +5,4 @@ data/exam-sync.json
 *.log
 .DS_Store
 .restart
+data/uploads/

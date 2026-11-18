@@ -48,6 +48,13 @@ const I = {
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>',
   trash: '<path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2c.1.8.7 1.3 1.5 1.3h6.2c.8 0 1.4-.5 1.5-1.3L17.5 7"/>',
   cap: '<path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.6v4.2c2.9 2.3 8.1 2.3 11 0v-4.2M21.5 9.5v5"/>',
+  clip: '<path d="M20 11.5 12.3 19.2a5 5 0 0 1-7.1-7.1l8.1-8.1a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3"/>',
+  pin: '<path d="M9 4h6l-1 6 3.5 3.5h-11L10 10z"/><path d="M12 13.5V20"/>',
+  chat: '<path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4.5 3.5v-3.5h-1z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
+  ball: '<circle cx="12" cy="12" r="8.5"/><path d="m12 7.6 3.6 2.6-1.4 4.2H9.8l-1.4-4.2z"/><path d="M12 3.5v4.1M15.6 10.2l4.1-1.1M14.2 14.4l2.4 3.5M9.8 14.4l-2.4 3.5M8.4 10.2 4.3 9.1"/>',
+  hoop: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5v17"/><path d="M6 6a8.5 8.5 0 0 1 0 12M18 6a8.5 8.5 0 0 0 0 12"/>',
+  heart: '<path d="M12 19.5s-7.5-4.4-7.5-10a4.2 4.2 0 0 1 7.5-2.6 4.2 4.2 0 0 1 7.5 2.6c0 5.6-7.5 10-7.5 10z"/>',
+  crown: '<path d="m4 8 4 4 4-6.5 4 6.5 4-4-1.6 10H5.6z"/><path d="M5.6 20h12.8"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
 };
 function svg(name, cls) {
@@ -105,7 +112,7 @@ const MODES = { light: 'Светлая', dark: 'Тёмная', system: 'Как �
 const PREF_DEFAULTS = {
   palette: 'auto', mode: 'light', fontSize: 'md', reduceMotion: false, compact: false,
   // уведомления (см. NOTIF); конфиденциальность, 2FA и оповещения о входе хранятся на сервере (/api/settings)
-  notifPush: false, notifGrades: true, notifSchedule: true, notifExam: true, notifSound: true,
+  notifPush: false, notifGrades: true, notifSchedule: true, notifExam: true, notifSound: true, notifChat: true, notifTasks: true,
 };
 const prefsKey = () => 'ku_prefs:' + (S.user ? S.user.id : 'guest');
 function getPrefs() {
@@ -174,12 +181,16 @@ function fmtWhen(ts) {
    Как показывать — по настройкам «Уведомления»: тост в портале всегда, звук (notifSound),
    системное уведомление браузера (notifPush, нужно разрешение), фильтры по типам (notifGrades / notifSchedule / notifExam). */
 const NOTIF = { unread: 0, items: [], seen: null, timer: null, examOpen: null };
-const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam' };
+const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam', msg: 'notifChat', task: 'notifTasks' };
+const DORM_STATUS_TEXT = { new: 'Принята', work: 'В работе', done: 'Выполнена', rejected: 'Отклонена' };
 function notifText(n) {
   if (n.type === 'grade') return { title: t('Новая оценка'), body: `${tv(n.subject)} — ${n.score}` };
   if (n.type === 'schedule') return { title: t('Изменение в расписании'), body: `${tv(n.subject)} · ${weekdayName(n.day)} ${n.start}${n.room ? ' · ' + t('ауд.') + ' ' + n.room : ''}` };
   if (n.type === 'login') return { title: t('Новый вход в аккаунт'), body: [n.device, n.ip].filter(Boolean).join(' · ') };
   if (n.type === 'exam') return { title: t('Экзамен открыт'), body: n.title || '' };
+  if (n.type === 'msg') return { title: t('Новое сообщение'), body: [n.from, n.text].filter(Boolean).join(': ') };
+  if (n.type === 'task') return { title: t('Новое задание'), body: `${tv(n.subject)} — ${n.title}${n.due ? ' · ' + t('до {d}', { d: fmtDay(n.due) }) : ''}` };
+  if (n.type === 'dorm') return { title: t('Обращение в общежитие'), body: [t(DORM_STATUS_TEXT[n.status] || ''), n.category ? tv(n.category) : '', n.reply].filter(Boolean).join(' · ') };
   return { title: t('Уведомление'), body: '' };
 }
 let audioCtx = null;
@@ -239,12 +250,13 @@ async function pollExams() {
 }
 function startNotif() {
   if (NOTIF.timer || !S.user) return;
-  pollInbox(); pollExams();
-  NOTIF.timer = setInterval(() => { pollInbox(); pollExams(); }, 30000);
+  pollInbox(); pollExams(); pollChatUnread();
+  NOTIF.timer = setInterval(() => { pollInbox(); pollExams(); pollChatUnread(); }, 30000);
 }
 function stopNotif() {
   if (NOTIF.timer) clearInterval(NOTIF.timer);
   Object.assign(NOTIF, { unread: 0, items: [], seen: null, timer: null, examOpen: null });
+  CHAT.unread = 0;
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.user) pollInbox(); });
 function openInbox() {
@@ -274,10 +286,11 @@ async function askNotifPermission() {
 
 /* ------------------------------ Общие блоки ------------------------------ */
 function navHTML(active) {
-  const it = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
+  const it = (href, key, icon, label) => `<a href="${href}" data-nav="${key}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
   return `<nav class="bnav">
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
+    ${it('#/chats', 'chats', 'chat', 'Сообщения')}
     ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
     ${it('#/profile', 'profile', 'user', 'Кабинет')}
   </nav>`;
@@ -447,6 +460,7 @@ async function doRegister() {
 function v(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 
 /* ============================ Главная (студент) ============================ */
+const KU_SITE_URL = 'https://stikech.github.io/ku-frontend/ku.edu.kz/ru/'; // новый сайт Kozybayev University
 async function viewHome() {
   stopPoll();
   if (S.user.role === 'teacher') return viewHomeT();
@@ -461,9 +475,8 @@ async function viewHome() {
     const srvs = [
       // «Экзамен» здесь не дублируем — он есть в главном меню
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['Запись на зачёт', 'clipboard', '#/credit'], ['AI-помощник', 'msg', '#/ai'], ['Посещаемость', 'clock', '#/attendance'],
-      ['Общежитие', 'building', '#/dorm'], ['Голосование', 'mic', '#/voting'], ['Библиотека', 'chart', '#/library'],
-      // последние пять — демо-сервисы (public/services.js)
+      ['Сообщения', 'chat', '#/chats'], ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'],
+      ['Голосование', 'mic', '#/voting'], // демо-сервис (public/services.js)
     ];
 
     document.getElementById('pagebody').innerHTML = `
@@ -491,7 +504,7 @@ async function viewHome() {
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
       </div>
-      <a class="news" href="https://ku.edu.kz/ru/" target="_blank" rel="noopener">
+      <a class="news" href="${KU_SITE_URL}" target="_blank" rel="noopener">
         <div class="tg">${svg('tg')}</div>
         <div style="flex:1">
           <b>${t('Сайт Kozybayev University')}</b>
@@ -529,8 +542,8 @@ async function viewHomeT() {
     const d = await api('/teacher/subjects');
     const srvs = [
       // «Экзамен» — в главном меню и в карточке выше; «Мои предметы» вели туда же, что и «Оценки»
-      ['Добавить занятие', 'plus', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'],
-      ['Расписание', 'calendar', '#/schedule'], ['AI-помощник', 'msg', '#/ai'],
+      ['Добавить занятие', 'plus', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'], ['Расписание', 'calendar', '#/schedule'],
+      ['Сообщения', 'chat', '#/chats'], ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'],
     ];
     document.getElementById('pagebody').innerHTML = `
       <div class="section-label">${t('Виджеты')}</div>
@@ -721,89 +734,6 @@ function viewExam() {
     e.preventDefault();
     examTransition(href);
   });
-}
-
-/* ============================ AI-помощник ============================ */
-const AI_INIT = [{ role: 'assistant', content: 'Здравствуйте! Я AI-помощник Kozybayev University 🎓\n\nСпрашивайте что-нибудь о вузе: поступление, специальности, общежитие, расписание и т.д. Информацию беру с официального сайта ku.edu.kz.', fixed: true }];
-/* Фиксированные ответы (приветствие, ответы сервера без модели) переводятся при выводе;
-   ответы модели приходят на языке вопроса и не трогаются. */
-function aiText(m) {
-  if (m.role === 'user') return m.content;
-  const pre = 'Нашёл на сайте ku.edu.kz:\n\n';
-  if (m.content.startsWith(pre)) return t('Нашёл на сайте ku.edu.kz:') + '\n\n' + m.content.slice(pre.length);
-  return tv(m.content);
-}
-let aiHistory = null;
-/* Быстрые вопросы — показываются, пока в чате только приветствие */
-const AI_SUGGEST = ['Как поступить в университет?', 'Какие есть специальности?', 'Есть ли общежитие?', 'Сколько стоит обучение?'];
-async function viewAI() {
-  stopPoll();
-  aiHistory = aiHistory ? AI_INIT.concat(aiHistory.slice(AI_INIT.length)) : AI_INIT.slice();
-  app.innerHTML = `
-    <div class="chatpage">
-      <div class="chathead">
-        <div class="bird-avatar"><img src="bird-idle.png" alt="" /></div>
-        <div class="chathead-t">
-          <b>${t('AI-помощник')}</b>
-          <div class="st"><span class="dot" id="aidot"></span><span id="aist">${t('уточняю статус…')}</span></div>
-        </div>
-        <button class="chat-act" id="chatnew" type="button" title="${t('Новый чат')}">${svg('plus')}<span>${t('Новый чат')}</span></button>
-        <a class="chat-act" href="#/" title="${t('На главную')}">${svg('back')}<span>${t('На главную')}</span></a>
-      </div>
-      <div class="chatbody" id="chatbody"><div class="chatwrap" id="chatwrap"></div></div>
-      <div class="chatbar">
-        <input class="inp" id="chatinp" placeholder="${t('Задайте вопрос…')}" autocomplete="off">
-        <button class="sendbtn" id="chatsend" type="button" title="${t('Отправить')}">${svg('send')}<span>${t('Отправить')}</span></button>
-      </div>
-    </div>`;
-  paintChat();
-  const body = document.getElementById('chatbody');
-  body.scrollTop = body.scrollHeight;
-  const inp = document.getElementById('chatinp');
-  inp.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
-  document.getElementById('chatsend').onclick = () => sendChat();
-  document.getElementById('chatnew').onclick = () => { aiHistory = AI_INIT.slice(); paintChat(); inp.focus(); };
-  if (matchMedia('(min-width: 1024px)').matches) inp.focus();
-  api('/ai/status').then((st) => {
-    const dot = document.getElementById('aidot'), stt = document.getElementById('aist');
-    if (!dot) return;
-    if (st.online) { dot.classList.add('on'); stt.textContent = t('Gemma подключена · база KU: {n} фрагментов', { n: st.ctx }); }
-    else stt.textContent = t('Gemma недоступна · проверьте соединение с LM Studio');
-  }).catch(() => { });
-}
-function paintChat() {
-  const w = document.getElementById('chatwrap');
-  if (!w) return;
-  w.innerHTML = aiHistory.map((m) => m.role === 'user'
-    ? `<div class="msg user">${esc(aiText(m))}</div>`
-    : `<div class="msgrow"><div class="ai-ava"><img src="bird-idle.png" alt="" /></div><div class="msg bot">${esc(aiText(m))}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div></div>`
-  ).join('') + (aiHistory.length === AI_INIT.length
-    ? `<div class="ai-sugg">${AI_SUGGEST.map((q) => `<button class="ai-q" type="button" data-q="${esc(t(q))}">${esc(t(q))}</button>`).join('')}</div>`
-    : '');
-  w.querySelectorAll('.ai-q').forEach((b) => { b.onclick = () => sendChat(b.dataset.q); });
-}
-async function sendChat(preset) {
-  const inp = document.getElementById('chatinp');
-  if (!inp) return;
-  const t = (typeof preset === 'string' ? preset : inp.value).trim();
-  if (!t) return;
-  inp.value = '';
-  aiHistory.push({ role: 'user', content: t });
-  paintChat();
-  const w = document.getElementById('chatwrap');
-  w.insertAdjacentHTML('beforeend', `<div class="msgrow" id="typing"><div class="ai-ava"><img src="bird-idle.png" alt="" /></div><div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
-  const body = document.getElementById('chatbody');
-  body.scrollTop = body.scrollHeight;
-  try {
-    const r = await api('/ai/chat', { method: 'POST', body: { message: t, history: aiHistory.slice(-9) } });
-    document.getElementById('typing') && document.getElementById('typing').remove();
-    aiHistory.push({ role: 'assistant', content: r.reply, src: r.src });
-  } catch (e) {
-    document.getElementById('typing') && document.getElementById('typing').remove();
-    aiHistory.push({ role: 'assistant', content: e.message });
-  }
-  paintChat();
-  body.scrollTop = body.scrollHeight;
 }
 
 /* --- преподаватель: расписание --- */
@@ -1011,6 +941,8 @@ function paintProfile(section) {
           ${swRow('notifPush', 'bell', 'Уведомления браузера', esc(permText()), { raw: true })}
           ${u.role === 'student' ? swRow('notifGrades', 'star', 'Новые оценки', 'Когда преподаватель выставит балл') : ''}
           ${u.role === 'student' ? swRow('notifSchedule', 'calendar', 'Изменения в расписании', 'Новые занятия вашей группы') : ''}
+          ${swRow('notifChat', 'chat', 'Личные сообщения', 'Когда вам пишут в мессенджере')}
+          ${u.role === 'student' ? swRow('notifTasks', 'clipboard', 'Новые задания', 'Когда преподаватель публикует задание в канале предмета') : ''}
           ${swRow('notifExam', 'clipboard', 'Экзамены', 'Когда в онлайн-экзамене открывается комната')}
           ${swRow('notifSound', 'speaker', 'Звук', 'Звуковой сигнал уведомлений')}
           ${linkRow('bell', 'Проверить уведомление', esc(t('Показать тестовое уведомление')), 'testNotif')}
@@ -1028,13 +960,13 @@ function paintProfile(section) {
         <section class="card set-sec" id="set-privacy">
           ${secHead('privacy', 'Конфиденциальность')}
           ${u.role === 'student' ? swRow('showInRating', 'chart', 'Показывать меня в рейтинге группы', 'Если выключить — одногруппники увидят строку без имени') : ''}
-          ${swRow('showOnline', 'users', 'Статус «в сети»', u.role === 'student' ? 'Видно преподавателям и группе' : 'Видно в списках портала')}
+          ${swRow('showOnline', 'users', 'Статус «в сети»', u.role === 'student' ? 'Видно преподавателям и группе' : 'Видно студентам в сообщениях')}
           ${linkRow('download', 'Скачать мои данные', esc(t('Оценки, расписание, профиль')) + ' · JSON', 'export')}
         </section>
 
         <section class="card set-sec" id="set-account">
           ${secHead('account', 'Аккаунт')}
-          ${linkRow('info', 'О приложении', 'KU Portal v1.3', 'about')}
+          ${linkRow('info', 'О приложении', 'KU Portal v1.4', 'about')}
           ${linkRow('trash', 'Удалить аккаунт', esc(srv.demo ? t('Тестовый аккаунт удалить нельзя') : t('Безвозвратно, с подтверждением паролем')), 'delete', 'danger')}
           <button class="btn danger-ghost cab-out" id="outBtn">${t('Выйти из аккаунта')}</button>
         </section>
@@ -1068,7 +1000,7 @@ function paintProfile(section) {
   }));
   pb.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     const a = b.dataset.act;
-    if (a === 'about') toast('KU Portal v1.3 · ' + pr.name);
+    if (a === 'about') toast('KU Portal v1.4 · ' + pr.name);
     else if (a === 'testNotif') testNotif();
     else if (a === 'password') changePasswordDlg(rerender);
     else if (a === 'twofa') twoFactorDlg(rerender);
@@ -1200,7 +1132,7 @@ function deleteAccountDlg() {
 }
 async function logout() {
   try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { }
-  localStorage.removeItem('ku_token'); S.token = null; S.user = null; aiHistory = null; stopNotif(); goHome();
+  localStorage.removeItem('ku_token'); S.token = null; S.user = null; stopNotif(); goHome();
 }
 
 /* ============================ Заглушки ============================ */
@@ -1225,7 +1157,9 @@ function route() {
     case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
     case 'rating': return viewRating();
     case 'exam': return viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
-    case 'ai': return viewAI();
+    case 'chats': return viewChats();
+    case 'chat': return parts[1] ? viewChat(decodeURIComponent(parts.slice(1).join('/'))) : viewChats();
+    case 'clubs': return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
       if (parts[1] === 'schedule') return viewTSchedule();
@@ -1233,12 +1167,8 @@ function route() {
       return viewExam(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
-    // демо-сервисы студента (public/services.js)
-    case 'credit': return viewCredit();
-    case 'attendance': return viewAttendance();
-    case 'dorm': return viewDorm();
-    case 'voting': return viewVoting();
-    case 'library': return viewLibrary();
+    case 'dorm': return viewDorm(); // public/campus.js
+    case 'voting': return viewVoting(); // демо-сервис (public/services.js)
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
   }

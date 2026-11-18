@@ -1,6 +1,7 @@
 /*
  * KU Portal — сервер без внешних зависимостей (Node.js >= 18).
- * Аутентификация, оценки, расписание, AI-помощник; онлайн-экзамен (exam-sync) под /exam-sync/.
+ * Аутентификация, оценки, расписание, AI-помощник; мессенджер, клубы, общежитие (portal-features.js);
+ * онлайн-экзамен (exam-sync) под /exam-sync/.
  * AI: Gemma в LM Studio + локальный снимок официальных материалов KU.
  */
 const http = require('http');
@@ -65,12 +66,13 @@ function send(res, code, obj) {
 function bad(res, code, msg) { send(res, code, { error: msg }); }
 function ok(res, obj) { send(res, 200, obj || { ok: true }); }
 
-function readBody(req) {
+function readBody(req, limit = 1e6) {
   return new Promise((resolve) => {
     let d = '';
-    req.on('data', (c) => { d += c; if (d.length > 1e6) req.destroy(); });
+    req.on('data', (c) => { d += c; if (d.length > limit) req.destroy(); });
     req.on('end', () => { try { resolve(d ? JSON.parse(d) : {}); } catch { resolve({}); } });
     req.on('error', () => resolve({}));
+    req.on('close', () => resolve({})); // тело больше лимита: соединение закрыто, end не придёт
   });
 }
 function hash(pw, salt) { return crypto.createHash('sha256').update(salt + pw).digest('hex'); }
@@ -504,6 +506,12 @@ function serveStatic(req, res, url) {
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json') });
+/* Мессенджер, файлы, клубы, общежитие (portal-features.js) */
+const { createFeatures, MAX_FILE_BYTES } = require('./portal-features');
+const features = createFeatures({
+  getDB: () => db, saveDB, nid, ok, bad, isOnline, pushInbox, subjName, teacherFio, DATA,
+  markDirty: () => { dbDirty = true; },
+});
 const publicAIRate = new Map();
 const PAGES_ORIGINS = new Set((process.env.PAGES_ORIGINS || 'https://sakeda-hub.github.io').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean));
 
@@ -563,7 +571,13 @@ const server = http.createServer(async (req, res) => {
 
   if (!p.startsWith('/api/')) return serveStatic(req, res, url);
 
-  const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
+  // загрузка файла приходит в base64 (+~37%), остальные запросы — до 1 МБ
+  const bodyLimit = p === '/api/files' ? Math.ceil(MAX_FILE_BYTES * 1.4) + 1000 : 1e6;
+  if (Number(req.headers['content-length'] || 0) > bodyLimit) {
+    res.setHeader('Connection', 'close');
+    return bad(res, 413, p === '/api/files' ? 'Файл больше 10 МБ' : 'Слишком большой запрос');
+  }
+  const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, bodyLimit) : {};
   const u = userOf(req);
 
   try {
@@ -629,6 +643,8 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/auth/logout' && req.method === 'POST') {
       dropSession(reqToken(req));
+      // вышел на последнем устройстве — сразу не «в сети»
+      if (u && !Object.values(db.sessions || {}).includes(u.id)) u.lastSeen = 0;
       return ok(res);
     }
 
@@ -665,6 +681,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!u) return bad(res, 401, 'Не авторизован');
+
+    if (await features(p, req, res, u, body, url) !== false) return;
 
     /* ---------- Настройки: конфиденциальность и оповещения ---------- */
     if (p === '/api/settings' && req.method === 'GET') {
