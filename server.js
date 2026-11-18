@@ -15,6 +15,7 @@ const PORT = process.env.PORT || process.env.ALWAYSDATA_HTTPD_PORT || 3000;
 const HOST = process.env.IP || process.env.ALWAYSDATA_HTTPD_IP || undefined;
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
+const CONNECT_DIR = path.join(ROOT, 'connect'); // KU Connect — мессенджер университета (/connect/)
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
 const CORPUS_FILE = path.join(DATA, 'ku-corpus.json.gz');
@@ -121,7 +122,9 @@ function userOf(req) {
 }
 
 /* ------------------- Настройки пользователя (на сервере) ------------------- */
-const SETTING_DEFAULTS = { showInRating: true, showOnline: true, loginAlerts: true };
+const SETTING_DEFAULTS = { showInRating: true, showOnline: true, loginAlerts: true, readReceipts: true, status: 'available', statusText: '', officeHours: '' };
+const SETTING_STATUSES = ['available', 'busy', 'away', 'dnd']; // в сети / занят / отошёл / не беспокоить
+const SETTING_TEXT_MAX = { statusText: 60, officeHours: 80 };
 const settingsOf = (u) => Object.assign({}, SETTING_DEFAULTS, u.settings || {});
 const ONLINE_MS = 2 * 60 * 1000;
 const isOnline = (u) => settingsOf(u).showOnline && !!u.lastSeen && Date.now() - u.lastSeen < ONLINE_MS;
@@ -175,9 +178,18 @@ function deviceLabel(ua) {
 /* Программа (университет) пользователя — от неё зависят цвета портала и онлайн-экзамена */
 const PROGRAMS = ['ku', 'arizona'];
 const programOf = (u) => (u && PROGRAMS.includes(u.program) ? u.program : 'ku');
+/* Направление пользователя — от него зависят инструменты в KU Connect:
+   студент — по префиксу группы (ИСУ → it, БТ → bio), преподаватель — по кафедре (dept). */
+const TRACKS = ['it', 'bio', 'lang'];
+function trackOf(u) {
+  if (!u) return '';
+  if (u.role === 'teacher') return TRACKS.includes(u.dept) ? u.dept : 'lang';
+  const g = String(u.group || '').trim().toUpperCase();
+  return /^БТ/.test(g) ? 'bio' : /^(ИСУ|ИС|ВТ|IT)/.test(g) ? 'it' : '';
+}
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u) };
+  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u), track: trackOf(u) };
 }
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -222,6 +234,10 @@ const DISCIPLINES = [
   { id: 'ecology', name: 'Экология', short: 'Экология', re: /эколог/i },
   { id: 'economics', name: 'Экономика', short: 'Экономика', re: /эконом/i },
   { id: 'it', name: 'Введение в информационные технологии', short: 'Введение в ИТ', re: /информац|(^|[^а-яё])ит([^а-яё]|$)|\bit\b/i },
+  { id: 'python', name: 'Программирование на Python', short: 'Python', re: /программ|python/i },
+  { id: 'databases', name: 'Базы данных', short: 'Базы данных', re: /баз[аыу]? данных|\bsql\b/i },
+  { id: 'biochem', name: 'Биохимия', short: 'Биохимия', re: /биохим/i },
+  { id: 'microbio', name: 'Микробиология', short: 'Микробиология', re: /микробиол/i },
 ];
 const DISC_OTHER = { id: 'other', name: 'Другие предметы', short: 'Другое' };
 function detectDiscipline(name) {
@@ -246,53 +262,74 @@ function subjectForDiscipline(u, disc) {
 const DEMO_ON = process.env.DEMO !== '0';
 const DEMO_PASS = '1234';
 const DEMO_GROUP = 'ИСУ-26-2-а';
+const BT_GROUP = 'БТ-26-1-а';
+/* Бета-аккаунты: 3 преподавателя (языки, IT, биотехнологии) и 2 студента (ИСУ — IT, БТ — биотехнологии) */
 const DEMO_ACCOUNTS = [
-  { role: 'teacher', email: 'teacher@demo.kz', lastName: 'Ахметова', firstName: 'Айгерим', middleName: 'Сериковна', program: 'arizona' },
+  { role: 'teacher', email: 'teacher@demo.kz', lastName: 'Ахметова', firstName: 'Айгерим', middleName: 'Сериковна', program: 'arizona', dept: 'lang' },
+  { role: 'teacher', email: 'teacher2@demo.kz', lastName: 'Сейткали', firstName: 'Ерлан', middleName: 'Маратович', dept: 'it' },
+  { role: 'teacher', email: 'teacher3@demo.kz', lastName: 'Жумабекова', firstName: 'Динара', middleName: 'Ерлановна', dept: 'bio' },
   { role: 'student', email: 'student@demo.kz', lastName: 'Иванов', firstName: 'Данияр', middleName: '', group: DEMO_GROUP },
-  { role: 'student', email: 'student2@demo.kz', lastName: 'Каримова', firstName: 'Алина', middleName: '', group: DEMO_GROUP },
+  { role: 'student', email: 'student2@demo.kz', lastName: 'Каримов', firstName: 'Алихан', middleName: '', group: BT_GROUP },
 ];
-/* Программа демо-аккаунтов: проставляем и в уже существующей базе (созданной до появления программ) */
-function syncDemoPrograms() {
-  let changed = false;
-  for (const a of DEMO_ACCOUNTS) {
-    const u = db.users.find((x) => x.email === a.email && x.demo);
-    const want = a.program || 'ku';
-    if (u && u.program !== want) { u.program = want; changed = true; }
-  }
-  if (changed) saveDB();
+/* Занятия бета-преподавателей: [email, дисциплина, тип, группа, день, начало, конец, аудитория] */
+const DEMO_LESSONS = [
+  ['teacher@demo.kz', 'english', 'Практ.', DEMO_GROUP, 0, '08:30', '09:50', '301'], ['teacher@demo.kz', 'math', 'Лек.', DEMO_GROUP, 0, '10:00', '11:20', '214'],
+  ['teacher@demo.kz', 'politology', 'Лек.', DEMO_GROUP, 2, '11:30', '12:50', '118'], ['teacher@demo.kz', 'english', 'Практ.', DEMO_GROUP, 3, '08:30', '09:50', '301'],
+  ['teacher@demo.kz', 'math', 'Практ.', DEMO_GROUP, 4, '10:00', '11:20', '214'],
+  ['teacher@demo.kz', 'english', 'Практ.', BT_GROUP, 1, '10:00', '11:20', '305'],
+  ['teacher2@demo.kz', 'python', 'Лаб.', DEMO_GROUP, 1, '13:00', '14:20', '410 (комп. класс)'], ['teacher2@demo.kz', 'databases', 'Лек.', DEMO_GROUP, 3, '11:30', '12:50', '214'],
+  ['teacher3@demo.kz', 'biochem', 'Лек.', BT_GROUP, 0, '09:00', '10:20', '118'], ['teacher3@demo.kz', 'microbio', 'Лаб.', BT_GROUP, 2, '13:00', '14:20', 'Лаборатория 2'],
+];
+/* Оценки: [студент, преподаватель, дисциплина, балл] */
+const DEMO_GRADES = [
+  ['student@demo.kz', 'teacher@demo.kz', 'english', 88], ['student@demo.kz', 'teacher@demo.kz', 'math', 76], ['student@demo.kz', 'teacher@demo.kz', 'politology', 91],
+  ['student@demo.kz', 'teacher2@demo.kz', 'python', 95],
+  ['student2@demo.kz', 'teacher@demo.kz', 'english', 94], ['student2@demo.kz', 'teacher3@demo.kz', 'biochem', 82], ['student2@demo.kz', 'teacher3@demo.kz', 'microbio', 89],
+];
+const fioOf = (a) => [a.lastName, a.firstName, a.middleName].filter(Boolean).join(' ');
+function demoUser(a) {
+  const salt = crypto.randomBytes(8).toString('hex');
+  return {
+    id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role, fio: fioOf(a), firstName: a.firstName, email: a.email, salt, passHash: hash(DEMO_PASS, salt),
+    group: a.group || '', program: a.program || 'ku', dept: a.dept, createdAt: Date.now(), demo: true,
+  };
 }
+/* Бета-аккаунты создаются при старте и дополняются в уже существующей базе (идемпотентно):
+   недостающие пользователи, ФИО/группа/программа/кафедра, занятия и оценки. Отключить: DEMO=0. */
 function seedDemo() {
-  if (DEMO_ON) syncDemoPrograms();
-  if (!DEMO_ON || db.users.some((x) => x.email === DEMO_ACCOUNTS[0].email)) return;
-  const made = {};
+  if (!DEMO_ON) return;
+  let changed = false;
+  const users = {};
   for (const a of DEMO_ACCOUNTS) {
-    const salt = crypto.randomBytes(8).toString('hex');
-    const u = {
-      id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role,
-      fio: [a.lastName, a.firstName, a.middleName].filter(Boolean).join(' '), firstName: a.firstName,
-      email: a.email, salt, passHash: hash(DEMO_PASS, salt), group: a.group || '', program: a.program || 'ku', createdAt: Date.now(), demo: true,
-    };
-    db.users.push(u);
-    made[a.email] = u;
+    let u = db.users.find((x) => x.email === a.email);
+    if (!u) { u = demoUser(a); db.users.push(u); changed = true; console.log(`[DEMO] Создан аккаунт ${a.email} (пароль ${DEMO_PASS})`); }
+    else if (u.demo) {
+      const want = { fio: fioOf(a), firstName: a.firstName, group: a.group || '', program: a.program || 'ku', dept: a.dept };
+      for (const [k, v] of Object.entries(want)) if (u[k] !== v) { u[k] = v; changed = true; }
+    }
+    users[a.email] = u;
   }
-  const t = made['teacher@demo.kz'];
-  const sub = (disc) => subjectForDiscipline(t, disc);
-  const today = new Date();
-  const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  // Немного расписания и оценок, чтобы виджеты на главной не были пустыми
-  const lessons = [
-    ['english', 'Практ.', 0, '08:30', '09:50', '301'], ['math', 'Лек.', 0, '10:00', '11:20', '214'],
-    ['politology', 'Лек.', 2, '11:30', '12:50', '118'], ['english', 'Практ.', 3, '08:30', '09:50', '301'],
-    ['math', 'Практ.', 4, '10:00', '11:20', '214'],
-  ];
-  for (const [disc, type, day, start, end, rm] of lessons) {
-    db.schedule.push({ id: nid('sc'), subjectId: sub(disc).id, teacherId: t.id, type, group: DEMO_GROUP, day, start, end, room: rm });
+  const subOf = (email, disc) => subjectForDiscipline(users[email], disc);
+  for (const [email, disc, type, group, day, start, end, room] of DEMO_LESSONS) {
+    const t = users[email], s = subOf(email, disc);
+    if (db.schedule.some((r) => r.subjectId === s.id && r.group === group && r.day === day && r.start === start)) continue;
+    db.schedule.push({ id: nid('sc'), subjectId: s.id, teacherId: t.id, type, group, day, start, end, room });
+    changed = true;
   }
-  const g = (email, disc, score) => db.grades.push({ id: nid('gr'), studentId: made[email].id, subjectId: sub(disc).id, teacherId: t.id, score, date: ymd });
-  g('student@demo.kz', 'english', 88); g('student@demo.kz', 'math', 76); g('student@demo.kz', 'politology', 91);
-  g('student2@demo.kz', 'english', 94); g('student2@demo.kz', 'math', 82);
-  saveDB();
-  console.log(`[DEMO] Созданы тестовые аккаунты (пароль ${DEMO_PASS}): ${DEMO_ACCOUNTS.map((a) => a.email).join(', ')}`);
+  const today = new Date().toISOString().slice(0, 10);
+  for (const [se, te, disc, score] of DEMO_GRADES) {
+    const s = subOf(te, disc);
+    if (db.grades.some((g) => g.studentId === users[se].id && g.subjectId === s.id)) continue;
+    db.grades.push({ id: nid('gr'), studentId: users[se].id, subjectId: s.id, teacherId: users[te].id, score, date: today });
+    changed = true;
+  }
+  // математика и политология ведутся только в ИСУ: оценки студента, переведённого в БТ, по ним убираем
+  const bt = users['student2@demo.kz'];
+  const isuOnly = db.subjects.filter((x) => x.teacherId === users['teacher@demo.kz'].id && ['math', 'politology'].includes(x.discipline)).map((x) => x.id);
+  const before = db.grades.length;
+  db.grades = db.grades.filter((g) => !(g.studentId === bt.id && isuOnly.includes(g.subjectId)));
+  if (db.grades.length !== before) changed = true;
+  if (changed) saveDB();
 }
 
 /* ---------------- Локальная база KU и подключение LM Studio ---------------- */
@@ -486,11 +523,15 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
 };
+/* Статика: public/ в корне, KU Connect (connect/) — под /connect/ */
 function serveStatic(req, res, url) {
   let p = url.pathname === '/' ? '/index.html' : url.pathname;
+  let root = PUB;
+  if (p === '/connect') { res.writeHead(301, { Location: '/connect/' + url.search }); res.end(); return; }
+  if (p.startsWith('/connect/')) { root = CONNECT_DIR; p = p.slice('/connect'.length); if (p === '/') p = '/index.html'; }
   p = path.normalize(p).replace(/^([.][.][\/\\])+/, '');
-  const file = path.join(PUB, p);
-  if (!file.startsWith(PUB)) { res.writeHead(403); res.end(); return; }
+  const file = path.join(root, p);
+  if (!file.startsWith(root)) { res.writeHead(403); res.end(); return; }
   fs.readFile(file, (e, buf) => {
     if (e) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('404'); return; }
     const mime = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
@@ -509,10 +550,12 @@ const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sy
 /* Мессенджер, файлы, клубы, общежитие (portal-features.js) */
 const { createFeatures, MAX_FILE_BYTES } = require('./portal-features');
 const features = createFeatures({
-  getDB: () => db, saveDB, nid, ok, bad, isOnline, pushInbox, subjName, teacherFio, DATA,
+  getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, trackOf, pushInbox, subjName, teacherFio, DATA,
   markDirty: () => { dbDirty = true; },
 });
 const publicAIRate = new Map();
+const connectCodes = new Map(); // одноразовые коды перехода в KU Connect: code → { uid, exp }
+const CONNECT_CODE_MS = 60 * 1000;
 const PAGES_ORIGINS = new Set((process.env.PAGES_ORIGINS || 'https://sakeda-hub.github.io').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean));
 
 function allowPublicAI(req) {
@@ -648,13 +691,26 @@ const server = http.createServer(async (req, res) => {
       return ok(res);
     }
 
+    /* Переход в KU Connect без повторного входа: портал получает одноразовый код (60 с) и передаёт его
+       в адресе после # (на сервер такой адрес не уходит); KU Connect обменивает код на свой сеанс. */
+    if (p === '/api/connect/redeem' && req.method === 'POST') {
+      const c = connectCodes.get(String(body.code || ''));
+      connectCodes.delete(String(body.code || ''));
+      const user = c && Date.now() < c.exp && db.users.find((x) => x.id === c.uid);
+      if (!user) return bad(res, 401, 'Ссылка для входа устарела — откройте KU Connect из портала ещё раз');
+      const token = crypto.randomBytes(24).toString('hex');
+      sessions.set(token, user);
+      saveSession(token, user, req);
+      return ok(res, { token, user: pubUser(user) });
+    }
+
     if (p === '/api/version' && req.method === 'GET') {
       return ok(res, VERSION);
     }
 
     if (p === '/api/demo' && req.method === 'GET') {
       return ok(res, DEMO_ON
-        ? { enabled: true, password: DEMO_PASS, accounts: DEMO_ACCOUNTS.map((x) => ({ role: x.role, email: x.email, fio: x.lastName + ' ' + x.firstName, program: x.program || 'ku' })) }
+        ? { enabled: true, password: DEMO_PASS, accounts: DEMO_ACCOUNTS.map((x) => ({ role: x.role, email: x.email, fio: x.lastName + ' ' + x.firstName, program: x.program || 'ku', group: x.group || '', track: trackOf(Object.assign({}, x)) })) }
         : { enabled: false });
     }
 
@@ -684,13 +740,27 @@ const server = http.createServer(async (req, res) => {
 
     if (await features(p, req, res, u, body, url) !== false) return;
 
+    if (p === '/api/connect/handoff' && req.method === 'POST') {
+      const now = Date.now();
+      for (const [k, v] of connectCodes) if (v.exp < now) connectCodes.delete(k);
+      const code = crypto.randomBytes(18).toString('hex');
+      connectCodes.set(code, { uid: u.id, exp: now + CONNECT_CODE_MS });
+      return ok(res, { code });
+    }
+
     /* ---------- Настройки: конфиденциальность и оповещения ---------- */
     if (p === '/api/settings' && req.method === 'GET') {
       return ok(res, { settings: settingsOf(u), twoFactor: !!(u.totp && u.totp.enabled), passChangedAt: u.passChangedAt || null, demo: !!u.demo });
     }
     if (p === '/api/settings' && req.method === 'POST') {
       u.settings = settingsOf(u);
-      for (const k of Object.keys(SETTING_DEFAULTS)) if (typeof body[k] === 'boolean') u.settings[k] = body[k];
+      for (const [k, def] of Object.entries(SETTING_DEFAULTS)) {
+        if (typeof def === 'boolean' && typeof body[k] === 'boolean') u.settings[k] = body[k];
+        if (typeof def === 'string' && typeof body[k] === 'string') {
+          if (k === 'status') { if (SETTING_STATUSES.includes(body[k])) u.settings[k] = body[k]; }
+          else u.settings[k] = body[k].trim().slice(0, SETTING_TEXT_MAX[k] || 60);
+        }
+      }
       saveDB();
       return ok(res, { settings: u.settings });
     }

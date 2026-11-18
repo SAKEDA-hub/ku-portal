@@ -291,7 +291,7 @@ function navHTML(active) {
   return `<nav class="bnav">
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
-    ${it('#/chats', 'chats', 'chat', 'Сообщения')}
+    ${it('#/chats', 'chats', 'chat', 'Connect')}
     ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
     ${it('#/profile', 'profile', 'user', 'Кабинет')}
   </nav>`;
@@ -393,16 +393,18 @@ async function renderDemoBox() {
   try { if (!demoInfo) demoInfo = await api('/demo'); } catch { return; }
   const box = document.getElementById('demoBox');
   if (!box || !demoInfo.enabled) return;
-  const te = demoInfo.accounts.find((a) => a.role === 'teacher');
-  const st = demoInfo.accounts.find((a) => a.role === 'student');
+  const TRACK = { it: 'IT', bio: 'Биотехнологии', lang: 'Языки' };
+  const btn = (a) => `<button class="demo-acc" data-demo="${esc(a.email)}">
+      <span class="demo-ava ${a.role}">${esc(a.fio.split(' ').map((w) => w[0]).reverse().join(''))}</span>
+      <span class="demo-t"><b>${esc(a.fio)}</b><small>${esc([a.group || t('Преподаватель'), a.track ? t(TRACK[a.track]) : ''].filter(Boolean).join(' · '))}</small></span></button>`;
   box.innerHTML = `
     <div class="demo-box">
-      <b>${t('Тестовый вход')}</b>
-      <div class="tx">${esc(t('Пароль у всех демо-аккаунтов: {p}. Преподаватель — международная программа University of Arizona, студент — Kozybayev University.', { p: demoInfo.password }))}</div>
-      <div class="row2">
-        <button class="btn ghost" data-demo="${esc(te.email)}">${t('Преподаватель')}<small class="demo-pr">${esc(programOf(te).name)}</small></button>
-        <button class="btn ghost" data-demo="${esc(st.email)}">${t('Студент')}<small class="demo-pr">${esc(programOf(st).name)}</small></button>
-      </div>
+      <b>${t('Бета-аккаунты')}</b>
+      <div class="tx">${esc(t('Пароль у всех: {p}. Группы ИСУ — направление IT, группы БТ — биотехнологии; инструменты в KU Connect зависят от направления.', { p: demoInfo.password }))}</div>
+      <div class="demo-lbl">${t('Студенты')}</div>
+      <div class="demo-grid">${demoInfo.accounts.filter((a) => a.role === 'student').map(btn).join('')}</div>
+      <div class="demo-lbl">${t('Преподаватели')}</div>
+      <div class="demo-grid">${demoInfo.accounts.filter((a) => a.role === 'teacher').map(btn).join('')}</div>
     </div>`;
   box.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = async () => {
     authErr('');
@@ -501,6 +503,7 @@ async function viewHome() {
         <div class="foot">${svg('info')} ${t('Следующее занятие в расписании')}</div>
       </div>` : `
       <div class="card" style="border-left:8px solid var(--accent)"><div class="next-empty">${t('Ближайших занятий пока нет.')}<br>${esc(t('Преподаватель ещё не добавил расписание для группы {g}.', { g: d.group }))}</div></div>`}
+      <button class="card kc-widget" id="kcWidget"></button>
       <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
@@ -514,6 +517,7 @@ async function viewHome() {
         <div class="chev">${svg('chev')}</div>
       </a>`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
+    paintConnectWidget(document.getElementById('kcWidget'));
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
   }
@@ -566,11 +570,13 @@ async function viewHomeT() {
         <div class="row">${t('Создавайте тесты и открывайте комнаты экзамена для групп')}</div>
         <div class="foot">${svg('info')} ${t('Раздел «Экзамен»')}</div>
       </a>
+      <button class="card kc-widget" id="kcWidget"></button>
       <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
       </div>`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
+    paintConnectWidget(document.getElementById('kcWidget'));
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
   }
@@ -681,15 +687,19 @@ function examLaunchUrl() {
   return u.href;
 }
 function examTransition(href) {
+  appTransition(href, { icon: 'monitor', title: t('Открываем онлайн-экзамен…'), sub: t('Переходим в сервис экзаменов') });
+}
+/* Переход в отдельный сервис (онлайн-экзамен, KU Connect): мост «портал → сервис» и плавный уход со страницы */
+function appTransition(href, o) {
   const ov = document.createElement('div');
   ov.className = 'oe-ov';
   ov.setAttribute('role', 'status');
   ov.setAttribute('aria-live', 'polite');
   ov.innerHTML = `
     <div class="oe-ov-in">
-      <div class="oe-bridge"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
-      <div class="oe-ov-t">${t('Открываем онлайн-экзамен…')}</div>
-      <div class="oe-ov-s">${t('Переходим в сервис экзаменов')}</div>
+      <div class="oe-bridge"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg(o.icon)}</span></div>
+      <div class="oe-ov-t">${esc(o.title)}</div>
+      <div class="oe-ov-s">${esc(o.sub)}</div>
     </div>`;
   document.body.appendChild(ov);
   requestAnimationFrame(() => ov.classList.add('on'));
@@ -848,11 +858,13 @@ const CAB_SECTIONS = [
   ['appearance', 'palette', 'Оформление'],
   ['language', 'globe', 'Язык и регион'],
   ['notifications', 'bell', 'Уведомления'],
+  ['connect', 'chat', 'KU Connect'],
   ['security', 'shield', 'Безопасность'],
   ['privacy', 'eye', 'Конфиденциальность'],
   ['account', 'user', 'Аккаунт'],
 ];
-const SRV_KEYS = ['showInRating', 'showOnline', 'loginAlerts']; // хранятся на сервере
+const SRV_KEYS = ['showInRating', 'showOnline', 'loginAlerts', 'readReceipts']; // хранятся на сервере (общие с KU Connect)
+const KC_STATUS = [['available', 'В сети'], ['busy', 'Занят'], ['away', 'Отошёл'], ['dnd', 'Не беспокоить']];
 let SRV = null; // { settings, twoFactor, passChangedAt, demo }
 function prefVal(key) {
   if (SRV_KEYS.includes(key)) return !!(SRV && SRV.settings[key]);
@@ -950,6 +962,17 @@ function paintProfile(section) {
           ${swRow('notifEmail', 'send', 'Email-рассылка', esc(t('Недоступно: на сервере не настроена отправка почты')), { locked: false, raw: true })}
         </section>
 
+        <section class="card set-sec" id="set-connect">
+          ${secHead('connect', 'KU Connect')}
+          <div class="set-lbl">${t('Статус в мессенджере')}</div>
+          <div class="kc-status">${KC_STATUS.map(([k, l]) => `<button class="${srv.settings.status === k ? 'on' : ''}" data-kcst="${k}"><i class="st-${k}"></i>${t(l)}</button>`).join('')}</div>
+          <input class="inp" id="kcStText" maxlength="60" placeholder="${t('Подпись, например: на паре до 12:00')}" value="${esc(srv.settings.statusText || '')}">
+          ${u.role === 'teacher' ? `<input class="inp" id="kcOffice" maxlength="80" placeholder="${t('Часы консультаций, например: Пн, Ср 14:00–15:00')}" value="${esc(srv.settings.officeHours || '')}">` : ''}
+          <button class="btn ghost kc-save" id="kcSave">${t('Сохранить статус')}</button>
+          ${swRow('readReceipts', 'check', 'Отметки о прочтении', 'Собеседник видит ✓✓, когда вы прочитали сообщение')}
+          ${linkRow('chat', 'Открыть KU Connect', esc(t('Мессенджер: каналы предметов, задания, вопросы преподавателям')), 'connect')}
+        </section>
+
         <section class="card set-sec" id="set-security">
           ${secHead('security', 'Безопасность')}
           ${linkRow('lock', 'Сменить пароль', esc(srv.passChangedAt ? t('Последнее изменение: {d}', { d: fmtWhen(srv.passChangedAt) }) : t('Последнее изменение: при регистрации')), 'password')}
@@ -1008,6 +1031,7 @@ function paintProfile(section) {
     else if (a === 'sessions') sessionsDlg();
     else if (a === 'export') exportData();
     else if (a === 'delete') deleteAccountDlg();
+    else if (a === 'connect') openConnect(false);
   }));
   // оглавление: плавный переход к разделу без перерисовки страницы
   pb.querySelectorAll('[data-sec]').forEach((a) => (a.onclick = (e) => {
@@ -1020,6 +1044,14 @@ function paintProfile(section) {
   const markSec = (id) => pb.querySelectorAll('[data-sec]').forEach((a) => a.classList.toggle('on', a.dataset.sec === id));
   markSec(section || 'appearance');
   document.getElementById('outBtn').onclick = logout;
+  pb.querySelectorAll('[data-kcst]').forEach((b) => (b.onclick = async () => {
+    try { SRV.settings = (await api('/settings', { method: 'POST', body: { status: b.dataset.kcst } })).settings; rerender(); toast(t('Статус обновлён')); } catch (e) { toast(e.message, true); }
+  }));
+  document.getElementById('kcSave').onclick = async () => {
+    const body = { statusText: v('kcStText') };
+    if (document.getElementById('kcOffice')) body.officeHours = v('kcOffice');
+    try { SRV.settings = (await api('/settings', { method: 'POST', body })).settings; toast(t('Сохранено')); } catch (e) { toast(e.message, true); }
+  };
   if (section) { const el = document.getElementById('set-' + section); if (el) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); }
 }
 
@@ -1158,8 +1190,8 @@ function route() {
     case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
     case 'rating': return viewRating();
     case 'exam': return viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
-    case 'chats': return viewChats();
-    case 'chat': return parts[1] ? viewChat(decodeURIComponent(parts.slice(1).join('/'))) : viewChats();
+    case 'chats': return viewConnect(); // KU Connect — отдельный портал (public/connect-launch.js, connect/)
+    case 'chat': return viewConnect();
     case 'clubs': return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
