@@ -95,6 +95,7 @@ node server.js
 Заметки:
 - Сервер слушает IP и порт, которые задаёт alwaysdata (`IP`/`PORT` или `ALWAYSDATA_HTTPD_IP`/`ALWAYSDATA_HTTPD_PORT`).
 - `data/db.json` и `data/exam-sync.json` деплой не трогает — данные сохраняются.
+- Какой код сейчас запущен на сервере: `https://<аккаунт>.alwaysdata.net/api/version` (`commit` — коммит из `main`, `startedAt` — время последнего запуска). После push в `main` коммит сменится в течение ~5 минут.
 - Бесплатный тариф alwaysdata — только некоммерческое использование, один бесплатный аккаунт на человека.
 - AI-помощник с LM Studio по частному адресу (Tailscale/LAN) с хостинга недоступен — помощник отвечает выдержками с сайта ku.edu.kz. Для модели укажите публичный `https://` адрес туннеля в `LM_STUDIO_URL` (переменные окружения сайта в alwaysdata).
 - Другой адрес сервера для Pages — переменная репозитория `KU_BACKEND_URL` (Settings → Secrets and variables → Actions → Variables).
