@@ -1,7 +1,7 @@
 /*
  * KU Portal — клубы и секции (API под /api/clubs*). Подключается из portal-features.js: createClubs(ctx) → handler.
  * Данные — db.clubs: [{ id, name, icon, desc, weekly, members[], since{uid: ts}, events[] }],
- *   событие (объявление): { id, title, text, date 'YYYY-MM-DD', time 'HH:MM', place, limit, hours, people[], absent[], by, weekly }.
+ *   событие (объявление): { id, title, text, date 'YYYY-MM-DD', time 'HH:MM', endTime 'HH:MM', place, limit, hours, people[], absent[], by, weekly }.
  *
  * Правила:
  *   - список клубов видят все; объявления клуба и запись на них — только его участники (студент вступает сам);
@@ -14,6 +14,10 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 const isTime = (s) => /^\d{2}:\d{2}$/.test(String(s || ''));
 const clip = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
+const toMin = (hhmm) => { const [h, m] = String(hhmm).split(':').map(Number); return h * 60 + m; };
+const fromMin = (n) => { const v = Math.max(0, Math.min(24 * 60 - 1, Math.round(n))); return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`; };
+/* Время окончания по началу и длительности в часах (для событий, созданных до появления поля) */
+const endOf = (time, hours) => fromMin(toMin(time || '12:00') + (Number(hours) || 1) * 60);
 const RECENT_DAYS = 30; // сколько дней преподаватель видит прошедшие события для отметки присутствия
 
 const CLUB_SEED = [
@@ -60,6 +64,7 @@ function createClubs(ctx) {
           dirty = true;
         }
         if (!e.absent) { e.absent = []; dirty = true; }
+        if (!e.endTime) { e.endTime = endOf(e.time, e.hours); dirty = true; }
       }
     }
     if (!db.clubsSeeded) { seedExtra(db); db.clubsSeeded = true; dirty = true; }
@@ -71,7 +76,7 @@ function createClubs(ctx) {
     const now = Date.now();
     for (const [cid, days, title, time, place, limit, hours, text] of EXTRA_EVENTS) {
       const c = db.clubs.find((x) => x.id === cid);
-      if (c) c.events.push({ id: nid('ev'), title, text, date: ymd(new Date(now + days * DAY_MS)), time, place, limit, hours, people: [], absent: [], by: null });
+      if (c) c.events.push({ id: nid('ev'), title, text, date: ymd(new Date(now + days * DAY_MS)), time, endTime: endOf(time, hours), place, limit, hours, people: [], absent: [], by: null });
     }
   }
   function seedDemoHistory(db) {
@@ -87,7 +92,8 @@ function createClubs(ctx) {
     for (const [cid, days, title, hours, emails] of DEMO_HISTORY) {
       const c = db.clubs.find((x) => x.id === cid); if (!c) continue;
       const people = emails.map(byEmail).filter(Boolean).map((x) => x.id);
-      c.events.push({ id: nid('ev'), title, text: '', date: ymd(new Date(now - days * DAY_MS)), time: (c.weekly && c.weekly.time) || '12:00', place: (c.weekly && c.weekly.place) || '', limit: 0, hours, people, absent: [], by: null });
+      const time = (c.weekly && c.weekly.time) || '12:00';
+      c.events.push({ id: nid('ev'), title, text: '', date: ymd(new Date(now - days * DAY_MS)), time, endTime: endOf(time, hours), place: (c.weekly && c.weekly.place) || '', limit: 0, hours, people, absent: [], by: null });
     }
   }
   /* Регулярная встреча клуба: ближайшая дата по дню недели — создаётся, когда прошлая прошла */
@@ -97,13 +103,13 @@ function createClubs(ctx) {
     if (c.events.some((e) => e.weekly && e.date >= today)) return false;
     const d = new Date();
     while ((d.getDay() + 6) % 7 !== c.weekly.day) d.setDate(d.getDate() + 1);
-    c.events.push({ id: nid('ev'), title: c.weekly.title, text: '', date: ymd(d), time: c.weekly.time, place: c.weekly.place, limit: 0, hours: c.weekly.hours || 1, people: [], absent: [], by: null, weekly: true });
+    c.events.push({ id: nid('ev'), title: c.weekly.title, text: '', date: ymd(d), time: c.weekly.time, endTime: endOf(c.weekly.time, c.weekly.hours), place: c.weekly.place, limit: 0, hours: c.weekly.hours || 1, people: [], absent: [], by: null, weekly: true });
     return true;
   }
   const isMember = (c, u) => c.members.includes(u.id);
   function pubEvent(e, c, u) {
     const out = {
-      id: e.id, clubId: c.id, club: c.name, icon: c.icon, title: e.title, text: e.text || '', date: e.date, time: e.time, place: e.place,
+      id: e.id, clubId: c.id, club: c.name, icon: c.icon, title: e.title, text: e.text || '', date: e.date, time: e.time, endTime: e.endTime || endOf(e.time, e.hours), place: e.place,
       limit: e.limit || 0, hours: e.hours || 0, count: e.people.length, going: e.people.includes(u.id), mine: e.by === u.id, weekly: !!e.weekly,
     };
     if (u.role === 'teacher') out.people = e.people.map((id) => ({ id, fio: (userById(id) || {}).fio || '—', present: !e.absent.includes(id) }));
@@ -141,7 +147,7 @@ function createClubs(ctx) {
     const teacher = u.role === 'teacher';
     const items = db.clubs.map((c) => ({
       id: c.id, name: c.name, icon: c.icon, desc: c.desc, members: c.members.length, joined: isMember(c, u), since: c.since[u.id] || null,
-      meet: c.weekly ? { day: c.weekly.day, time: c.weekly.time, place: c.weekly.place } : null,
+      meet: c.weekly ? { day: c.weekly.day, time: c.weekly.time, endTime: endOf(c.weekly.time, c.weekly.hours), place: c.weekly.place } : null,
     }));
     const visible = db.clubs.filter((c) => teacher || isMember(c, u));
     const events = visible.flatMap((c) => c.events.filter((e) => e.date >= today).map((e) => pubEvent(e, c, u)))
@@ -195,9 +201,12 @@ function createClubs(ctx) {
       if (title.length < 3) return bad(res, 400, 'Укажите название мероприятия');
       if (!isDate(body.date) || body.date < today) return bad(res, 400, 'Укажите дату (не раньше сегодняшней)');
       if (!isTime(body.time)) return bad(res, 400, 'Укажите время (ЧЧ:ММ)');
+      if (!isTime(body.endTime) || toMin(body.endTime) <= toMin(body.time)) return bad(res, 400, 'Время окончания должно быть позже начала');
       const limit = Math.max(0, Math.min(1000, Math.floor(Number(body.limit) || 0)));
-      const hours = Math.max(0, Math.min(24, Math.round((Number(body.hours) || 0) * 2) / 2));
-      c.events.push({ id: nid('ev'), title, text: clip(body.text, 1000), date: body.date, time: body.time, place: clip(body.place, 120), limit, hours, people: [], absent: [], by: u.id });
+      // часы в зачёт активности: указанные организатором, иначе — длительность мероприятия
+      const given = Number(body.hours);
+      const hours = Math.max(0, Math.min(24, Math.round((given > 0 ? given : (toMin(body.endTime) - toMin(body.time)) / 60) * 2) / 2));
+      c.events.push({ id: nid('ev'), title, text: clip(body.text, 1000), date: body.date, time: body.time, endTime: body.endTime, place: clip(body.place, 120), limit, hours, people: [], absent: [], by: u.id });
       saveDB();
       return ok(res);
     }

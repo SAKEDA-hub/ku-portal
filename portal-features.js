@@ -37,7 +37,7 @@ function dormNewsSeed(now) {
 }
 
 function createFeatures(ctx) {
-  const { getDB, saveDB, nid, ok, bad, isOnline, pushInbox, subjName, teacherFio, DATA } = ctx;
+  const { getDB, saveDB, nid, ok, bad, isOnline, settingsOf, trackOf, pushInbox, subjName, teacherFio, DATA } = ctx;
   const UPLOADS = path.join(DATA, 'uploads');
   if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true });
   const clubs = createClubs(ctx);
@@ -54,7 +54,11 @@ function createFeatures(ctx) {
     return db;
   }
   const userById = (id) => getDB().users.find((x) => x.id === id);
-  const person = (x) => ({ id: x.id, fio: x.fio, role: x.role, group: x.group || '', online: isOnline(x) });
+  /* Карточка собеседника: статус и часы консультаций видны всегда, «в сети» — если человек это разрешил */
+  function person(x) {
+    const st = settingsOf(x);
+    return { id: x.id, fio: x.fio, role: x.role, group: x.group || '', track: trackOf(x), online: isOnline(x), status: st.status, statusText: st.statusText, officeHours: x.role === 'teacher' ? st.officeHours : '' };
+  }
 
   /* ------------------------------ Мессенджер ------------------------------ */
   /* Каналы предметов пользователя — из расписания (предмет + группа) */
@@ -113,8 +117,23 @@ function createFeatures(ctx) {
     return { unread, last };
   }
   const pubMsg = (m) => ({ id: m.id, from: m.from, fromFio: (userById(m.from) || {}).fio || '—', fromRole: (userById(m.from) || {}).role || '', text: m.text, file: m.file || null, at: m.at });
-  const pubMaterial = (m) => ({ id: m.id, kind: m.kind, title: m.title, text: m.text, file: m.file || null, at: m.at, teacher: teacherFio(m.teacherId) });
-  const pubTask = (t, u) => ({ id: t.id, title: t.title, text: t.text, due: t.due, file: t.file || null, at: t.at, done: (t.done || []).includes(u.id), doneCount: (t.done || []).length });
+  const pubMaterial = (m, manage) => ({
+    id: m.id, kind: m.kind, title: m.title, text: m.text, file: m.file || null, at: m.at, edited: m.edited || null, important: !!m.important,
+    teacher: teacherFio(m.teacherId), views: manage ? (m.seen || []).length : undefined,
+  });
+  const pubTask = (t, u) => ({ id: t.id, title: t.title, text: t.text, due: t.due, file: t.file || null, at: t.at, edited: t.edited || null, done: (t.done || []).includes(u.id), doneCount: (t.done || []).length });
+  /* Студент открыл канал — материалы считаются просмотренными (преподаватель видит «просмотрели N из M») */
+  function markSeen(u, ch) {
+    if (u.role !== 'student') return false;
+    let changed = false;
+    for (const m of store().chat.materials) if (m.ch === ch && !(m.seen || []).includes(u.id)) { m.seen = (m.seen || []).concat(u.id); changed = true; }
+    return changed;
+  }
+  /* Каналы, куда преподаватель публикует: основной + выбранные группы того же предмета (body.chs) */
+  function targetChannels(u, ch, extra) {
+    const all = [ch].concat(Array.isArray(extra) ? extra.map(String) : []);
+    return [...new Set(all)].map((c) => ({ ch: c, a: access(u, c) })).filter((x) => x.a.manage);
+  }
   function attachFile(u, fileId, ch) {
     if (!fileId) return null;
     const f = store().files.find((x) => x.id === fileId && x.owner === u.id);
@@ -135,9 +154,34 @@ function createFeatures(ctx) {
       kind: 'subject', manage: a.manage, title: a.subject ? a.subject.name : '', group: a.group,
       teacher: a.subject ? teacherFio(a.subject.teacherId) : '',
       members: db.users.filter((x) => x.role === 'student' && x.group === a.group).length,
-      materials: db.chat.materials.filter((m) => m.ch === ch).sort((x, y) => y.at - x.at).map(pubMaterial),
+      materials: db.chat.materials.filter((m) => m.ch === ch).sort((x, y) => (y.important - x.important) || y.at - x.at).map((m) => pubMaterial(m, a.manage)),
+      siblings: a.manage ? subjectChannels(u).filter((c) => c.id !== ch && c.title === (a.subject || {}).name).map((c) => ({ id: c.id, group: c.group })) : [],
       tasks: db.chat.tasks.filter((t) => t.ch === ch).sort((x, y) => x.due.localeCompare(y.due)).map((t) => pubTask(t, u)),
     };
+  }
+
+  /* Сводка: студенту — ближайшие дедлайны; преподавателю — кто ждёт ответа, как выполняют задания, как смотрят материалы */
+  function overview(db, u) {
+    const today = ymd(new Date());
+    const chans = subjectChannels(u);
+    const chTitle = (ch) => { const c = chans.find((x) => x.id === ch); return c ? { subject: c.title, group: c.group } : { subject: '', group: '' }; };
+    const unread = chans.map((c) => c.id).concat(contactsOf(u).map((x) => dmId(u.id, x.id))).reduce((n, ch) => n + lastAndUnread(u, ch).unread, 0);
+    if (u.role !== 'teacher') {
+      const deadlines = db.chat.tasks.filter((t) => chans.some((c) => c.id === t.ch) && t.due >= today && !(t.done || []).includes(u.id))
+        .sort((a, b) => a.due.localeCompare(b.due)).slice(0, 8).map((t) => Object.assign({ id: t.id, ch: t.ch, title: t.title, due: t.due }, chTitle(t.ch)));
+      return { unread, deadlines };
+    }
+    const members = (ch) => db.users.filter((x) => x.role === 'student' && x.group === chTitle(ch).group).length;
+    const awaiting = contactsOf(u).map((x) => ({ x, ch: dmId(u.id, x.id) }))
+      .map(({ x, ch }) => ({ x, ch, last: db.chat.msgs.filter((m) => m.ch === ch).pop() }))
+      .filter((r) => r.last && r.last.from !== u.id)
+      .sort((a, b) => b.last.at - a.last.at)
+      .map((r) => ({ ch: r.ch, fio: r.x.fio, group: r.x.group, text: r.last.text || (r.last.file ? '📎 ' + r.last.file.name : ''), at: r.last.at }));
+    const tasks = db.chat.tasks.filter((t) => t.teacherId === u.id && t.due >= today).sort((a, b) => a.due.localeCompare(b.due))
+      .map((t) => Object.assign({ id: t.id, ch: t.ch, title: t.title, due: t.due, done: (t.done || []).length, members: members(t.ch) }, chTitle(t.ch)));
+    const materials = db.chat.materials.filter((m) => m.teacherId === u.id).sort((a, b) => b.at - a.at).slice(0, 6)
+      .map((m) => Object.assign({ id: m.id, ch: m.ch, title: m.title, kind: m.kind, at: m.at, views: (m.seen || []).length, members: members(m.ch) }, chTitle(m.ch)));
+    return { unread, awaiting, tasks, materials };
   }
 
   async function chat(p, req, res, u, body, url) {
@@ -153,9 +197,12 @@ function createFeatures(ctx) {
       const ch = url.searchParams.get('ch');
       const a = access(u, ch);
       if (!a.ok) return bad(res, 403, 'Нет доступа к чату');
-      markRead(u, ch); ctx.markDirty();
+      markRead(u, ch); markSeen(u, ch); ctx.markDirty();
       if (a.kind === 'subject') return ok(res, channelView(db, ch, a, u));
-      return ok(res, { kind: 'dm', other: person(a.other), items: db.chat.msgs.filter((m) => m.ch === ch).slice(-300).map(pubMsg) });
+      // «прочитано» — если оба разрешили отметки о прочтении
+      const receipts = settingsOf(u).readReceipts && settingsOf(a.other).readReceipts;
+      const otherRead = receipts ? ((db.chat.reads[a.other.id] || {})[ch] || 0) : null;
+      return ok(res, { kind: 'dm', other: person(a.other), otherRead, items: db.chat.msgs.filter((m) => m.ch === ch).slice(-300).map(pubMsg) });
     }
     if (p === '/api/chat/send' && req.method === 'POST') {
       const ch = String(body.ch || '');
@@ -185,13 +232,16 @@ function createFeatures(ctx) {
       if (!a.manage) return bad(res, 403, 'Материалы публикует преподаватель предмета');
       const title = clip(body.title, 160);
       if (title.length < 2) return bad(res, 400, 'Укажите название материала');
-      const file = attachFile(u, body.fileId, ch);
-      if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
-      const m = { id: nid('mat'), ch, teacherId: u.id, kind: MATERIAL_KINDS.includes(body.kind) ? body.kind : 'other', title, text: clip(body.text, MAX_TEXT), file, at: Date.now() };
-      db.chat.materials.push(m);
-      notifyGroup(a.group, { type: 'material', subject: a.subject ? a.subject.name : '', title, kind: m.kind });
+      const kind = MATERIAL_KINDS.includes(body.kind) ? body.kind : 'other';
+      const targets = targetChannels(u, ch, body.chs);
+      for (const { ch: c, a: ta } of targets) {
+        const file = attachFile(u, body.fileId, c);
+        if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
+        db.chat.materials.push({ id: nid('mat'), ch: c, teacherId: u.id, kind, title, text: clip(body.text, MAX_TEXT), file, important: !!body.important, at: Date.now(), seen: [] });
+        notifyGroup(ta.group, { type: 'material', subject: ta.subject ? ta.subject.name : '', title, kind, important: !!body.important });
+      }
       saveDB();
-      return ok(res, { id: m.id });
+      return ok(res, { count: targets.length });
     }
     if (p === '/api/chat/material/delete' && req.method === 'POST') {
       const m = db.chat.materials.find((x) => x.id === body.id);
@@ -206,14 +256,39 @@ function createFeatures(ctx) {
       const title = clip(body.title, 160);
       if (title.length < 2) return bad(res, 400, 'Укажите название задания');
       if (!isDate(body.due)) return bad(res, 400, 'Укажите дату сдачи');
-      const file = attachFile(u, body.fileId, ch);
-      if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
-      const t = { id: nid('task'), ch, teacherId: u.id, title, text: clip(body.text, MAX_TEXT), due: body.due, file, at: Date.now(), done: [] };
-      db.chat.tasks.push(t);
-      notifyGroup(a.group, { type: 'task', subject: a.subject ? a.subject.name : '', title, due: t.due });
+      const targets = targetChannels(u, ch, body.chs);
+      for (const { ch: c, a: ta } of targets) {
+        const file = attachFile(u, body.fileId, c);
+        if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
+        db.chat.tasks.push({ id: nid('task'), ch: c, teacherId: u.id, title, text: clip(body.text, MAX_TEXT), due: body.due, file, at: Date.now(), done: [] });
+        notifyGroup(ta.group, { type: 'task', subject: ta.subject ? ta.subject.name : '', title, due: body.due });
+      }
       saveDB();
-      return ok(res, { id: t.id });
+      return ok(res, { count: targets.length });
     }
+    /* Преподаватель дополняет опубликованное: текст, название, срок, «важно» — с пометкой «изменено» */
+    if (p === '/api/chat/material/edit' && req.method === 'POST') {
+      const m = db.chat.materials.find((x) => x.id === body.id);
+      if (!m || !access(u, m.ch).manage) return bad(res, 403, 'Изменить материал может преподаватель предмета');
+      const title = clip(body.title, 160);
+      if (title.length < 2) return bad(res, 400, 'Укажите название материала');
+      Object.assign(m, { title, text: clip(body.text, MAX_TEXT), important: !!body.important, edited: Date.now() });
+      saveDB();
+      return ok(res);
+    }
+    if (p === '/api/chat/task/edit' && req.method === 'POST') {
+      const t = db.chat.tasks.find((x) => x.id === body.id);
+      if (!t || !access(u, t.ch).manage) return bad(res, 403, 'Изменить задание может преподаватель предмета');
+      const title = clip(body.title, 160);
+      if (title.length < 2) return bad(res, 400, 'Укажите название задания');
+      if (!isDate(body.due)) return bad(res, 400, 'Укажите дату сдачи');
+      const moved = t.due !== body.due;
+      Object.assign(t, { title, text: clip(body.text, MAX_TEXT), due: body.due, edited: Date.now() });
+      if (moved) { const a = access(u, t.ch); notifyGroup(a.group, { type: 'task', subject: a.subject ? a.subject.name : '', title, due: t.due, moved: true }); }
+      saveDB();
+      return ok(res);
+    }
+    if (p === '/api/chat/overview' && req.method === 'GET') return ok(res, overview(db, u));
     if (p === '/api/chat/task/delete' && req.method === 'POST') {
       const t = db.chat.tasks.find((x) => x.id === body.id);
       if (!t || !access(u, t.ch).manage) return bad(res, 403, 'Удалить задание может преподаватель предмета');

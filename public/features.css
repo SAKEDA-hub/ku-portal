@@ -1,4 +1,4 @@
-/* KU Portal — мессенджер (messenger.js), клубы и общежитие (campus.js).
+/* KU Portal — вход в KU Connect (connect-launch.js), клубы и общежитие (campus.js), бета-аккаунты на экране входа.
    Цвета — переменные из style.css, поэтому палитры и тёмный режим работают и здесь. */
 
 /* ---------- значок непрочитанного в меню ---------- */
@@ -9,88 +9,6 @@
 }
 .nav-n { position: absolute; top: -4px; right: 6px; border: 2px solid var(--nav-bg); line-height: 14px; height: 18px; }
 @media (min-width: 1024px) { .nav-n { position: static; margin-left: 4px; border: 0; line-height: 18px; } }
-
-/* ---------- список чатов ---------- */
-.ml-it { display: flex; align-items: center; gap: 12px; width: calc(100% - 28px); text-align: left; font: inherit; color: inherit; cursor: pointer; }
-.ml-it:hover { border-color: var(--accent); }
-.ml-ava {
-  position: relative; width: 46px; height: 46px; border-radius: 14px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--accent-dim); color: var(--accent-deep); font-weight: 700; font-size: calc(18px * var(--fs));
-}
-.ml-ava.ch { background: var(--accent); color: var(--accent-ink); }
-.ml-ava svg { width: 22px; height: 22px; }
-.ml-on { position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; border-radius: 50%; background: var(--ok); border: 2px solid var(--card); }
-.ml-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.ml-t b { font-size: calc(15px * var(--fs)); }
-.ml-t em { font-style: normal; color: var(--warn); font-weight: 600; }
-.ml-p { color: var(--text-2); font-size: calc(13px * var(--fs)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ml-p i { color: var(--muted); }
-.ml-r { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
-.ml-r small { color: var(--muted); font-size: calc(11px * var(--fs)); }
-@media (min-width: 1024px) { .ml-it { width: 100%; } .mlist { max-width: 780px; } }
-
-/* ---------- переписка ---------- */
-.mchat [hidden] { display: none !important; }
-.mchat .chathead .ml-ava { width: 42px; height: 42px; }
-.mc-tabs { margin: 10px 12px 0; }
-.mc-pinned { display: flex; flex-direction: column; gap: 4px; padding: 8px 14px; background: var(--accent-dim); border-bottom: 1px solid var(--line); }
-.mc-pin { display: flex; gap: 8px; align-items: flex-start; font-size: calc(13px * var(--fs)); color: var(--text-2); }
-.mc-pin span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.mc-pin svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--accent-deep); margin-top: 2px; }
-.mc-day { align-self: center; margin: 6px 0 12px; padding: 3px 12px; border-radius: 999px; background: var(--card-2); color: var(--muted); font-size: calc(12px * var(--fs)); font-weight: 600; }
-.mc-msg { display: flex; flex-direction: column; align-items: flex-start; max-width: 84%; margin-bottom: 10px; }
-.mc-msg.me { align-self: flex-end; align-items: flex-end; }
-.mc-msg .msg { max-width: 100%; margin-bottom: 2px; }
-.mc-msg.pinned .msg { box-shadow: 0 0 0 2px var(--accent-ring); }
-.mc-from { font-size: calc(12px * var(--fs)); font-weight: 600; color: var(--text-2); margin: 0 0 3px 4px; }
-.mc-role { font-size: calc(10.5px * var(--fs)); font-weight: 700; color: var(--accent-deep); background: var(--accent-dim); padding: 1px 6px; border-radius: 6px; margin-left: 4px; }
-.mc-meta { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: calc(11px * var(--fs)); padding: 0 4px; }
-.mc-meta > svg { width: 12px; height: 12px; color: var(--accent-deep); }
-.mc-tools { display: inline-flex; gap: 2px; margin-left: 4px; }
-.mc-tools button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 6px; display: flex; }
-.mc-tools button:hover { color: var(--accent-strong); background: var(--card-2); }
-.mc-tools svg { width: 15px; height: 15px; }
-.mc-file {
-  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 10px; max-width: 100%;
-  border-radius: 10px; border: 1px solid var(--line); background: var(--card-2); color: var(--text); font: inherit; cursor: pointer; text-align: left;
-}
-.msg.user .mc-file { background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.35); color: inherit; }
-.mc-file svg { width: 18px; height: 18px; flex-shrink: 0; }
-.mc-file span { font-size: calc(13px * var(--fs)); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mc-file small { font-size: calc(11px * var(--fs)); opacity: 0.75; flex-shrink: 0; }
-.mc-empty { margin: auto 0; }
-.mc-attach {
-  width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; border: 1px solid var(--line-strong);
-  background: var(--card); color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center;
-}
-.mc-attach:hover { border-color: var(--accent); color: var(--accent-strong); }
-.mc-attach svg { width: 20px; height: 20px; }
-.mc-in { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.mc-pend { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; background: var(--accent-dim); color: var(--accent-deep); font-size: calc(12.5px * var(--fs)); }
-.mc-pend svg { width: 15px; height: 15px; flex-shrink: 0; }
-.mc-pend span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.mc-pend button { border: 0; background: none; color: inherit; cursor: pointer; display: flex; padding: 0; }
-.mc-tasks { padding-top: 12px; }
-.mc-tasks-in .card { margin-left: 0; margin-right: 0; }
-.mc-task.done { opacity: 0.75; }
-.mc-task-t { margin-top: 6px; white-space: pre-wrap; font-size: calc(14px * var(--fs)); color: var(--text-2); line-height: 1.45; }
-.mc-task-f { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-.mc-newtask { display: flex; flex-direction: column; gap: 8px; border-color: var(--accent); }
-.mc-newtask .inp { margin: 0; }
-.mc-newtask textarea, .campus textarea { resize: vertical; font: inherit; min-height: 70px; }
-.mc-newtask .row2 .btn { display: flex; align-items: center; justify-content: center; gap: 6px; overflow: hidden; }
-.mc-newtask .row2 .btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mc-newtask .row2 .btn svg { margin: 0; flex-shrink: 0; }
-@media (min-width: 1024px) {
-  .mc-tabs { margin: 14px 32px 0; max-width: 420px; }
-  .mc-pinned { padding: 10px 32px; }
-  .mc-tasks { padding: 20px 32px; }
-  .mc-tasks-in { max-width: 900px; margin: 0 auto; }
-  .mc-msg { max-width: 72%; }
-  .mc-msg .msg { margin-bottom: 4px; }
-  .mc-attach { width: 58px; height: 58px; border-radius: 16px; }
-}
 
 /* ---------- клубы ---------- */
 .campus-new { display: flex; align-items: center; justify-content: center; margin: 0 14px 12px; width: calc(100% - 28px); }
@@ -137,20 +55,6 @@
 .campus .chips.svc-wrap .chip { flex: none; }
 @media (min-width: 1024px) { .campus-new { margin-left: 0; margin-right: 0; width: 100%; } .svc .tabs { margin-left: 0; margin-right: 0; } }
 
-/* ---------- канал предмета: материалы ---------- */
-.ml-k { font-weight: 600; color: var(--accent-deep); }
-.mc-mat { display: flex; flex-direction: column; gap: 6px; }
-.mc-mat > b { font-size: calc(15.5px * var(--fs)); }
-.mc-mat .badge, .mc-mat .badge svg { display: inline-flex; align-items: center; gap: 5px; }
-.mc-mat .badge svg { width: 14px; height: 14px; }
-.badge.mat-lecture { background: var(--accent-dim); color: var(--accent-deep); }
-.badge.mat-practice { background: var(--ok-dim); color: var(--ok); }
-.mchat .chatbody .mc-tasks-in { padding-top: 4px; }
-.mchat #mcBody:last-child { padding-bottom: 24px; } /* в канале нет поля ввода снизу */
-.mc-newtask .chips { margin: 0; }
-.mc-newtask > .btn.ghost { display: flex; align-items: center; justify-content: center; gap: 6px; }
-.mc-newtask > .btn.ghost svg { margin: 0; }
-
 /* ---------- клубы: объявления, присутствие, профиль активности ---------- */
 .ev-text { font-size: calc(13.5px * var(--fs)); color: var(--text-2); line-height: 1.45; white-space: pre-wrap; }
 .ev-hint { margin-top: 4px; }
@@ -175,3 +79,41 @@
 .act-hist .svc-log small svg { width: 13px; height: 13px; }
 .act-hist .svc-log.miss b { color: var(--muted); }
 @media (min-width: 640px) { .act-sum { grid-template-columns: repeat(4, 1fr); } }
+
+/* ---------- KU Connect: карточка на главной, страница «Connect» ---------- */
+.kc-widget { display: flex; align-items: center; gap: 14px; width: calc(100% - 28px); text-align: left; font: inherit; color: inherit; cursor: pointer; border-left: 5px solid var(--accent); }
+.kc-widget:empty { display: none; }
+.kc-widget:hover { border-color: var(--accent); }
+.kc-w-ic { position: relative; width: 46px; height: 46px; border-radius: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); }
+.kc-w-ic svg { width: 24px; height: 24px; }
+.kc-w-ic .nav-n { position: absolute; top: -6px; right: -6px; border-color: var(--card); }
+.kc-w-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.kc-w-t b { font-size: calc(16px * var(--fs)); }
+.kc-w-t span { color: var(--muted); font-size: calc(13px * var(--fs)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kc-widget .chev { color: var(--muted); } .kc-widget .chev svg { width: 18px; height: 18px; }
+.oe-app.kc { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: #fff; }
+.kc-sum { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 4px 0 12px; }
+.kc-sum:empty { display: none; }
+.kc-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 7px 12px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--line); font-size: calc(12.5px * var(--fs)); color: var(--muted); font-weight: 600; }
+.kc-chip b { font-size: calc(15px * var(--fs)); color: var(--text); }
+.kc-chip.hot { background: var(--accent-dim); border-color: var(--accent); } .kc-chip.hot b { color: var(--accent-deep); }
+button.oe-go, button.oe-new { width: 100%; font: inherit; font-weight: 700; cursor: pointer; }
+.kc-status { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 8px; }
+.kc-status button { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 11px; border: 1px solid var(--line-strong); background: var(--card); color: var(--text-2); font: inherit; font-size: calc(13px * var(--fs)); font-weight: 600; cursor: pointer; }
+.kc-status button.on { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
+.kc-status i { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+.kc-status i.st-busy, .kc-status i.st-dnd { background: var(--danger); } .kc-status i.st-away { background: var(--warn); }
+#set-connect .inp { margin: 0 0 8px; }
+.kc-save { width: 100%; margin-bottom: 4px; }
+@media (min-width: 1024px) { .kc-widget { width: 100%; grid-column: 1 / -1; } }
+
+/* ---------- бета-аккаунты на экране входа ---------- */
+.demo-lbl { font-size: calc(11.5px * var(--fs)); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--accent-deep); margin: 10px 0 6px; }
+.demo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.demo-acc { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--card); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .12s; }
+.demo-acc:hover { border-color: var(--accent); transform: translateY(-1px); }
+.demo-ava { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--accent); }
+.demo-ava.teacher { background: var(--accent-deep); border-radius: 10px; }
+.demo-t { display: flex; flex-direction: column; min-width: 0; }
+.demo-t b { font-size: calc(13px * var(--fs)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.demo-t small { font-size: calc(11.5px * var(--fs)); color: var(--muted); }

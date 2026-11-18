@@ -22,6 +22,8 @@ async function campusAct(path, body, okText, repaint) {
   try { await api(path, { method: 'POST', body }); if (okText) toast(okText); await repaint(); }
   catch (e) { toast(e.message, true); }
 }
+const isoOf = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const todayIso = () => isoOf(Date.now());
 const fmtHours = (h) => t('{n} ч', { n: String(Math.round((h || 0) * 10) / 10).replace('.', getLang() === 'en' ? '.' : ',') });
 
 /* ================================ Клубы ================================ */
@@ -34,7 +36,7 @@ async function viewClubs(id) {
   };
   await repaint();
 }
-function meetText(m) { return m ? `${weekdayName(m.day)}, ${m.time} · ${tv(m.place)}` : ''; }
+function meetText(m) { return m ? `${weekdayName(m.day)}, ${m.time}${m.endTime ? '–' + m.endTime : ''} · ${tv(m.place)}` : ''; }
 function eventDate(iso) { return `<div class="ev-date"><b>${esc(iso.slice(8))}</b><span>${esc(fmtDay(iso).replace(/^\d+\s*/, '').slice(0, 3))}</span></div>`; }
 function attendanceHTML(e) {
   return `<div class="ev-att">${e.people.map((p) => `<button class="chip ${p.present ? 'on' : ''}" data-att="${esc(e.id)}" data-uid="${esc(p.id)}" data-v="${p.present ? '' : '1'}">${p.present ? svg('check') : svg('x')}${esc(p.fio)}</button>`).join('')}</div>`;
@@ -49,7 +51,7 @@ function eventHTML(e, showClub, past) {
       ${showClub ? `<span class="ev-club">${clubIcon(e.icon)}${esc(tv(e.club))}</span>` : ''}
       <b>${esc(tv(e.title))}</b>
       ${e.text ? `<div class="ev-text">${esc(tv(e.text))}</div>` : ''}
-      <span class="tx">${esc(fmtDay(e.date, true))}, ${esc(e.time)}${e.place ? ' · ' + esc(tv(e.place)) : ''}</span>
+      <span class="tx">${esc(fmtDay(e.date, true))}, ${esc(e.time)}${e.endTime ? '–' + esc(e.endTime) : ''}${e.place ? ' · ' + esc(tv(e.place)) : ''}</span>
       <span class="tx">${esc(seats)}${e.hours ? ' · ' + esc(t('засчитывается: {h}', { h: fmtHours(e.hours) })) : ''}${e.weekly ? ' · ' + t('регулярная встреча') : ''}</span>
       ${teacher && e.people.length ? (past
         ? `<div class="tx ev-hint">${t('Отметьте, кто не пришёл — это попадёт в профиль активности студента:')}</div>${attendanceHTML(e)}`
@@ -156,15 +158,17 @@ function newEventDlg(clubId, repaint) {
     <select class="inp" id="neClub">${d.items.map((c) => `<option value="${esc(c.id)}" ${c.id === clubId ? 'selected' : ''}>${esc(tv(c.name))}</option>`).join('')}</select>
     <input class="inp" id="neTitle" maxlength="120" placeholder="${t('Название, например: Товарищеский матч')}">
     <textarea class="inp" id="neText" rows="3" maxlength="1000" placeholder="${t('Подробности: что взять, во сколько сбор (необязательно)')}"></textarea>
-    <div class="row2"><input class="inp" id="neDate" type="date" min="${todayIso()}" value="${iso}"><input class="inp" id="neTime" type="time" value="16:00"></div>
+    <label class="lbl">${t('Дата и время')}</label>
+    <input class="inp" id="neDate" type="date" min="${todayIso()}" value="${iso}">
+    <div class="row2"><div><label class="lbl">${t('Начало')}</label><input class="inp" id="neTime" type="time" value="16:00"></div><div><label class="lbl">${t('Окончание')}</label><input class="inp" id="neEnd" type="time" value="18:00"></div></div>
     <input class="inp" id="nePlace" maxlength="120" placeholder="${t('Место')}">
-    <div class="row2"><input class="inp" id="neLimit" type="number" min="0" max="1000" placeholder="${t('Мест (0 — без ограничения)')}"><input class="inp" id="neHours" type="number" min="0" max="24" step="0.5" placeholder="${t('Часов в зачёт активности')}"></div>
+    <div class="row2"><input class="inp" id="neLimit" type="number" min="0" max="1000" placeholder="${t('Мест (0 — без ограничения)')}"><input class="inp" id="neHours" type="number" min="0" max="24" step="0.5" placeholder="${t('Часов в зачёт (по умолч. — длительность)')}"></div>
     <div class="err"></div>
     <button class="btn pri" id="neGo">${t('Опубликовать')}</button>`, (box, close) => {
     box.querySelector('#neGo').onclick = async () => {
       const g = (s) => box.querySelector(s).value;
       try {
-        await api('/clubs/event', { method: 'POST', body: { clubId: g('#neClub'), title: g('#neTitle'), text: g('#neText'), date: g('#neDate'), time: g('#neTime'), place: g('#nePlace'), limit: Number(g('#neLimit') || 0), hours: Number(g('#neHours') || 0) } });
+        await api('/clubs/event', { method: 'POST', body: { clubId: g('#neClub'), title: g('#neTitle'), text: g('#neText'), date: g('#neDate'), time: g('#neTime'), endTime: g('#neEnd'), place: g('#nePlace'), limit: Number(g('#neLimit') || 0), hours: Number(g('#neHours') || 0) } });
         close(); toast(t('Объявление опубликовано — его увидят участники клуба')); await repaint();
       } catch (e) { box.querySelector('.err').textContent = e.message; }
     };
