@@ -1806,7 +1806,7 @@ function tick(){
    и убираем параметры из строки адреса. back принимается только http(s) и только с разрешённых хостов,
    чтобы ссылку нельзя было использовать для перехода на чужой сайт. */
 const KU_BACK_KEY = 'ku-portal-back';
-const KU_HOSTS = ['ku-portalnew.onrender.com', 'ku-portal.onrender.com'];
+const KU_HOSTS = ['ku-portalnew.onrender.com', 'ku-portal.onrender.com', 'sakeda-hub.github.io'];
 const kuHostOk = h => h === location.hostname || KU_HOSTS.includes(h) || h === 'localhost' || h === '127.0.0.1' || /^(10|192\.168)\.[\d.]+$/.test(h) || /^172\.(1[6-9]|2\d|3[01])\.[\d.]+$/.test(h);
 const KU_BACK = (() => {
   let back = null, fresh = false;

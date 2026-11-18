@@ -487,6 +487,7 @@ function serveStatic(req, res, url) {
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json') });
 const publicAIRate = new Map();
+const PAGES_ORIGINS = new Set((process.env.PAGES_ORIGINS || 'https://sakeda-hub.github.io').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean));
 
 function allowPublicAI(req) {
   const ip = clientIp(req) || 'unknown';
@@ -507,6 +508,20 @@ function allowPublicAI(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
+
+  // Интерфейс портала на GitHub Pages (public/config.js) обращается к этому серверу с другого адреса.
+  // Разрешаем только перечисленные адреса Pages (PAGES_ORIGINS через запятую); авторизация — заголовок Authorization, без cookie.
+  if (p.startsWith('/api/') || p.startsWith('/exam-sync/api/')) {
+    const origin = req.headers.origin || '';
+    if (PAGES_ORIGINS.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Max-Age', '600');
+      res.setHeader('Vary', 'Origin');
+      if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+    }
+  }
 
   // Public student chat is hosted on GitHub Pages and calls this API cross-origin.
   // Keep the browser allowlist exact; do not expose the portal's authenticated APIs.
