@@ -33,7 +33,7 @@ jobs:
           node-version: 22
       - name: Check JS syntax
         run: |
-          for f in server.js exam-sync/handler.js public/config.js public/i18n.js public/services.js public/app.js; do
+          for f in server.js portal-features.js exam-sync/handler.js public/config.js public/i18n.js public/services.js public/messenger.js public/campus.js public/app.js; do
             node --check "$f"
           done
 
