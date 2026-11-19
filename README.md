@@ -200,24 +200,32 @@ alwaysdata — облачный сервер, он не находится в в
 Один Node.js-процесс без внешних зависимостей раздаёт три приложения и общее API.
 
 ```
-server.js            точка входа (alwaysdata запускает node server.js): база, вход и сеансы, 2FA, настройки,
-                     расписание, оценки, рейтинг, переходы в сервисы, статика; подключает модули ниже
+server.js            точка входа (alwaysdata запускает node server.js): база, регистрация, вход и сеансы,
+                     справочники, статика; подключает модули ниже
 server/
+  account.js         кабинет: настройки, 2FA, сеансы, выгрузка данных, удаление аккаунта
+  study.js           расписание, оценки, рейтинг; предметы, группы и оценки преподавателя
+  admin.js           админ-панель (/api/admin/*), сброс пароля командой (portal-provision/)
+  recovery.js        «Забыли пароль?» — письмо со ссылкой; mail.js — отправка через sendmail
+  polls.js           голосование (/api/polls*)
+  cleanup.js         удаление пользователя со всеми следами, очистка демо-аккаунтов
   messages.js        API KU Message (/api/message/*) и файлы (/api/files)
-  clubs.js           клубы и секции (/api/clubs*)
-  dorm.js            общежитие (/api/dorm*)
-  demo.js            бета-аккаунты, их занятия и оценки
-  ai.js              AI-помощник для сайта университета (/api/ai/*): база KU + LM Studio
+  clubs.js, dorm.js  клубы (/api/clubs*), общежитие (/api/dorm*)
+  access.js, audit.js, security.js, store.js, http.js, totp.js — допуск, журнал, пароли и лимиты, запись базы, HTTP, 2FA
+  demo.js            бета-аккаунты (только DEMO=1);  ai.js — AI-помощник для сайта университета
 public/              KU Portal (одностраничное приложение) — раздаётся Node.js-сервером на alwaysdata
   index.html, style.css, features.css
-  app.js             каркас, вход, главная, расписание, оценки, кабинет, переходы в сервисы
-  campus.js          клубы и общежитие      services.js   голосование (демо)
+  app.js             каркас, главная, расписание, оценки, переходы в сервисы, роутер
+  auth.js            вход, регистрация, 2FA-код, восстановление пароля
+  cabinet.js         личный кабинет и настройки      teacher.js  занятия и оценки преподавателя
+  campus.js          клубы и общежитие      services.js   голосование
   message-launch.js  переход в KU Message и значок непрочитанного      i18n.js  словарь RU/KK/EN
   config.js          same-origin режим и адрес API для старой копии GitHub Pages
+admin/               админ-панель (/admin/)          results/  учебная база результатов (/results/)
 ku-message/          KU Message (/ku-message/): index.html, core.js (вход, API, тема), views.js (экраны), settings.js, style.css
 exam-sync/           онлайн-экзамен (/exam-sync/), серверный доступ, проверка работ и интерфейс
 data/                db.json (база), uploads/ (файлы), exam-sync.json — не в git, деплой их не трогает
-deploy/              alwaysdata-update.sh — автообновление сервера из GitHub
+deploy/              alwaysdata-update.sh — автообновление сервера; backup-pull.sh — копия базы на компьютер
 docs/                откат изменений, скриншоты
 ```
 

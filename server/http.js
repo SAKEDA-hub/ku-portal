@@ -97,4 +97,12 @@ function readJson(req, limit) {
   });
 }
 
-module.exports = { clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic, reportProxy };
+/* Определение устройства по User-Agent — только для подписи в списке сеансов */
+function deviceLabel(ua) {
+  ua = String(ua || '');
+  const os = /Windows/i.test(ua) ? 'Windows' : /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iOS/i.test(ua) ? 'iOS' : /Mac OS X|Macintosh/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '';
+  const br = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /YaBrowser/.test(ua) ? 'Yandex' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+  return [br, os].filter(Boolean).join(', ') || (ua ? ua.slice(0, 40) : '');
+}
+
+module.exports = { deviceLabel, clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic, reportProxy };

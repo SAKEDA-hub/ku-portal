@@ -1,8 +1,10 @@
 /*
  * KU Portal — сервер без внешних зависимостей (Node.js >= 18). Точка входа (alwaysdata запускает node server.js).
- * Здесь: база (data/db.json), вход и сеансы, 2FA, настройки, расписание, оценки, рейтинг, статика.
- * Модули server/: messages.js (KU Message + файлы), clubs.js, dorm.js, demo.js (бета-аккаунты), ai.js (помощник
- * для сайта университета). Отдельные приложения: exam-sync/ (/exam-sync/), ku-message/ (/ku-message/).
+ * Здесь: база (data/db.json), регистрация, вход и сеансы, общие справочники, статика, маршрутизация запросов.
+ * Модули server/: account.js (настройки, 2FA, сеансы, удаление), study.js (расписание, оценки, рейтинг), admin.js (админ-панель),
+ * recovery.js + mail.js (восстановление пароля), polls.js (голосование), messages.js (KU Message + файлы), clubs.js, dorm.js,
+ * cleanup.js, demo.js (бета-аккаунты), ai.js (помощник для сайта университета).
+ * Отдельные приложения: exam-sync/ (/exam-sync/), ku-message/ (/ku-message/), results/ (/results/), admin/ (/admin/).
  */
 const http = require('http');
 const fs = require('fs');
@@ -18,7 +20,8 @@ const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессе�
 const RESULTS_DIR = path.join(ROOT, 'results'); // закрытый кабинет результатов учебной базы (/results/)
 const ADMIN_DIR = path.join(ROOT, 'admin'); // админ-панель (/admin/, server/admin.js)
 const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, forget, demo: DEMO_ON } = require('./server/access');
-const { clientIp, readJson, HttpError, sendStatic } = require('./server/http');
+const { clientIp, readJson, HttpError, sendStatic, deviceLabel } = require('./server/http');
+const { totpOk, codeBlocked, codeFail, codeReset } = require('./server/totp');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
 const { createStore } = require('./server/store');
@@ -200,44 +203,6 @@ function pushInbox(user, item) {
   if (user.inbox.length > 50) user.inbox.length = 50;
 }
 
-/* ------------- Двухфакторная аутентификация: TOTP (RFC 6238), без зависимостей -------------
-   Совместима с Google Authenticator, Microsoft Authenticator, Aegis и т.п.: SHA-1, 6 цифр, шаг 30 с. */
-const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-function b32enc(buf) {
-  let bits = 0, val = 0, out = '';
-  for (const b of buf) { val = (val << 8) | b; bits += 8; while (bits >= 5) { out += B32[(val >>> (bits - 5)) & 31]; bits -= 5; } }
-  if (bits > 0) out += B32[(val << (5 - bits)) & 31];
-  return out;
-}
-function b32dec(str) {
-  let bits = 0, val = 0; const out = [];
-  for (const c of String(str).toUpperCase().replace(/[^A-Z2-7]/g, '')) { val = (val << 5) | B32.indexOf(c); bits += 5; if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; } }
-  return Buffer.from(out);
-}
-function totp(secret, step) {
-  const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(step));
-  const h = crypto.createHmac('sha1', b32dec(secret)).update(msg).digest();
-  const o = h[h.length - 1] & 15;
-  return String(((h.readUInt32BE(o) & 0x7fffffff) % 1e6)).padStart(6, '0');
-}
-function totpOk(secret, code) {
-  const c = String(code || '').replace(/\s/g, '');
-  if (!/^\d{6}$/.test(c)) return false;
-  const step = Math.floor(Date.now() / 30000);
-  return [-1, 0, 1].some((d) => crypto.timingSafeEqual(Buffer.from(totp(secret, step + d)), Buffer.from(c)));
-}
-/* Ограничение попыток ввода кода: 5 ошибок за 5 минут на пользователя */
-const codeFails = new Map();
-function codeBlocked(uid) { const f = codeFails.get(uid); return !!f && f.n >= 5 && Date.now() - f.t < 300000; }
-function codeFail(uid) { const f = codeFails.get(uid); if (!f || Date.now() - f.t >= 300000) codeFails.set(uid, { n: 1, t: Date.now() }); else f.n++; }
-
-/* Определение устройства по User-Agent — только для подписи в списке сеансов */
-function deviceLabel(ua) {
-  ua = String(ua || '');
-  const os = /Windows/i.test(ua) ? 'Windows' : /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iOS/i.test(ua) ? 'iOS' : /Mac OS X|Macintosh/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '';
-  const br = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /YaBrowser/.test(ua) ? 'Yandex' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
-  return [br, os].filter(Boolean).join(', ') || (ua ? ua.slice(0, 40) : '');
-}
 /* Программа (университет) пользователя — от неё зависят цвета портала и онлайн-экзамена */
 const PROGRAMS = ['ku', 'arizona'];
 /* Роли при регистрации: студент, преподаватель, сотрудник (менеджер, руководитель клуба — права назначает оператор) */
@@ -385,6 +350,11 @@ const apiModules = [createMessages(moduleCtx), require('./server/clubs').createC
 /* Админ-панель (server/admin.js): пользователи, допуск, права, сброс пароля, копия базы — право admin */
 /* Восстановление пароля по почте (server/recovery.js, письма — server/mail.js) */
 const recovery = require('./server/recovery').createRecovery({ getDB: () => db, saveDB, ok, bad, sec, audit, grantOf, clientIp, dropUserSessions });
+/* Аккаунт (настройки, 2FA, сеансы, выгрузка, удаление) и учёба (расписание, оценки, рейтинг) — server/account.js, server/study.js */
+const account = require('./server/account').createAccount({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropSession, dropUserSessions,
+  pubUser, settingsOf, SETTING_DEFAULTS, SETTING_TEXT_MAX, PASS_SHORT, subjName, teacherFio, WEEKDAYS });
+const study = require('./server/study').createStudy({ getDB: () => db, saveDB, ok, bad, audit, nid, isOnline, settingsOf, pushInbox, subjName, teacherFio,
+  avgOf, nextLesson, detectDiscipline, teacherHasGroup, WEEKDAYS });
 const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA });
 const MUST_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/settings', '/api/sessions', '/api/inbox']);
 const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
@@ -517,7 +487,7 @@ async function handleRequest(req, res) {
         if (!body.code) return ok(res, { need2fa: true });
         if (codeBlocked(user.id)) return bad(res, 429, 'Слишком много попыток. Попробуйте через 5 минут');
         if (!totpOk(user.totp.secret, body.code)) { codeFail(user.id); return bad(res, 401, 'Неверный код подтверждения'); }
-        codeFails.delete(user.id);
+        codeReset(user.id);
       }
       // Оповещение о входе с нового устройства (идентификатор устройства хранится в браузере)
       const dev = String(body.deviceId || '').slice(0, 64);
@@ -605,222 +575,8 @@ async function handleRequest(req, res) {
       return ok(res, { code });
     }
 
-    /* ---------- Настройки: конфиденциальность и оповещения ---------- */
-    if (p === '/api/settings' && req.method === 'GET') {
-      return ok(res, { settings: settingsOf(u), twoFactor: !!(u.totp && u.totp.enabled), passChangedAt: u.passChangedAt || null, demo: !!u.demo });
-    }
-    if (p === '/api/settings' && req.method === 'POST') {
-      u.settings = settingsOf(u);
-      for (const [k, def] of Object.entries(SETTING_DEFAULTS)) {
-        if (typeof def === 'boolean' && typeof body[k] === 'boolean') u.settings[k] = body[k];
-        if (typeof def === 'string' && typeof body[k] === 'string') u.settings[k] = body[k].trim().slice(0, SETTING_TEXT_MAX[k] || 60);
-      }
-      saveDB();
-      return ok(res, { settings: u.settings });
-    }
-
-    /* ---------- Уведомления ---------- */
-    if (p === '/api/inbox' && req.method === 'GET') {
-      const items = (u.inbox || []).slice(0, 30);
-      return ok(res, { items, unread: (u.inbox || []).filter((x) => !x.read).length });
-    }
-    if (p === '/api/inbox/read' && req.method === 'POST') {
-      (u.inbox || []).forEach((x) => { x.read = true; });
-      saveDB();
-      return ok(res);
-    }
-
-    /* ---------- Безопасность ---------- */
-    if ((p === '/api/auth/password' || p === '/api/2fa/setup' || p === '/api/2fa/enable') && req.method === 'POST' && u.demo) {
-      return bad(res, 400, 'Для тестового аккаунта это недоступно — он общий для всех'); // иначе демо-вход сломается у остальных
-    }
-    if (p === '/api/auth/password' && req.method === 'POST') {
-      const cur = String(body.current || ''), nx = String(body.next || '');
-      const pe = await passError(u, cur);
-      if (pe) return bad(res, pe[0], pe[1] || 'Неверный текущий пароль');
-      if (nx.length < sec.PASSWORD_MIN) return bad(res, 400, PASS_SHORT);
-      if (nx.length > 256) return bad(res, 400, 'Некорректные данные');
-      if (nx === cur) return bad(res, 400, 'Новый пароль совпадает с текущим');
-      await sec.setPassword(u, nx);
-      u.passChangedAt = Date.now();
-      delete u.mustChangePassword; delete u.tempPasswordUntil; delete u.passReset; // временный пароль от администратора заменён своим
-      // выходим на всех остальных устройствах
-      dropUserSessions(u.id, reqToken(req));
-      saveDB();
-      audit('portal.password', u.id, u.id);
-      return ok(res, { passChangedAt: u.passChangedAt });
-    }
-    if (p === '/api/2fa/setup' && req.method === 'POST') {
-      if (u.totp && u.totp.enabled) return bad(res, 400, 'Двухфакторная аутентификация уже включена');
-      const secret = b32enc(crypto.randomBytes(20));
-      u.totp = { secret, enabled: false };
-      saveDB();
-      const label = encodeURIComponent('KU Portal:' + u.email);
-      return ok(res, { secret, uri: `otpauth://totp/${label}?secret=${secret}&issuer=KU%20Portal&digits=6&period=30` });
-    }
-    if (p === '/api/2fa/enable' && req.method === 'POST') {
-      if (!u.totp || !u.totp.secret) return bad(res, 400, 'Сначала получите ключ');
-      if (codeBlocked(u.id)) return bad(res, 429, 'Слишком много попыток. Попробуйте через 5 минут');
-      if (!totpOk(u.totp.secret, body.code)) { codeFail(u.id); return bad(res, 400, 'Неверный код подтверждения'); }
-      u.totp.enabled = true; codeFails.delete(u.id); saveDB();
-      audit('portal.2fa.enable', u.id, u.id);
-      return ok(res, { twoFactor: true });
-    }
-    if (p === '/api/2fa/disable' && req.method === 'POST') {
-      const pe = await passError(u, String(body.password || ''));
-      if (pe) return bad(res, pe[0], pe[1] || 'Неверный пароль');
-      delete u.totp; saveDB();
-      audit('portal.2fa.disable', u.id, u.id);
-      return ok(res, { twoFactor: false });
-    }
-    if (p === '/api/sessions' && req.method === 'GET') {
-      const me = reqToken(req);
-      const items = Object.entries(db.sessMeta || {}).filter(([, m]) => m.uid === u.id)
-        .map(([tok, m]) => ({ sid: m.sid, current: tok === me, created: m.created, lastSeen: m.lastSeen, device: deviceLabel(m.ua), ip: m.ip }))
-        .sort((a, b) => (b.current - a.current) || (b.lastSeen - a.lastSeen));
-      // сеансы, созданные до появления метаданных
-      const legacy = Object.entries(db.sessions || {}).filter(([tok, uid]) => uid === u.id && !(db.sessMeta || {})[tok]).length;
-      return ok(res, { items, legacy });
-    }
-    if (p === '/api/sessions/revoke' && req.method === 'POST') {
-      const me = reqToken(req);
-      let n = 0;
-      for (const [tok, uid] of Object.entries(db.sessions || {})) {
-        if (uid !== u.id || tok === me) continue;
-        const m = (db.sessMeta || {})[tok];
-        if (body.all || (m && m.sid === body.sid)) { dropSession(tok); n++; }
-      }
-      return ok(res, { revoked: n });
-    }
-
-    /* ---------- Мои данные и удаление аккаунта ---------- */
-    if (p === '/api/export' && req.method === 'GET') {
-      const data = {
-        exportedAt: new Date().toISOString(),
-        profile: Object.assign(pubUser(u), { createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : null }),
-        settings: settingsOf(u), twoFactor: !!(u.totp && u.totp.enabled),
-        grades: u.role === 'student'
-          ? db.grades.filter((g) => g.studentId === u.id).map((g) => ({ subject: subjName(g.subjectId), teacher: teacherFio(g.teacherId), score: g.score, date: g.date }))
-          : db.grades.filter((g) => g.teacherId === u.id).map((g) => ({ student: teacherFio(g.studentId), subject: subjName(g.subjectId), score: g.score, date: g.date })),
-        schedule: (u.role === 'student' ? db.schedule.filter((x) => x.group === u.group) : db.schedule.filter((x) => x.teacherId === u.id))
-          .map((r) => ({ day: WEEKDAYS[r.day], start: r.start, end: r.end, subject: subjName(r.subjectId), type: r.type, room: r.room, group: r.group })),
-        subjects: u.role === 'teacher' ? db.subjects.filter((x) => x.teacherId === u.id).map((x) => x.name) : undefined,
-        sessions: Object.values(db.sessMeta || {}).filter((m) => m.uid === u.id).map((m) => ({ device: deviceLabel(m.ua), ip: m.ip, created: new Date(m.created).toISOString(), lastSeen: new Date(m.lastSeen).toISOString() })),
-        notifications: u.inbox || [],
-      };
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Disposition': `attachment; filename="ku-portal-${u.id}.json"`,
-        'Cache-Control': 'no-store',
-      });
-      return res.end(JSON.stringify(data, null, 2));
-    }
-    if (p === '/api/account/delete' && req.method === 'POST') {
-      if (u.demo) return bad(res, 400, 'Тестовый аккаунт удалить нельзя');
-      const pe = await passError(u, String(body.password || ''));
-      if (pe) return bad(res, pe[0], pe[1] || 'Неверный пароль');
-      for (const [tok, uid] of Object.entries(db.sessions || {})) if (uid === u.id) dropSession(tok);
-      db.users = db.users.filter((x) => x.id !== u.id);
-      if (u.role === 'student') db.grades = db.grades.filter((g) => g.studentId !== u.id);
-      else db.schedule = db.schedule.filter((x) => x.teacherId !== u.id); // оценки студентов сохраняются, расписание преподавателя удаляется
-      saveDB();
-      return ok(res);
-    }
-
-    /* ---------- Студент ---------- */
-    if (p === '/api/student/dashboard' && u.role === 'student') {
-      const rows = db.grades.filter((g) => g.studentId === u.id);
-      const score = rows.length ? Math.round((rows.reduce((a, g) => a + Number(g.score || 0), 0) / rows.length) * 10) / 10 : null;
-      return ok(res, { score, next: nextLesson(u.group), group: u.group });
-    }
-
-    if (p === '/api/schedule' && req.method === 'GET') {
-      const rows = u.role === 'student'
-        ? db.schedule.filter((s) => s.group === u.group)
-        : db.schedule.filter((s) => s.teacherId === u.id);
-      const items = rows.map((r) => ({
-        id: r.id, day: r.day, dayName: WEEKDAYS[r.day], type: r.type,
-        start: r.start, end: r.end, room: r.room,
-        subject: subjName(r.subjectId), teacher: teacherFio(r.teacherId), group: r.group,
-      })).sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
-      return ok(res, { items });
-    }
-
-    if (p === '/api/grades' && u.role === 'student') {
-      const items = db.grades.filter((g) => g.studentId === u.id).map((g) => ({
-        id: g.id, subject: subjName(g.subjectId), teacher: teacherFio(g.teacherId), score: g.score, date: g.date,
-      }));
-      return ok(res, { items, avg: avgOf(u.id) });
-    }
-
-    if (p === '/api/rating' && u.role === 'student') {
-      const mates = db.users.filter((x) => x.role === 'student' && x.group === u.group);
-      // «Показывать меня в рейтинге» выключено — одногруппники видят строку без имени; себя студент видит всегда
-      const rows = mates.map((m) => {
-        const hidden = m.id !== u.id && !settingsOf(m).showInRating;
-        return { id: hidden ? 'hidden_' + crypto.createHash('sha1').update(m.id).digest('hex').slice(0, 8) : m.id, fio: hidden ? null : m.fio, hidden, online: !hidden && m.id !== u.id && isOnline(m), avg: avgOf(m.id) };
-      }).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
-      const self = rows.find((r) => r.id === u.id);
-      return ok(res, { group: u.group, selfPos: self ? rows.indexOf(self) + 1 : null, selfAvg: self ? self.avg : null, rows });
-    }
-
-    /* ---------- Преподаватель ---------- */
-    if (p === '/api/teacher/subjects' && req.method === 'GET' && u.role === 'teacher') {
-      return ok(res, { items: db.subjects.filter((s) => s.teacherId === u.id) });
-    }
-    if (p === '/api/teacher/subjects' && req.method === 'POST' && u.role === 'teacher') {
-      const name = String(body.name || '').trim().slice(0, 160);
-      if (name.length < 2) return bad(res, 400, 'Укажите название предмета');
-      const s = { id: nid('sub'), name, teacherId: u.id, discipline: detectDiscipline(name) };
-      db.subjects.push(s); saveDB();
-      return ok(res, { id: s.id, name: s.name, discipline: s.discipline });
-    }
-
-    if (p === '/api/teacher/students' && req.method === 'GET' && u.role === 'teacher') {
-      const g = String(url.searchParams.get('group') || '').trim();
-      const groups = new Set(db.schedule.filter(r => r.teacherId === u.id && teacherHasGroup(u, r.group)).map(r => r.group));
-      const items = db.users.filter((x) => x.role === 'student' && groups.has(x.group) && (!g || x.group === g))
-        .map((x) => ({ id: x.id, fio: x.fio, group: x.group, online: isOnline(x) }));
-      return ok(res, { items });
-    }
-
-    if (p === '/api/teacher/grades' && req.method === 'POST' && u.role === 'teacher') {
-      const { studentId = '', subjectId = '', score = 0 } = body;
-      const st = db.users.find((x) => x.id === studentId && x.role === 'student');
-      const sub = db.subjects.find((x) => x.id === subjectId && x.teacherId === u.id);
-      const sc = Number(score);
-      if (!st) return bad(res, 400, 'Выберите студента');
-      if (!sub) return bad(res, 400, 'Выберите свой предмет');
-      if (!teacherHasGroup(u, st.group) || !db.schedule.some(r => r.teacherId === u.id && r.subjectId === sub.id && r.group === st.group)) return bad(res, 403, 'Группа не назначена на этот предмет');
-      if (!(sc >= 0 && sc <= 100)) return bad(res, 400, 'Балл — число от 0 до 100');
-      const g = { id: nid('gr'), studentId, subjectId, teacherId: u.id, score: sc, date: new Date().toISOString().slice(0, 10) };
-      db.grades.push(g);
-      pushInbox(st, { type: 'grade', subject: sub.name, score: sc });
-      saveDB();
-      audit('portal.grade', u.id, st.id);
-      return ok(res, { id: g.id });
-    }
-
-    if (p === '/api/teacher/schedule' && req.method === 'POST' && u.role === 'teacher') {
-      const { subjectId = '', type = 'Практ.', group = '', day = 0, startTime = '', endTime = '', room = '' } = body;
-      const sub = db.subjects.find((s) => s.id === subjectId && s.teacherId === u.id);
-      if (!sub) return bad(res, 400, 'Выберите свой предмет');
-      if (typeof group !== 'string' || !group.trim() || group.length > 100) return bad(res, 400, 'Укажите группу');
-      if (!teacherHasGroup(u, group)) return bad(res, 403, 'Эта группа не закреплена за вами. Её назначает администратор портала');
-      const hm = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-      if (!hm.test(startTime) || !hm.test(endTime) || startTime >= endTime) return bad(res, 400, 'Укажите время (ЧЧ:ММ)');
-      if (!Number.isInteger(Number(day)) || day < 0 || day > 6 || String(room).length > 100 || String(type).length > 80) return bad(res, 400, 'Некорректные данные');
-      const e = {
-        id: nid('sc'), subjectId, teacherId: u.id, type: String(type || 'Практ.'),
-        group: String(group).trim(), day: Math.max(0, Math.min(6, Number(day))),
-        start: String(startTime), end: String(endTime), room: String(room || '').trim(),
-      };
-      db.schedule.push(e);
-      db.users.filter((x) => x.role === 'student' && x.group === e.group)
-        .forEach((x) => pushInbox(x, { type: 'schedule', subject: sub.name, day: e.day, start: e.start, end: e.end, room: e.room, lessonType: e.type }));
-      saveDB();
-      return ok(res, { id: e.id });
-    }
+    if (await account(p, req, res, u, body) !== false) return; // server/account.js
+    if (await study(p, req, res, u, body, url) !== false) return; // server/study.js
 
     return bad(res, 404, 'Не найдено');
 }
