@@ -15,6 +15,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { createStore } = require('../server/store'); // атомарная запись и ежедневные копии, как у базы портала
 
 const COLS = ['users', 'tests', 'rooms', 'attempts', 'writings', 'queue', 'grades', 'timers'];
 const MAX_BODY = 5 * 1024 * 1024;
@@ -25,18 +26,25 @@ function createExamSync({ base = '/exam-sync', dataFile, seedFile = path.join(__
   let rev = 0;
   const db = Object.fromEntries(COLS.map((c) => [c, new Map()]));
 
-  function load(file) {
-    const s = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const store = createStore({ file: dataFile, backupDir: path.join(path.dirname(dataFile), 'backups'), empty: () => null, space: 0 });
+  function apply(s) {
     rev = s.rev || 0;
     COLS.forEach((c) => (s.db && s.db[c] || []).forEach(([k, r]) => db[c].set(k, r)));
   }
-  try { load(dataFile); } catch { try { load(seedFile); } catch { /* пустая база — клиент создаст демо-данные сам */ } }
+  const seed = () => { try { apply(JSON.parse(fs.readFileSync(seedFile, 'utf8'))); } catch { /* пустая база — клиент создаст демо-данные сам */ } };
+  try { const s = store.load(); if (s) apply(s); else seed(); }
+  catch (e) {
+    // файл испорчен и копий нет: откладываем его (не затираем) и стартуем с демо-данными
+    console.error('[exam-sync]', e.message);
+    try { fs.renameSync(dataFile, `${dataFile}.corrupt-${Date.now()}`); } catch { }
+    seed();
+  }
 
   const state = () => ({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].values()]])) });
   const save = () => {
     try {
       fs.mkdirSync(path.dirname(dataFile), { recursive: true });
-      fs.writeFileSync(dataFile, JSON.stringify({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].entries()]])) }) + '\n');
+      store.save({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].entries()]])) });
     } catch (e) { console.error('[exam-sync] save:', e.message); }
   };
 
