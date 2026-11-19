@@ -192,6 +192,7 @@ function notifText(n) {
   if (n.type === 'msg') return { title: t('Новое сообщение'), body: [n.from, n.text].filter(Boolean).join(': ') };
   if (n.type === 'material') return { title: t('Новый материал'), body: `${tv(n.subject)} — ${n.title}` };
   if (n.type === 'task') return { title: t('Новое задание'), body: `${tv(n.subject)} — ${n.title}${n.due ? ' · ' + t('до {d}', { d: fmtDay(n.due) }) : ''}` };
+  if (n.type === 'club') return { title: t(n.accepted ? 'Заявка принята' : 'Заявка отклонена'), body: n.accepted ? t('Вы в клубе «{c}» — канал и чат открыты', { c: tv(n.club) }) : tv(n.club) };
   if (n.type === 'dorm') return { title: t('Обращение в общежитие'), body: [t(DORM_STATUS_TEXT[n.status] || ''), n.category ? tv(n.category) : '', n.reply].filter(Boolean).join(' · ') };
   return { title: t('Уведомление'), body: '' };
 }

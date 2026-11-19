@@ -1,10 +1,11 @@
 'use strict';
 /* KU Portal — «Клубы» и «Общежитие» (сервер: portal-features.js, /api/clubs*, /api/dorm*).
  *
- * #/clubs        — вкладки «Клубы» (вступить / выйти), «Объявления» (только клубов, где вы участник) и «Моя активность»
- *                  (досье: где был, часы волонтёрства и всего, клубы с датой вступления, предстоящие записи);
- * #/clubs/<id>   — страница клуба: описание, встречи; объявления и запись — только участникам.
- *                  Преподаватель (организатор) публикует объявления, видит всех записавшихся и отмечает, кто не пришёл.
+ * #/clubs        — вкладки «Клубы» (подать заявку / выйти; у главы клуба — заявки на вступление), «Объявления» (только клубов,
+ *                  где вы участник) и «Моя активность» (профиль: уровень по часам, статистика, активность по месяцам, вклад
+ *                  по клубам, достижения, предстоящие записи и история участия);
+ * #/clubs/<id>   — страница клуба: описание, встречи; объявления и запись — только участникам; канал и чат клуба — в KU Message.
+ *                  Преподаватель (глава клуба) принимает заявки, публикует объявления, видит записавшихся и отмечает, кто не пришёл.
  * #/dorm         — «Новости» (актуальная информация общежития) и «Обращения» (ремонт, жалобы, запросы со статусами).
  *                  Преподаватель выступает администрацией: публикует новости, меняет статус и отвечает на обращения.
  * Подключается перед app.js; хелперы app.js используются только во время вызова.
@@ -68,16 +69,33 @@ function clubCard(c) {
     <span class="club-ic">${clubIcon(c.icon)}</span>
     <div class="club-t"><b>${esc(tv(c.name))}</b><span class="tx">${esc(tv(c.desc))}</span>
       <span class="tx club-meta">${svg('users')}${t('участников: {n}', { n: c.members })}${c.meet ? ` · ${svg('clock')}${esc(meetText(c.meet))}` : ''}</span></div>
-    ${teacher ? `<span class="chev">${svg('chev')}</span>` : `<button class="btn ${c.joined ? 'ghost' : 'pri'} sm" data-join="${esc(c.id)}" data-v="${c.joined ? '' : '1'}">${c.joined ? t('Вы в клубе') : t('Вступить')}</button>`}
+    ${teacher ? (c.requests && c.requests.length ? `<span class="badge bad">${esc(t('заявок: {n}', { n: c.requests.length }))}</span>` : `<span class="chev">${svg('chev')}</span>`) : joinBtn(c, 'sm')}
   </div>`;
+}
+/* Студент: «Подать заявку» → «Заявка отправлена» (можно отозвать) → после решения главы «Вы в клубе» (можно выйти) */
+function joinBtn(c, size) {
+  const [mode, cls, label] = c.joined ? ['leave', 'ghost', size ? 'Вы в клубе' : 'Выйти из клуба'] : c.pending ? ['cancel', 'ghost', 'Заявка отправлена'] : ['apply', 'pri', 'Подать заявку'];
+  return `<button class="btn ${cls} ${size || ''}" data-join="${esc(c.id)}" data-mode="${mode}">${mode === 'cancel' ? svg('clock') : ''}${t(label)}</button>`;
+}
+function requestsHTML(d) {
+  const rows = d.items.flatMap((c) => (c.requests || []).map((r) => Object.assign({ club: c }, r)));
+  if (!rows.length) return '';
+  return `<div class="section-label">${t('Заявки на вступление')}</div><div class="card cl-reqs">${rows.map((r) => `
+    <div class="cl-req"><span class="club-ic sm">${clubIcon(r.club.icon)}</span>
+      <div class="club-t"><b>${esc(r.fio)}</b><span class="tx">${esc(r.group || '')} · ${esc(tv(r.club.name))}</span></div>
+      <span class="cl-req-b"><button class="btn pri sm" data-req="${esc(r.club.id)}" data-uid="${esc(r.id)}" data-v="1">${t('Принять')}</button>
+      <button class="btn ghost sm" data-req="${esc(r.club.id)}" data-uid="${esc(r.id)}" data-v="">${t('Отклонить')}</button></span></div>`).join('')}</div>`;
 }
 function bindClubActions(pb, repaint) {
   pb.querySelectorAll('[data-join]').forEach((b) => (b.onclick = (ev) => {
     ev.stopPropagation();
-    const join = () => campusAct('/clubs/join', { id: b.dataset.join, on: !!b.dataset.v }, b.dataset.v ? t('Вы вступили в клуб — теперь вам видны его объявления') : t('Вы вышли из клуба'), repaint);
-    if (b.dataset.v) return join();
+    const mode = b.dataset.mode;
+    const join = () => campusAct('/clubs/join', { id: b.dataset.join, on: mode === 'apply' }, t(mode === 'apply' ? 'Заявка отправлена — глава клуба её рассмотрит' : mode === 'cancel' ? 'Заявка отозвана' : 'Вы вышли из клуба'), repaint);
+    if (mode !== 'leave') return join();
     modal(t('Выйти из клуба?'), `<div class="tx">${t('Объявления клуба перестанут быть видны, записи на будущие встречи снимутся. История участия останется в профиле активности.')}</div><button class="btn danger-ghost" id="clLeave">${t('Выйти')}</button>`, (box, close) => { box.querySelector('#clLeave').onclick = () => { close(); join(); }; });
   }));
+  pb.querySelectorAll('[data-req]').forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); campusAct('/clubs/request', { id: b.dataset.req, uid: b.dataset.uid, accept: !!b.dataset.v }, t(b.dataset.v ? 'Студент принят в клуб' : 'Заявка отклонена'), repaint); }));
+  pb.querySelectorAll('[data-km]').forEach((b) => (b.onclick = () => openMessage(false, b.dataset.km)));
   pb.querySelectorAll('[data-club]').forEach((c) => (c.onclick = () => { location.hash = '#/clubs/' + c.dataset.club; }));
   pb.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => campusAct('/clubs/event/register', { id: b.dataset.go, on: !!b.dataset.v }, b.dataset.v ? t('Вы записаны на мероприятие') : t('Запись отменена'), repaint)));
   pb.querySelectorAll('[data-evdel]').forEach((b) => (b.onclick = () => campusAct('/clubs/event/delete', { id: b.dataset.evdel }, t('Мероприятие удалено'), repaint)));
@@ -86,31 +104,80 @@ function bindClubActions(pb, repaint) {
 }
 function announcementsHTML(d) {
   const teacher = d.canCreate;
-  if (!teacher && !d.items.some((c) => c.joined)) return `<div class="card next-empty">${t('Объявления видны участникам клуба. Вступите в клуб на вкладке «Клубы».')}</div>`;
+  if (!teacher && !d.items.some((c) => c.joined)) return `<div class="card next-empty">${t('Объявления видны участникам клуба. Подайте заявку в клуб на вкладке «Клубы».')}</div>`;
   const upcoming = d.events.map((e) => eventHTML(e, true, false)).join('') || `<div class="card next-empty">${t('Ближайших мероприятий нет.')}</div>`;
   const recent = teacher && d.recent && d.recent.length ? `<div class="section-label">${t('Прошедшие — отметить присутствие')}</div>${d.recent.map((e) => eventHTML(e, true, true)).join('')}` : '';
   return upcoming + recent;
 }
+/* Уровень по засчитанным часам — для профиля активности */
+const ACT_LEVELS = [[0, 'Новичок'], [5, 'Участник'], [15, 'Активист'], [30, 'Лидер'], [60, 'Легенда кампуса']];
+function actLevel(h) {
+  let i = 0; while (i + 1 < ACT_LEVELS.length && h >= ACT_LEVELS[i + 1][0]) i++;
+  const next = ACT_LEVELS[i + 1];
+  return { name: ACT_LEVELS[i][1], idx: i, next, pct: next ? Math.min(1, (h - ACT_LEVELS[i][0]) / (next[0] - ACT_LEVELS[i][0])) : 1 };
+}
+/* Часы по месяцам за полгода (из истории участия) */
+function actMonths(history) {
+  const now = new Date(), out = [];
+  for (let k = 5; k >= 0; k--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ key, label: getLang() === 'kk' ? cap(KK_MONTHS[d.getMonth()].slice(0, 3)) : d.toLocaleDateString(LOCALES[getLang()] || 'ru-RU', { month: 'short' }).replace('.', ''), hours: history.filter((h) => h.present && h.date.startsWith(key)).reduce((n, h) => n + h.hours, 0) });
+  }
+  return out;
+}
+function actBadges(a) {
+  const tt = a.totals, present = a.history.filter((h) => h.present).length;
+  return [
+    ['star', 'Первый шаг', 'Посетить первое мероприятие', tt.events >= 1],
+    ['heart', 'Волонтёр', '5 часов волонтёрства', tt.volunteerHours >= 5],
+    ['clock', '10 часов', '10 засчитанных часов', tt.hours >= 10],
+    ['users', 'Командный игрок', 'Состоять в 3 клубах', tt.clubs >= 3],
+    ['check', 'Без пропусков', '3+ мероприятия и ни одной неявки', present >= 3 && present === a.history.length],
+    ['crown', 'Марафонец', 'Посетить 10 мероприятий', tt.events >= 10],
+  ];
+}
 function activityHTML(a) {
-  const stat = (v, l, cls) => `<div class="act-stat ${cls || ''}"><b>${esc(String(v))}</b><span>${t(l)}</span></div>`;
-  const since = (ts) => ts ? t('с {d}', { d: fmtDay(isoOf(ts)) }) : '';
+  const since = (ts) => (ts ? t('с {d}', { d: fmtDay(isoOf(ts)) }) : '');
+  const lv = actLevel(a.totals.hours), R = 42, C = 2 * Math.PI * R;
+  const months = actMonths(a.history), maxM = Math.max(1, ...months.map((m) => m.hours));
+  const maxClub = Math.max(1, ...a.clubs.map((c) => c.hours));
+  const badges = actBadges(a), got = badges.filter((b) => b[3]).length;
+  const tile = (ic, v, l, cls) => `<div class="act-tile ${cls || ''}"><span class="act-ti">${svg(ic)}</span><b>${esc(String(v))}</b><span>${t(l)}</span></div>`;
   return `
-    <div class="card act-sum">
-      ${stat(a.totals.events, 'мероприятий посещено')}
-      ${stat(fmtHours(a.totals.volunteerHours), 'волонтёрства', 'vol')}
-      ${stat(fmtHours(a.totals.hours), 'всего часов')}
-      ${stat(a.totals.clubs, 'клубов')}
+    <div class="card act-hero">
+      <div class="act-ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="${R}" class="trk"/><circle cx="50" cy="50" r="${R}" class="val" style="stroke-dasharray:${(C * lv.pct).toFixed(1)} ${C.toFixed(1)}"/></svg>
+        <span><b>${esc(fmtHours(a.totals.hours))}</b><small>${t('в зачёт')}</small></span></div>
+      <div class="act-me">
+        <span class="act-kicker">${t('Профиль активности')}</span>
+        <b>${esc(S.user.fio)}</b>
+        <span class="act-lv lv${lv.idx}">${svg('star')}${t(lv.name)}</span>
+        <span class="tx">${lv.next ? esc(t('До уровня «{l}» — {h}', { l: t(lv.next[1]), h: fmtHours(lv.next[0] - a.totals.hours) })) : t('Максимальный уровень — так держать!')}</span>
+      </div>
     </div>
-    <div class="section-label">${t('Мои клубы')}</div>
-    ${a.clubs.map((c) => `<div class="card act-club" data-club="${esc(c.id)}"><span class="club-ic">${clubIcon(c.icon)}</span>
-      <div class="club-t"><b>${esc(tv(c.name))}</b><span class="tx">${esc(since(c.since))} · ${esc(t('посещений: {n}', { n: c.events }))} · ${esc(fmtHours(c.hours))}</span></div><span class="chev">${svg('chev')}</span></div>`).join('')
-      || `<div class="card next-empty">${t('Вы пока не вступили ни в один клуб.')}</div>`}
+    <div class="act-tiles">
+      ${tile('calendar', a.totals.events, 'мероприятий посещено')}
+      ${tile('heart', fmtHours(a.totals.volunteerHours), 'волонтёрства', 'vol')}
+      ${tile('clock', fmtHours(a.totals.hours), 'всего часов')}
+      ${tile('users', a.totals.clubs, 'клубов')}
+    </div>
+    <div class="section-label">${t('Активность за полгода')}</div>
+    <div class="card act-chart">${months.map((m) => `<div class="act-bar ${m.hours ? '' : 'zero'}" title="${esc(fmtHours(m.hours))}"><span class="act-bv">${m.hours ? esc(fmtHours(m.hours)) : ''}</span><i style="height:${Math.max(4, Math.round((m.hours / maxM) * 100))}%"></i><small>${esc(m.label)}</small></div>`).join('')}</div>
+    <div class="section-label">${t('Вклад по клубам')}</div>
+    ${a.clubs.length ? `<div class="card act-clubs">${a.clubs.map((c) => `<div class="act-club" data-club="${esc(c.id)}"><span class="club-ic sm">${clubIcon(c.icon)}</span>
+      <div class="club-t"><div class="act-cl-h"><b>${esc(tv(c.name))}</b><span>${esc(fmtHours(c.hours))}</span></div>
+        <div class="act-meter"><i style="width:${Math.round((c.hours / maxClub) * 100)}%"></i></div>
+        <span class="tx">${esc(since(c.since))} · ${esc(t('посещений: {n}', { n: c.events }))}</span></div><span class="chev">${svg('chev')}</span></div>`).join('')}</div>`
+      : `<div class="card next-empty">${t('Вы пока не вступили ни в один клуб.')}</div>`}
+    <div class="section-label">${esc(t('Достижения · {n} из {m}', { n: got, m: badges.length }))}</div>
+    <div class="act-badges">${badges.map(([ic, ti, d, ok]) => `<div class="act-badge ${ok ? 'ok' : ''}"><span>${svg(ok ? ic : 'lock')}</span><b>${t(ti)}</b><small>${t(d)}</small></div>`).join('')}</div>
     <div class="section-label">${t('Предстоящие записи')}</div>
     ${a.upcoming.map((e) => eventHTML(e, true, false)).join('') || `<div class="card next-empty">${t('Записей на мероприятия нет.')}</div>`}
     <div class="section-label">${t('История участия')}</div>
-    ${a.history.length ? `<div class="card act-hist">${a.history.map((h) => `
-      <div class="svc-log ${h.present ? '' : 'miss'}"><div><b>${esc(tv(h.title))}</b><small class="tx">${clubIcon(h.icon)} ${esc(tv(h.club))} · ${esc(fmtDay(h.date, true))}</small></div>
-        <span class="badge ${h.present ? 'ok' : 'bad'}">${h.present ? esc(fmtHours(h.hours)) : t('не пришёл')}</span></div>`).join('')}</div>`
+    ${a.history.length ? `<div class="card act-tl">${a.history.map((h) => `
+      <div class="act-tl-i ${h.present ? '' : 'miss'}"><span class="act-dot">${clubIcon(h.icon)}</span>
+        <div><b>${esc(tv(h.title))}</b><small class="tx">${esc(tv(h.club))} · ${esc(fmtDay(h.date, true))}</small></div>
+        <span class="badge ${h.present ? 'ok' : 'bad'}">${h.present ? '+' + esc(fmtHours(h.hours)) : t('не пришёл')}</span></div>`).join('')}</div>`
       : `<div class="card next-empty">${t('Здесь появятся мероприятия, в которых вы участвовали.')}</div>`}`;
 }
 function paintClubs(pb, repaint) {
@@ -121,7 +188,7 @@ function paintClubs(pb, repaint) {
   let body;
   if (tab === 'events') body = announcementsHTML(d);
   else if (tab === 'activity') body = activityHTML(d.activity);
-  else body = d.items.map(clubCard).join('');
+  else body = (d.canCreate ? requestsHTML(d) + `<div class="section-label">${t('Все клубы')}</div>` : '') + d.items.map(clubCard).join('');
   pb.innerHTML = `${svcTabs('clTabs', tabs, tab)}
     ${d.canCreate && tab !== 'activity' ? `<button class="btn pri campus-new" id="evNew">${svg('plus')}${t('Создать объявление')}</button>` : ''}${body}`;
   pb.querySelector('#clTabs').onclick = (ev) => { const b = ev.target.closest('[data-tab]'); if (b) { CLUBS.tab = b.dataset.tab; paintClubs(pb, repaint); } };
@@ -141,12 +208,15 @@ function paintClub(pb, id, repaint) {
         <span class="tx club-meta">${svg('users')}${t('участников: {n}', { n: c.members })}</span>
         ${c.meet ? `<span class="tx club-meta">${svg('clock')}${esc(t('Встречи: {v}', { v: meetText(c.meet) }))}</span>` : ''}
         ${mine ? `<span class="tx club-meta">${svg('star')}${esc(t('Вы в клубе с {d} · посещений: {n} · {h}', { d: fmtDay(isoOf(mine.since || Date.now())), n: mine.events, h: fmtHours(mine.hours) }))}</span>` : ''}</div>
-      ${teacher ? '' : `<button class="btn ${c.joined ? 'ghost' : 'pri'}" data-join="${esc(c.id)}" data-v="${c.joined ? '' : '1'}">${c.joined ? t('Выйти из клуба') : t('Вступить в клуб')}</button>`}
+      ${canSee ? `<button class="btn pri" data-km="/c/${esc(c.id)}">${svg('kumsg')}${t('Канал и чат клуба в KU Message')}</button>` : ''}
+      ${teacher ? '' : joinBtn(c)}
+      ${c.pending ? `<span class="tx">${t('Глава клуба скоро рассмотрит вашу заявку.')}</span>` : ''}
     </div>
+    ${teacher && c.requests && c.requests.length ? requestsHTML({ items: [c] }) : ''}
     <div class="section-label">${t('Объявления клуба')}</div>
     ${teacher ? `<button class="btn pri campus-new" id="evNew" data-club="${esc(id)}">${svg('plus')}${t('Создать объявление')}</button>` : ''}
     ${canSee ? (events.map((e) => eventHTML(e, false, false)).join('') || `<div class="card next-empty">${t('Ближайших мероприятий нет.')}</div>`)
-      : `<div class="card club-lock">${svg('lock')}<div><b>${t('Объявления — только для участников')}</b><span class="tx">${t('Вступите в клуб, чтобы видеть его объявления и записываться на мероприятия.')}</span></div></div>`}
+      : `<div class="card club-lock">${svg('lock')}<div><b>${t('Объявления — только для участников')}</b><span class="tx">${t('Подайте заявку — когда глава клуба её примет, откроются объявления, канал и чат клуба.')}</span></div></div>`}
     ${teacher && d.recent ? d.recent.filter((e) => e.clubId === id).map((e) => eventHTML(e, false, true)).join('') : ''}`;
   bindClubActions(pb, repaint);
 }

@@ -1,15 +1,21 @@
 'use strict';
-/* KU Message — экраны. Слева: вкладки «Предметы» / «Чаты» (у преподавателя ещё «Ученики»), справа — открытое.
- *   #/s/<s:id>  — страница предмета как в Teams: вкладки «Лекции», «Практики», «Задания» (+ «Материалы», если есть);
- *                 публикует преподаватель предмета, студенты читают и скачивают файлы.
- *   #/d/<d:…>   — личная переписка. Студент сам пишет преподавателю; преподаватель открывает чат из вкладки «Ученики».
- * На телефоне список и открытый экран сменяют друг друга.
+/* KU Message — экраны, в духе Telegram и Teams.
+ * Слева узкая панель разделов (как в Teams): «Чаты», «Предметы», «Клубы» (у преподавателя ещё «Ученики»), «Настройки»;
+ * рядом — список раздела (как в Telegram), справа — открытое:
+ *   #/s/<s:id>      — страница предмета: вкладки «Лекции», «Практики», «Задания» (+ «Материалы», если есть);
+ *                     публикует преподаватель предмета, студенты читают и скачивают файлы.
+ *   #/d/<d:…>       — личная переписка. Студент сам пишет преподавателю; преподаватель открывает чат из вкладки «Ученики».
+ *   #/c/<club>      — клуб: «Канал» (публикации и мероприятия — только от глав клуба), «Чат» участников (#/c/<club>/chat),
+ *                     у главы — «Заявки» (#/c/<club>/req). Не участнику — карточка клуба с кнопкой «Подать заявку».
+ *   #/settings[/…]  — настройки (settings.js).
+ * На телефоне панель разделов — внизу, список и открытый экран сменяют друг друга.
  */
 const KIND = { lecture: 'Лекция', practice: 'Практика', other: 'Материал' };
 const SPACE_TABS = [['lecture', 'Лекции'], ['practice', 'Практики'], ['task', 'Задания'], ['other', 'Материалы']];
 const T = { list: null, open: null };
 const POLL_LIST_MS = 6000, POLL_OPEN_MS = 3000;
-const V = { data: null, sig: '', tab: 'lecture', file: null, sending: false };
+const GROUP_MS = 5 * 60e3; // сообщения одного автора ближе 5 минут — одной группой, как в Telegram
+const V = { data: null, sig: '', tab: 'lecture', file: null, sending: false, send: null, reload: null };
 const teacher = () => M.user.role === 'teacher';
 
 function stopTimers() { Object.keys(T).forEach((k) => { if (T[k]) clearInterval(T[k]); T[k] = null; }); }
@@ -17,7 +23,7 @@ function stopTimers() { Object.keys(T).forEach((k) => { if (T[k]) clearInterval(
 /* ============================ Вход ============================ */
 function viewLogin(msg) {
   stopTimers();
-  app.innerHTML = `<div class="login"><div class="login-card">
+  app.innerHTML = `<div class="login wall"><div class="login-card">
     <div class="brand"><span class="logo lg">${svg('logo')}</span><b class="brand-t">KU Message</b></div>
     <p class="muted">${t('Лекции, практики и задания по предметам и личные вопросы преподавателям.')}</p>
     <a class="btn pri wide" href="${esc(backUrl())}">${t('Войти через KU Portal')}</a>
@@ -39,112 +45,164 @@ function viewLogin(msg) {
 }
 
 /* ============================ Каркас ============================ */
-function sideTabs() { return teacher() ? [['subjects', 'Предметы'], ['chats', 'Чаты'], ['students', 'Ученики']] : [['subjects', 'Предметы'], ['chats', 'Чаты']]; }
+function railItems() {
+  const items = [['chats', 'chat', 'Чаты'], ['subjects', 'book', 'Предметы'], ['clubs', 'flag', 'Клубы']];
+  if (teacher()) items.push(['students', 'users', 'Ученики']);
+  return items;
+}
+const TAB_TITLE = { chats: 'Чаты', subjects: 'Предметы', clubs: 'Клубы', students: 'Ученики', settings: 'Настройки' };
 function startApp() {
   const u = M.user;
   app.innerHTML = `<div class="km" id="km">
+    <nav class="rail" id="rail">
+      <a class="rail-logo" href="#/" title="KU Message"><span class="logo">${svg('logo')}</span></a>
+      ${railItems().map(([k, ic, l]) => `<button class="rail-i" data-t="${k}">${svg(ic)}<span>${t(l)}</span><em hidden></em></button>`).join('')}
+      <span class="grow"></span>
+      <button class="rail-i" data-t="settings">${svg('gear')}<span>${t('Настройки')}</span></button>
+      <a class="rail-i rail-portal" href="${esc(backUrl())}" title="KU Portal">${svg('home')}<span>Portal</span></a>
+      <a class="rail-me" href="#/settings/profile" title="${esc(u.fio)}"><span class="ava" style="--h:${hue(u.id)}">${initials(u.fio)}</span></a>
+    </nav>
     <aside class="side">
       <header class="side-h">
-        <a class="brand" href="#/" title="KU Message"><span class="logo">${svg('logo')}</span><b class="brand-t">KU Message</b></a>
+        <b class="side-t" id="sideT"></b>
         <span class="grow"></span>
-        <a class="ib" href="#/settings" title="${t('Настройки')}">${svg('gear')}</a>
-        <a class="ib" href="${esc(backUrl())}" title="KU Portal">${svg('home')}</a>
+        <a class="ib only-m" href="${esc(backUrl())}" title="KU Portal">${svg('home')}</a>
       </header>
-      <div class="seg" id="sideTabs">${sideTabs().map(([k, l]) => `<button data-t="${k}">${t(l)}<em hidden></em></button>`).join('')}</div>
-      <label class="search">${svg('search')}<input id="q" placeholder="${t('Поиск')}" autocomplete="off"></label>
+      <label class="search" id="searchBox">${svg('search')}<input id="q" placeholder="${t('Поиск')}" autocomplete="off"></label>
       <div class="list" id="list"></div>
-      <footer class="me"><span class="ava">${initials(u.fio)}</span><span><b>${esc(u.fio)}</b><small>${esc(teacher() ? t('Преподаватель') : u.group)}</small></span></footer>
     </aside>
     <main class="main" id="main"></main>
   </div>`;
-  document.getElementById('sideTabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { M.tab = b.dataset.t; paintTabs(); paintList(); } };
+  document.getElementById('rail').onclick = (e) => {
+    const b = e.target.closest('button[data-t]'); if (!b) return;
+    if (b.dataset.t === 'settings') { location.hash = '#/settings'; return; }
+    M.tab = b.dataset.t; M.q = ''; document.getElementById('q').value = '';
+    if (/^#\/settings/.test(location.hash)) location.hash = '#/'; else { paintRail(); paintList(); }
+  };
   document.getElementById('q').oninput = (e) => { M.q = e.target.value.trim().toLowerCase(); paintList(); };
   window.onhashchange = route;
-  paintTabs();
   route();
   refreshList();
   T.list = setInterval(refreshList, POLL_LIST_MS);
 }
-function paintTabs() {
-  const d = M.list;
-  const unread = (list) => (list || []).reduce((n, x) => n + (x.unread || 0), 0);
-  document.querySelectorAll('#sideTabs [data-t]').forEach((b) => {
+const sumUnread = (list) => (list || []).reduce((n, x) => n + (x.unread || 0), 0);
+const clubUnread = (c) => (c.unread ? c.unread.channel + c.unread.chat : 0);
+function badges() {
+  const d = M.list, c = M.clubs;
+  const clubs = c ? c.items.reduce((n, x) => n + clubUnread(x) + (x.requests ? x.requests.length : 0), 0) : 0;
+  return { chats: d ? sumUnread(d.contacts) : 0, subjects: d ? sumUnread(d.spaces) : 0, clubs, students: 0, settings: 0 };
+}
+function paintRail() {
+  const n = badges();
+  document.querySelectorAll('#rail [data-t]').forEach((b) => {
     b.classList.toggle('on', b.dataset.t === M.tab);
-    const n = !d ? 0 : b.dataset.t === 'subjects' ? unread(d.spaces) : b.dataset.t === 'chats' ? unread(d.contacts) : 0;
-    const em = b.querySelector('em'); em.hidden = !n; em.textContent = n;
+    const em = b.querySelector('em'); if (!em) return;
+    em.hidden = !n[b.dataset.t]; em.textContent = n[b.dataset.t] > 99 ? '99+' : n[b.dataset.t];
   });
-  const total = d ? unread(d.spaces) + unread(d.contacts) : 0;
+  const st = document.getElementById('sideT'); if (st) st.textContent = t(TAB_TITLE[M.tab]);
+  const sb = document.getElementById('searchBox'); if (sb) sb.hidden = M.tab === 'settings';
+  const total = n.chats + n.subjects + n.clubs;
   document.title = (total ? `(${total}) ` : '') + 'KU Message';
 }
 function route() {
   if (T.open) { clearInterval(T.open); T.open = null; }
-  if (location.hash === '#/settings') { M.ch = null; document.getElementById('km').classList.add('open'); paintTabs(); paintList(); return viewSettings(); }
-  const m = /^#\/(s|d)\/(.+)$/.exec(location.hash);
+  const h = location.hash, km = document.getElementById('km');
+  const st = /^#\/settings(?:\/(\w+))?$/.exec(h);
+  if (st) { M.tab = 'settings'; M.ch = null; km.classList.toggle('open', !!st[1]); paintRail(); paintList(); return viewSettings(st[1] || ''); }
+  const c = /^#\/c\/([\w-]+)(?:\/(chat|req))?$/.exec(h);
+  if (c) { M.tab = 'clubs'; M.ch = 'club:' + c[1]; km.classList.add('open'); paintRail(); paintList(); return openClub(c[1], c[2] || 'channel'); }
+  const m = /^#\/(s|d)\/(.+)$/.exec(h);
   M.ch = m ? decodeURIComponent(m[2]) : null;
-  if (m && M.tab === 'subjects' && m[1] === 'd') M.tab = teacher() && !(M.list && M.list.contacts.some((c) => c.ch === M.ch && c.last)) ? 'students' : 'chats';
+  if (m && m[1] === 'd' && !['chats', 'students'].includes(M.tab)) M.tab = teacher() && !(M.list && M.list.contacts.some((x) => x.ch === M.ch && x.last)) ? 'students' : 'chats';
   if (m && m[1] === 's') M.tab = 'subjects';
-  document.getElementById('km').classList.toggle('open', !!M.ch);
-  if (T.open) { clearInterval(T.open); T.open = null; }
-  paintTabs(); paintList();
+  if (!m && M.tab === 'settings') M.tab = 'chats';
+  km.classList.toggle('open', !!M.ch);
+  paintRail(); paintList();
   if (M.ch) openItem(); else paintWelcome();
 }
 async function refreshList() {
-  try { M.list = await api('/message/list'); paintTabs(); paintList(); } catch { }
+  const [l, c] = await Promise.allSettled([api('/message/list'), api('/clubs')]);
+  if (l.status === 'fulfilled') M.list = l.value;
+  if (c.status === 'fulfilled') M.clubs = c.value;
+  paintRail(); paintList();
 }
 
 /* ============================ Списки ============================ */
 const subjIcon = (title) => esc(String(title || '?').split(/\s+/).filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?');
-function rowHTML(href, ico, name, sub, right, on, unread) {
-  return `<a class="row ${on ? 'on' : ''} ${unread ? 'unread' : ''}" href="${href}">${ico}<span class="row-t"><b>${esc(name)}</b><small>${sub}</small></span><span class="row-r">${right}</span></a>`;
+/* Строка списка как в Telegram: имя и время сверху, превью и счётчик снизу */
+function rowHTML(href, ico, name, sub, when, badge, on, unread) {
+  return `<a class="row ${on ? 'on' : ''} ${unread ? 'unread' : ''}" href="${href}">${ico}
+    <span class="row-t"><span class="row-1"><b>${esc(name)}</b>${when ? `<small>${when}</small>` : ''}</span>
+    <span class="row-2"><span class="row-s">${sub}</span>${badge || ''}</span></span></a>`;
 }
-function personIco(p) { return `<span class="ava">${initials(p.fio)}${p.online ? '<i class="on"></i>' : ''}</span>`; }
+function personIco(p, cls) { return `<span class="ava ${cls || ''}" style="--h:${hue(p.id)}">${initials(p.fio)}${p.online ? '<i class="on"></i>' : ''}</span>`; }
+const pill = (n) => (n ? `<em class="pill">${n > 99 ? '99+' : n}</em>` : '');
 function lastText(c) {
   if (!c.last) return '';
   if (!getPrefs().previews) return c.unread ? t('Новые сообщения') : esc(c.role === 'teacher' ? t('Преподаватель') : c.group || '');
-  return `${c.last.from === M.user.id ? t('Вы: ') : ''}${esc(c.last.text)}`;
+  return `${c.last.from === M.user.id ? `<span class="you">${t('Вы: ')}</span>` : ''}${esc(c.last.text)}`;
 }
 function paintList() {
   const box = document.getElementById('list'); if (!box) return;
+  if (M.tab === 'settings') { box.innerHTML = settingsMenuHTML(); return; }
   const d = M.list;
-  if (!d) { box.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>'; return; }
+  if (!d || (M.tab === 'clubs' && !M.clubs)) { box.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>'; return; }
   const q = (s) => !M.q || String(s).toLowerCase().includes(M.q);
   let html = '';
   if (M.tab === 'subjects') {
-    const items = d.spaces.filter((s) => q(tv(s.title)));
-    html = items.map((s) => rowHTML(`#/s/${encodeURIComponent(s.id)}`, `<span class="sq">${subjIcon(tv(s.title))}</span>`, tv(s.title),
+    html = d.spaces.filter((s) => q(tv(s.title))).map((s) => rowHTML(`#/s/${encodeURIComponent(s.id)}`, `<span class="sq" style="--h:${hue(s.id)}">${subjIcon(tv(s.title))}</span>`, tv(s.title),
       esc(teacher() ? s.groups.join(', ') : s.teacher),
-      s.unread ? `<em class="pill">${s.unread}</em>` : s.nextDue ? `<span class="due-chip">${esc(t('до {d}', { d: fmtDay(s.nextDue) }))}</span>` : '',
+      s.last ? esc(whenShort(s.last.at)) : '',
+      s.unread ? pill(s.unread) : s.nextDue ? `<span class="due-chip">${esc(t('до {d}', { d: fmtDay(s.nextDue) }))}</span>` : '',
       M.ch === s.id, s.unread)).join('') || `<div class="empty-s">${t(teacher() ? 'Предметы появятся, когда вы добавите занятия в расписание.' : 'Предметы появятся, когда преподаватель добавит занятия вашей группе.')}</div>`;
   } else if (M.tab === 'chats') {
     const talks = d.contacts.filter((c) => c.last && q(c.fio)).sort((a, b) => b.last.at - a.last.at);
-    html = talks.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, lastText(c), `<small>${esc(whenShort(c.last.at))}</small>${c.unread ? `<em class="pill">${c.unread}</em>` : ''}`, M.ch === c.ch, c.unread)).join('');
+    html = talks.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, lastText(c), esc(whenShort(c.last.at)), pill(c.unread), M.ch === c.ch, c.unread)).join('');
     if (!teacher()) {
       const fresh = d.contacts.filter((c) => !c.last && q(c.fio));
-      if (fresh.length) html += `<div class="sep">${t('Преподаватели')}</div>` + fresh.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, esc(t(c.online ? 'в сети' : 'Преподаватель')), '', M.ch === c.ch)).join('');
+      if (fresh.length) html += `<div class="sep">${t('Преподаватели')}</div>` + fresh.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, esc(t(c.online ? 'в сети' : 'Преподаватель')), '', '', M.ch === c.ch)).join('');
     }
     if (!html) html = `<div class="empty-s">${t(teacher() ? 'Здесь будут переписки со студентами. Написать студенту можно во вкладке «Ученики».' : 'Переписок пока нет.')}</div>`;
+  } else if (M.tab === 'clubs') {
+    html = clubsListHTML(q);
   } else {
     const groups = [...new Set(d.contacts.map((c) => c.group))].sort();
     html = groups.map((g) => {
       const people = d.contacts.filter((c) => c.group === g && q(c.fio));
-      return people.length ? `<div class="sep">${esc(g)}</div>` + people.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, esc(c.online ? t('в сети') : t('Студент')), `<span class="link">${t('Написать')}</span>`, M.ch === c.ch)).join('') : '';
+      return people.length ? `<div class="sep">${esc(g)}</div>` + people.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, esc(c.online ? t('в сети') : t('Студент')), '', `<span class="link">${t('Написать')}</span>`, M.ch === c.ch)).join('') : '';
     }).join('') || `<div class="empty-s">${t('Студенты появятся, когда у вас будут занятия с группами.')}</div>`;
   }
   box.innerHTML = html;
 }
+function clubRow(c) {
+  const sub = c.last ? esc(c.last.text) : esc(t('участников: {n}', { n: c.members }));
+  const req = c.requests && c.requests.length ? `<span class="req-chip">${esc(t('заявок: {n}', { n: c.requests.length }))}</span>` : '';
+  return rowHTML(`#/c/${c.id}`, clubIco(c), tv(c.name), sub, c.last ? esc(whenShort(c.last.at)) : '', req + pill(clubUnread(c)), M.ch === 'club:' + c.id, clubUnread(c));
+}
+function clubsListHTML(q) {
+  const items = M.clubs.items.filter((c) => q(tv(c.name)));
+  if (teacher()) return items.map(clubRow).join('') || `<div class="empty-s">${t('Ничего не найдено.')}</div>`;
+  const mine = items.filter((c) => c.joined), pending = items.filter((c) => !c.joined && c.pending), other = items.filter((c) => !c.joined && !c.pending);
+  const plain = (c, right) => rowHTML(`#/c/${c.id}`, clubIco(c), tv(c.name), esc(tv(c.desc)), '', right, M.ch === 'club:' + c.id);
+  let html = mine.length ? `<div class="sep">${t('Мои клубы')}</div>` + mine.map(clubRow).join('') : '';
+  if (pending.length) html += `<div class="sep">${t('Заявки на рассмотрении')}</div>` + pending.map((c) => plain(c, `<span class="wait-chip">${t('ждёт ответа')}</span>`)).join('');
+  if (other.length) html += `<div class="sep">${t('Можно подать заявку')}</div>` + other.map((c) => plain(c, `<span class="link">${t('Подать заявку')}</span>`)).join('');
+  return html || `<div class="empty-s">${t('Ничего не найдено.')}</div>`;
+}
 function paintWelcome() {
   const d = M.list;
   const due = d ? d.spaces.filter((s) => s.nextDue).sort((a, b) => a.nextDue.localeCompare(b.nextDue)) : [];
-  document.getElementById('main').innerHTML = `<div class="welcome">
+  document.getElementById('main').innerHTML = `<div class="welcome wall"><div class="welcome-c">
+    <span class="logo xl">${svg('logo')}</span>
     <b>${esc(t('Здравствуйте, {n}!', { n: M.user.firstName }))}</b>
     <p class="muted">${t(teacher() ? 'Откройте предмет, чтобы добавить лекцию, практику или задание.' : 'Откройте предмет, чтобы посмотреть лекции и практики, или напишите преподавателю.')}</p>
     ${due.length && !teacher() ? `<div class="soon"><div class="soon-h">${t('Ближайшие сроки сдачи')}</div>${due.slice(0, 4).map((s) => `<a href="#/s/${encodeURIComponent(s.id)}"><span>${esc(tv(s.title))}</span><span class="due-chip">${esc(t('до {d}', { d: fmtDay(s.nextDue) }))}</span></a>`).join('')}</div>` : ''}
-  </div>`;
+  </div></div>`;
 }
 
 /* ============================ Открытый предмет / чат ============================ */
 async function openItem() {
-  Object.assign(V, { data: null, sig: '', file: null, sending: false });
+  Object.assign(V, { data: null, sig: '', file: null, sending: false, send: null, reload: () => load(false) });
   const main = document.getElementById('main');
   main.innerHTML = `<div class="pane"><header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a><div class="pane-t"><b>${t('Загрузка…')}</b></div></header><div class="pane-b"><div class="skel big"></div></div></div>`;
   await load(true);
@@ -153,7 +211,7 @@ async function openItem() {
 async function load(first) {
   let d;
   try { d = await api('/message/open?ch=' + encodeURIComponent(M.ch)); }
-  catch (e) { if (first) document.querySelector('.pane-b').innerHTML = `<div class="empty">${svg('lock')}<b>${t('Нет доступа')}</b><span>${esc(e.message)}</span></div>`; return; }
+  catch (e) { if (first) noAccess(e); return; }
   if (!document.querySelector('.pane')) return;
   const sig = JSON.stringify(d);
   if (sig === V.sig) return;
@@ -162,26 +220,27 @@ async function load(first) {
   if (firstLoad) setTimeout(refreshList, 200); // непрочитанное обнулилось
   if (d.kind === 'space') paintSpace(firstLoad); else paintDM(firstLoad);
 }
+function noAccess(e) { const b = document.querySelector('.pane-b'); if (b) b.innerHTML = `<div class="empty">${svg('lock')}<b>${t('Нет доступа')}</b><span>${esc(e.message)}</span></div>`; }
 async function act(path, body, okText) {
-  try { await api(path, { method: 'POST', body }); if (okText) toast(okText); V.sig = ''; await load(false); refreshList(); return true; }
+  try { await api(path, { method: 'POST', body }); if (okText) toast(okText); V.sig = ''; if (V.reload) await V.reload(); refreshList(); return true; }
   catch (e) { toast(e.message, true); return false; }
 }
 
-/* ---------- Предмет ---------- */
+/* ---------- Предмет (как команда в Teams: шапка-баннер и вкладки) ---------- */
 function paintSpace(first) {
   const d = V.data;
   if (first) { const firstNonEmpty = SPACE_TABS.find(([k]) => count(d, k)); V.tab = firstNonEmpty ? firstNonEmpty[0] : 'lecture'; }
   const tabs = SPACE_TABS.filter(([k]) => k !== 'other' || count(d, 'other') || d.manage);
   const pane = document.querySelector('.pane');
   pane.innerHTML = `
-    <header class="pane-h space-h">
+    <header class="pane-h space-h" style="--h:${hue(M.ch)}">
       <a class="ib only-m" href="#/">${svg('back')}</a>
-      <span class="sq lg">${subjIcon(tv(d.title))}</span>
+      <span class="sq lg" style="--h:${hue(M.ch)}">${subjIcon(tv(d.title))}</span>
       <div class="pane-t"><b>${esc(tv(d.title))}</b><small>${esc(d.teacher)} · ${esc(d.groups.join(', '))}${d.officeHours ? ' · ' + esc(t('консультации: {v}', { v: d.officeHours })) : ''}</small></div>
     </header>
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-k="${k}" class="${V.tab === k ? 'on' : ''}">${t(l)}<span>${count(d, k)}</span></button>`).join('')}
       ${d.manage ? `<span class="grow"></span><button class="btn pri sm" id="addBtn" title="${t(V.tab === 'task' ? 'Задание' : 'Добавить')}">${svg('plus')}<span>${t(V.tab === 'task' ? 'Задание' : 'Добавить')}</span></button>` : ''}</nav>
-    <div class="pane-b"><div class="col">${V.tab === 'task' ? tasksHTML(d) : postsHTML(d, V.tab)}</div></div>`;
+    <div class="pane-b feed"><div class="col">${V.tab === 'task' ? tasksHTML(d) : postsHTML(d, V.tab)}</div></div>`;
   pane.querySelector('.tabs').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) { V.tab = b.dataset.k; paintSpace(false); } };
   const add = pane.querySelector('#addBtn'); if (add) add.onclick = () => (V.tab === 'task' ? taskDlg() : materialDlg(V.tab));
   bindFiles(pane);
@@ -218,8 +277,8 @@ function tasksHTML(d) {
       </div></article>`;
   }).join('');
 }
-function confirmDlg(title, text, run) {
-  modal(title, `<p class="muted">${text}</p><button class="btn danger wide" id="cfGo">${t('Удалить')}</button>`, (box, close) => { box.querySelector('#cfGo').onclick = () => { close(); run(); }; });
+function confirmDlg(title, text, run, btn) {
+  modal(title, `<p class="muted">${text}</p><button class="btn danger wide" id="cfGo">${btn || t('Удалить')}</button>`, (box, close) => { box.querySelector('#cfGo').onclick = () => { close(); run(); }; });
 }
 function fileField(box) {
   let file = null;
@@ -265,39 +324,56 @@ function taskDlg(x) {
   });
 }
 
+/* ---------- Переписка: общий вид для лички и чата клуба ---------- */
+/* o: { group — имена и аватары (чат клуба), people — id → человек, otherRead — до какого времени прочитано (только в личке) } */
+function msgsHTML(items, o) {
+  const same = (a, b) => a && b && a.from === b.from && isoOf(a.at) === isoOf(b.at) && Math.abs(b.at - a.at) < GROUP_MS;
+  let lastDay = '';
+  return items.map((m, i) => {
+    const day = isoOf(m.at), mine = m.from === M.user.id;
+    const sep = day !== lastDay ? `<div class="day"><span>${esc(day === todayIso() ? t('Сегодня') : fmtDay(day, true))}</span></div>` : '';
+    lastDay = day;
+    const first = !same(items[i - 1], m) || !!sep, last = !same(m, items[i + 1]);
+    const p = (o.people && o.people[m.from]) || { id: m.from, fio: '—' };
+    const read = mine && o.otherRead != null && o.otherRead >= m.at;
+    const side = o.group && !mine ? (last ? personIco(p, 'sm') : '<span class="ava-gap"></span>') : '';
+    const who = o.group && !mine && first ? `<b class="who" style="--h:${hue(p.id)}">${esc(p.fio)}${p.role === 'teacher' ? `<i>${t('глава клуба')}</i>` : ''}</b>` : '';
+    return `${sep}<div class="msg ${mine ? 'me' : ''} ${first ? 'first' : ''} ${last ? 'last' : ''}">${side}<div class="bub">${who}${m.text ? `<span class="txt">${md(m.text)}</span>` : ''}${m.file ? fileCard(m.file) : ''}
+      <span class="meta">${esc(timeOf(m.at))}${mine && 'otherRead' in o ? `<i class="rc ${read ? 'read' : ''}">${svg(read ? 'checks' : 'check')}</i>` : ''}</span></div>
+      ${mine ? `<button class="ib sm del" data-del="${esc(m.id)}" title="${t('Удалить')}">${svg('trash')}</button>` : ''}</div>`;
+  }).join('');
+}
+function composerHTML(o) {
+  return `<footer class="composer">
+    <div class="pend" id="pend" hidden></div>
+    <div class="comp">
+      ${o.attach ? `<button class="ib" id="attach" title="${t('Прикрепить файл')}">${svg('clip')}</button>` : ''}
+      ${o.extra || ''}
+      <textarea id="inp" rows="1" maxlength="2000" placeholder="${o.placeholder || t('Сообщение…')}"></textarea>
+      <button class="send" id="send" title="${t('Отправить')}">${svg('send')}</button>
+    </div>
+  </footer>`;
+}
+
 /* ---------- Личный чат ---------- */
 function paintDM(first) {
   const d = V.data, o = d.other;
-  let pane = document.querySelector('.pane');
+  const pane = document.querySelector('.pane');
   if (first || !pane.querySelector('.composer')) {
     pane.innerHTML = `
       <header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a>${personIco(o)}
         <div class="pane-t"><b>${esc(o.fio)}</b><small id="dmSub"></small></div></header>
-      <div class="pane-b chat" id="chatBody"><div class="col" id="chatList"></div></div>
-      <footer class="composer">
-        <div class="pend" id="pend" hidden></div>
-        <div class="comp">
-          <button class="ib" id="attach" title="${t('Прикрепить файл')}">${svg('clip')}</button>
-          ${teacher() ? `<button class="ib" id="quick" title="${t('Быстрые ответы')}">${svg('quote')}</button>` : ''}
-          <textarea id="inp" rows="1" maxlength="2000" placeholder="${t('Сообщение…')}"></textarea>
-          <button class="send" id="send" title="${t('Отправить')}">${svg('send')}</button>
-        </div>
-      </footer>`;
+      <div class="pane-b chat wall" id="chatBody"><div class="col" id="chatList"></div></div>
+      ${composerHTML({ attach: true, extra: teacher() ? `<button class="ib" id="quick" title="${t('Быстрые ответы')}">${svg('quote')}</button>` : '' })}`;
+    V.send = (text, file) => api('/message/send', { method: 'POST', body: { ch: M.ch, text, fileId: file ? file.id : '' } });
     bindComposer();
   }
-  document.getElementById('dmSub').textContent = [o.role === 'teacher' ? t('Преподаватель') : o.group, o.online ? t('в сети') : '', o.officeHours ? t('консультации: {v}', { v: o.officeHours }) : ''].filter(Boolean).join(' · ');
+  const sub = document.getElementById('dmSub');
+  sub.textContent = [o.role === 'teacher' ? t('Преподаватель') : o.group, o.online ? t('в сети') : '', o.officeHours ? t('консультации: {v}', { v: o.officeHours }) : ''].filter(Boolean).join(' · ');
+  sub.classList.toggle('online', !!o.online);
   const body = document.getElementById('chatBody'), list = document.getElementById('chatList');
   const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 90;
-  let lastDay = '';
-  list.innerHTML = d.items.length ? d.items.map((m) => {
-    const day = isoOf(m.at), mine = m.from === M.user.id;
-    const sep = day !== lastDay ? `<div class="day">${esc(day === todayIso() ? t('Сегодня') : fmtDay(day, true))}</div>` : '';
-    lastDay = day;
-    const read = mine && d.otherRead != null && d.otherRead >= m.at;
-    return `${sep}<div class="msg ${mine ? 'me' : ''}"><div class="bub">${m.text ? `<span class="txt">${md(m.text)}</span>` : ''}${m.file ? fileCard(m.file) : ''}
-      <span class="meta">${esc(timeOf(m.at))}${mine ? `<i class="rc ${read ? 'read' : ''}">${svg(read ? 'checks' : 'check')}</i>` : ''}</span></div>
-      ${mine ? `<button class="ib sm del" data-del="${esc(m.id)}" title="${t('Удалить')}">${svg('trash')}</button>` : ''}</div>`;
-  }).join('') : `<div class="empty">${svg('chat')}<span>${t(teacher() ? 'Напишите студенту — сообщение увидит только он.' : 'Задайте вопрос — его увидит только преподаватель.')}</span></div>`;
+  list.innerHTML = d.items.length ? msgsHTML(d.items, { otherRead: d.otherRead }) : `<div class="empty chip-empty">${svg('chat')}<span>${t(teacher() ? 'Напишите студенту — сообщение увидит только он.' : 'Задайте вопрос — его увидит только преподаватель.')}</span></div>`;
   bindFiles(list);
   list.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить сообщение?'), t('Сообщение исчезнет у обоих.'), () => act('/message/delete', { id: b.dataset.del }))));
   if (first || atBottom) body.scrollTop = body.scrollHeight;
@@ -311,7 +387,8 @@ function bindComposer() {
     if ((enterSend && !e.shiftKey) || (!enterSend && (e.ctrlKey || e.metaKey))) { e.preventDefault(); sendMsg(); }
   };
   document.getElementById('send').onclick = sendMsg;
-  document.getElementById('attach').onclick = async () => {
+  const at = document.getElementById('attach');
+  if (at) at.onclick = async () => {
     const f = await pickFile(); if (!f) return;
     try { setPend({ name: f.name, uploading: true }); setPend(await uploadFile(f)); } catch (e) { setPend(null); toast(e.message, true); }
   };
@@ -331,15 +408,175 @@ function setPend(f) {
 async function sendMsg() {
   const inp = document.getElementById('inp');
   const text = inp.value.trim();
-  if ((!text && !V.file) || V.sending) return;
+  if ((!text && !V.file) || V.sending || !V.send) return;
   V.sending = true;
   try {
-    await api('/message/send', { method: 'POST', body: { ch: M.ch, text, fileId: V.file ? V.file.id : '' } });
+    await V.send(text, V.file);
     inp.value = ''; inp.style.height = 'auto'; setPend(null);
-    V.sig = ''; await load(false); refreshList();
-    const b = document.getElementById('chatBody'); b.scrollTop = b.scrollHeight;
+    V.sig = ''; if (V.reload) await V.reload(); refreshList();
+    const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight;
   } catch (e) { toast(e.message, true); }
   V.sending = false;
+}
+
+/* ============================ Клубы ============================ */
+const clubById = (id) => (M.clubs ? M.clubs.items.find((x) => x.id === id) : null);
+function meetText(m) { return m ? `${weekdayName(m.day)}, ${m.time}${m.endTime ? '–' + m.endTime : ''} · ${tv(m.place)}` : ''; }
+async function refreshClubs() { M.clubs = await api('/clubs'); paintRail(); paintList(); }
+async function openClub(id, tab) {
+  Object.assign(V, { data: null, sig: '', file: null, sending: false, send: null, reload: null });
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="pane"><header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a><div class="pane-t"><b>${t('Загрузка…')}</b></div></header><div class="pane-b"><div class="skel big"></div></div></div>`;
+  if (!M.clubs) { try { await refreshClubs(); } catch (e) { return noAccess(e); } }
+  const c = clubById(id);
+  if (!c) return noAccess(new Error(t('Клуб не найден')));
+  if (!teacher() && !c.joined) return paintClubAbout(c);
+  if (tab === 'req' && !teacher()) tab = 'channel';
+  const un = c.unread || { channel: 0, chat: 0 };
+  const tabs = [['channel', '', 'Канал', un.channel], ['chat', '/chat', 'Чат', un.chat]].concat(teacher() ? [['req', '/req', 'Заявки', (c.requests || []).length]] : []);
+  main.querySelector('.pane').innerHTML = `
+    <header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a>${clubIco(c)}
+      <div class="pane-t"><b>${esc(tv(c.name))}</b><small>${esc(t('участников: {n}', { n: c.members }))} · ${t(tab === 'chat' ? 'чат участников' : tab === 'req' ? 'заявки на вступление' : 'канал')}</small></div>
+      <button class="ib" id="clInfo" title="${t('О клубе')}">${svg('info')}</button></header>
+    <nav class="tabs">${tabs.map(([k, suf, l, n]) => `<a href="#/c/${c.id}${suf}" class="tab ${tab === k ? 'on' : ''}">${t(l)}${n && tab !== k ? `<em class="pill">${n}</em>` : ''}</a>`).join('')}</nav>
+    <div class="pinned" id="pinned" hidden></div>
+    <div class="pane-b chat wall" id="chatBody"><div class="col" id="chatList"><div class="skel big"></div></div></div>
+    ${tab === 'req' ? '' : tab === 'chat' || teacher() ? composerHTML({ placeholder: t(tab === 'chat' ? 'Сообщение участникам…' : 'Публикация в канале…'), extra: tab === 'channel' ? `<button class="ib" id="evNew" title="${t('Мероприятие')}">${svg('calendar')}</button>` : '' })
+      : `<footer class="ch-foot"><span>${svg('megaphone')}${t('В канале публикуют только главы клуба')}</span><a class="btn sm" href="#/c/${c.id}/chat">${svg('chat')}${t('Обсудить в чате')}</a></footer>`}`;
+  document.getElementById('clInfo').onclick = () => clubInfoDlg(c);
+  if (tab === 'req') return paintRequests(c);
+  if (main.querySelector('.composer')) {
+    V.send = tab === 'chat' ? (text) => api('/clubs/chat/send', { method: 'POST', body: { id: c.id, text } }) : (text) => api('/clubs/post', { method: 'POST', body: { id: c.id, text } });
+    bindComposer();
+    const ev = document.getElementById('evNew'); if (ev) ev.onclick = () => clubEventDlg(c);
+  }
+  V.reload = () => loadClub(c, tab, false);
+  await loadClub(c, tab, true);
+  if (V.data) T.open = setInterval(() => loadClub(c, tab, false), POLL_OPEN_MS);
+}
+async function loadClub(c, tab, first) {
+  let d;
+  try { d = await api(`/clubs/${tab === 'chat' ? 'chat' : 'feed'}?id=${encodeURIComponent(c.id)}`); }
+  catch (e) { if (first) noAccess(e); return; }
+  const body = document.getElementById('chatBody'), list = document.getElementById('chatList');
+  if (!list) return;
+  const sig = JSON.stringify(d);
+  if (sig === V.sig) return;
+  const firstLoad = !V.data;
+  V.data = d; V.sig = sig;
+  if (firstLoad) setTimeout(refreshList, 200); // непрочитанное обнулилось
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 90;
+  if (tab === 'chat') paintClubChat(d, list); else paintChannel(d, list);
+  if (firstLoad || atBottom) body.scrollTop = body.scrollHeight;
+}
+/* Канал — как канал в Telegram: публикации глав клуба и мероприятия с записью; сверху закреплено ближайшее */
+function paintChannel(d, list) {
+  const next = d.upcoming.find((e) => !e.weekly) || d.upcoming[0];
+  const pin = document.getElementById('pinned');
+  pin.hidden = !next;
+  if (next) pin.innerHTML = `${svg('pin')}<span><b>${t('Ближайшее мероприятие')}</b><small>${esc(tv(next.title))} · ${esc(fmtDay(next.date, true))}, ${esc(next.time)}${next.place ? ' · ' + esc(tv(next.place)) : ''}</small></span>${next.going ? `<em class="going">${t('Вы записаны')}</em>` : ''}`;
+  let lastDay = '';
+  list.innerHTML = d.posts.length ? d.posts.map((x) => {
+    const day = isoOf(x.at);
+    const sep = day !== lastDay ? `<div class="day"><span>${esc(day === todayIso() ? t('Сегодня') : fmtDay(day, true))}</span></div>` : '';
+    lastDay = day;
+    return `${sep}<article class="cpost ${x.type === 'event' ? 'is-ev' : ''}">
+      <div class="cp-h">${clubIco(d, 'sm')}<b>${esc(tv(d.name))}</b><small>${x.by.id ? esc(x.by.fio) : ''}</small>
+        ${x.mine && x.type === 'post' ? `<button class="ib sm del" data-del="${esc(x.id)}" title="${t('Удалить')}">${svg('trash')}</button>` : ''}</div>
+      ${x.type === 'event' ? eventCard(x) : `<p class="txt">${md(x.text)}</p>`}
+      <span class="meta">${esc(timeOf(x.at))}</span>
+    </article>`;
+  }).join('') : `<div class="empty chip-empty">${svg('megaphone')}<span>${t(d.manage ? 'Напишите первую публикацию — её увидят все участники клуба.' : 'В канале пока нет публикаций.')}</span></div>`;
+  list.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить публикацию?'), t('Публикация исчезнет у всех участников.'), () => act('/clubs/post/delete', { id: b.dataset.del }))));
+  list.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => act('/clubs/event/register', { id: b.dataset.go, on: !!b.dataset.v }, b.dataset.v ? t('Вы записаны на мероприятие') : t('Запись отменена'))));
+  list.querySelectorAll('[data-evdel]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить мероприятие?'), t('Мероприятие исчезнет у всех участников.'), () => act('/clubs/event/delete', { id: b.dataset.evdel }, t('Мероприятие удалено')))));
+}
+function eventCard(e) {
+  const full = e.limit && e.count >= e.limit && !e.going;
+  const seats = e.limit ? t('мест: {n} из {m}', { n: e.count, m: e.limit }) : t('записались: {n}', { n: e.count });
+  return `<div class="ev-card ${e.going ? 'going' : ''} ${e.past ? 'past' : ''}">
+    <div class="ev-d"><b>${esc(e.date.slice(8))}</b><small>${esc(fmtDay(e.date).replace(/^\d+\s*/, '').slice(0, 3))}</small></div>
+    <div class="ev-b">
+      <span class="kicker">${svg('calendar')}${t(e.past ? 'Мероприятие прошло' : 'Мероприятие')}</span>
+      <b>${esc(tv(e.title))}</b>
+      ${e.text ? `<p class="txt">${md(tv(e.text))}</p>` : ''}
+      <small>${esc(fmtDay(e.date, true))}, ${esc(e.time)}${e.endTime ? '–' + esc(e.endTime) : ''}${e.place ? ' · ' + esc(tv(e.place)) : ''}</small>
+      <small>${esc(seats)}${e.hours ? ' · ' + esc(t('засчитывается: {h}', { h: t('{n} ч', { n: e.hours }) })) : ''}</small>
+      ${e.past ? '' : `<div class="ev-btns">${teacher() ? '' : `<button class="btn ${e.going ? '' : 'pri'} sm" data-go="${esc(e.id)}" data-v="${e.going ? '' : '1'}" ${full ? 'disabled' : ''}>${e.going ? t('Отменить запись') : full ? t('Мест нет') : t('Записаться')}</button>`}
+        ${e.mine ? `<button class="btn danger sm" data-evdel="${esc(e.id)}">${t('Удалить')}</button>` : ''}</div>`}
+    </div></div>`;
+}
+function paintClubChat(d, list) {
+  const people = Object.fromEntries(d.people.map((p) => [p.id, p]));
+  list.innerHTML = d.items.length ? msgsHTML(d.items, { group: true, people })
+    : `<div class="empty chip-empty">${svg('users')}<span>${t('Здесь участники клуба обмениваются новостями. Напишите первым!')}</span></div>`;
+  list.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить сообщение?'), t('Сообщение исчезнет у всех участников.'), () => act('/clubs/chat/delete', { id: b.dataset.del }))));
+}
+function paintRequests(c) {
+  const list = document.getElementById('chatList');
+  document.getElementById('chatBody').classList.remove('chat');
+  const rows = c.requests || [];
+  list.innerHTML = rows.length ? `<div class="req-list">${rows.map((r) => `<div class="req">${personIco(r)}
+      <div class="req-t"><b>${esc(r.fio)}</b><small>${esc(r.group || t('Студент'))} · ${esc(t('заявка от {d}', { d: fmtDay(isoOf(r.at)) }))}</small></div>
+      <div class="req-b"><button class="btn pri sm" data-acc="${esc(r.id)}">${svg('check')}${t('Принять')}</button><button class="btn sm" data-rej="${esc(r.id)}">${t('Отклонить')}</button></div></div>`).join('')}</div>`
+    : `<div class="empty chip-empty">${svg('check')}<span>${t('Новых заявок нет.')}</span></div>`;
+  const decide = async (uid, accept) => {
+    try { await api('/clubs/request', { method: 'POST', body: { id: c.id, uid, accept } }); toast(t(accept ? 'Студент принят в клуб' : 'Заявка отклонена')); await refreshClubs(); openClub(c.id, 'req'); }
+    catch (e) { toast(e.message, true); }
+  };
+  list.querySelectorAll('[data-acc]').forEach((b) => (b.onclick = () => decide(b.dataset.acc, true)));
+  list.querySelectorAll('[data-rej]').forEach((b) => (b.onclick = () => decide(b.dataset.rej, false)));
+}
+/* Не участник: карточка клуба и заявка на вступление */
+function paintClubAbout(c) {
+  const pane = document.querySelector('.pane');
+  pane.innerHTML = `
+    <header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a>${clubIco(c)}
+      <div class="pane-t"><b>${esc(tv(c.name))}</b><small>${esc(t('участников: {n}', { n: c.members }))}</small></div></header>
+    <div class="pane-b wall"><div class="about">
+      ${clubIco(c, 'xl')}
+      <h2>${esc(tv(c.name))}</h2>
+      <p>${esc(tv(c.desc))}</p>
+      <div class="facts"><span>${svg('users')}${esc(t('участников: {n}', { n: c.members }))}</span>${c.meet ? `<span>${svg('clock')}${esc(meetText(c.meet))}</span>` : ''}</div>
+      <div class="about-lock">${svg('lock')}<span>${t('Канал с публикациями глав клуба и чат участников откроются, когда глава примет вашу заявку.')}</span></div>
+      ${c.pending ? `<div class="about-wait">${svg('clock')}<span><b>${t('Заявка отправлена')}</b><small>${t('Глава клуба скоро её рассмотрит')}</small></span></div><button class="btn wide" id="clCancel">${t('Отозвать заявку')}</button>`
+        : `<button class="btn pri wide" id="clApply">${svg('flag')}${t('Подать заявку')}</button>`}
+    </div></div>`;
+  const send = async (on) => {
+    try { await api('/clubs/join', { method: 'POST', body: { id: c.id, on } }); toast(t(on ? 'Заявка отправлена — глава клуба её рассмотрит' : 'Заявка отозвана')); await refreshClubs(); paintClubAbout(clubById(c.id)); }
+    catch (e) { toast(e.message, true); }
+  };
+  const a = document.getElementById('clApply'); if (a) a.onclick = () => send(true);
+  const x = document.getElementById('clCancel'); if (x) x.onclick = () => send(false);
+}
+function clubInfoDlg(c) {
+  modal(tv(c.name), `<div class="about in-dlg">${clubIco(c, 'xl')}<p>${esc(tv(c.desc))}</p>
+      <div class="facts"><span>${svg('users')}${esc(t('участников: {n}', { n: c.members }))}</span>${c.meet ? `<span>${svg('clock')}${esc(meetText(c.meet))}</span>` : ''}${c.since ? `<span>${svg('flag')}${esc(t('Вы в клубе с {d}', { d: fmtDay(isoOf(c.since)) }))}</span>` : ''}</div></div>
+    ${!teacher() && c.joined ? `<button class="btn danger wide" id="clLeave">${svg('logout')}${t('Выйти из клуба')}</button>` : ''}`, (box, close) => {
+    const b = box.querySelector('#clLeave');
+    if (b) b.onclick = () => { close(); confirmDlg(t('Выйти из клуба?'), t('Канал и чат клуба перестанут быть видны, записи на будущие встречи снимутся. История участия останется в профиле активности.'), async () => {
+      try { await api('/clubs/join', { method: 'POST', body: { id: c.id, on: false } }); toast(t('Вы вышли из клуба')); await refreshClubs(); location.hash = '#/'; }
+      catch (e) { toast(e.message, true); }
+    }, t('Выйти')); };
+  });
+}
+function clubEventDlg(c) {
+  const iso = isoOf(Date.now() + 864e5 * 3);
+  modal(t('Новое мероприятие'), `
+    <input class="inp" id="neTitle" maxlength="120" placeholder="${t('Название, например: Товарищеский матч')}">
+    <textarea class="inp" id="neText" rows="3" maxlength="1000" placeholder="${t('Подробности: что взять, во сколько сбор (необязательно)')}"></textarea>
+    <label class="lbl">${t('Дата и время')}</label>
+    <input class="inp" id="neDate" type="date" min="${todayIso()}" value="${iso}">
+    <div class="row2"><input class="inp" id="neTime" type="time" value="16:00" aria-label="${t('Начало')}"><input class="inp" id="neEnd" type="time" value="18:00" aria-label="${t('Окончание')}"></div>
+    <input class="inp" id="nePlace" maxlength="120" placeholder="${t('Место')}">
+    <div class="row2"><input class="inp" id="neLimit" type="number" min="0" max="1000" placeholder="${t('Мест (0 — без ограничения)')}"><input class="inp" id="neHours" type="number" min="0" max="24" step="0.5" placeholder="${t('Часов в зачёт')}"></div>
+    <button class="btn pri wide" id="neGo">${t('Опубликовать в канале')}</button>`, (box, close) => {
+    box.querySelector('#neGo').onclick = async () => {
+      const g = (s) => box.querySelector(s).value;
+      const done = await act('/clubs/event', { clubId: c.id, title: g('#neTitle'), text: g('#neText'), date: g('#neDate'), time: g('#neTime'), endTime: g('#neEnd'), place: g('#nePlace'), limit: g('#neLimit'), hours: g('#neHours') }, t('Мероприятие опубликовано'));
+      if (done) close();
+    };
+  });
 }
 
 /* ============================ Быстрые ответы (шаблоны меняются в настройках — settings.js) ============================ */
