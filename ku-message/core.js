@@ -7,7 +7,7 @@
  * (theme, mode, lang) и адрес возврата (back). API — /api/message/*, /api/files, /api/settings, /api/inbox.
  */
 const app = document.getElementById('app');
-const M = { token: null, user: null, srv: null, tab: 'subjects', ch: null, list: null, q: '' };
+const M = { token: null, user: null, srv: null, tab: 'chats', ch: null, list: null, clubs: null, q: '' };
 const PORTAL_URL = 'https://sakeda-hub.github.io/ku-portal/'; // если портал не передал адрес возврата
 
 /* ------------------------------ Иконки ------------------------------ */
@@ -39,6 +39,18 @@ const I = {
   clock: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3.1 1.9"/>',
   file: '<path d="M7 3.5h7l4.5 4.5v12.5H7z"/><path d="M14 3.5V8h4.5"/>',
   quote: '<path d="M5 18h4.5v-5H6.5c0-2.5 1-4 3-4.5V6C6.5 6.5 5 9 5 13zM14 18h4.5v-5h-3c0-2.5 1-4 3-4.5V6c-3 .5-4.5 3-4.5 7z"/>',
+  flag: '<path d="M5.5 20.5v-16"/><path d="M5.5 4.8h11.2l-2.2 4.1 2.2 4.1H5.5"/>',
+  ball: '<circle cx="12" cy="12" r="8.5"/><path d="m12 7.6 3.6 2.6-1.4 4.2H9.8l-1.4-4.2z"/><path d="M12 3.5v4.1M15.6 10.2l4.1-1.1M14.2 14.4l2.4 3.5M9.8 14.4l-2.4 3.5M8.4 10.2 4.3 9.1"/>',
+  hoop: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5v17"/><path d="M6 6a8.5 8.5 0 0 1 0 12M18 6a8.5 8.5 0 0 0 0 12"/>',
+  heart: '<path d="M12 19.5s-7.5-4.4-7.5-10a4.2 4.2 0 0 1 7.5-2.6 4.2 4.2 0 0 1 7.5 2.6c0 5.6-7.5 10-7.5 10z"/>',
+  crown: '<path d="m4 8 4 4 4-6.5 4 6.5 4-4-1.6 10H5.6z"/><path d="M5.6 20h12.8"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M8 3.3v3.4M16 3.3v3.4M3.5 10.2h17"/>',
+  pin: '<path d="M9 4h6l-1 6 3.5 3.5h-11L10 10z"/><path d="M12 13.5V20"/>',
+  info: '<circle cx="12" cy="12" r="8.6"/><path d="M12 11v5"/><path d="M12 8v.01"/>',
+  megaphone: '<path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>',
+  logout: '<path d="M14.5 4.5h3a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-3"/><path d="M10 16.5 5.5 12 10 7.5M5.5 12h10"/>',
+  chev: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
+  shield: '<path d="M12 3.5 5 6.3v5.2c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9V6.3z"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.3 10.5V7.8a3.7 3.7 0 0 1 7.4 0v2.7"/>',
 };
 function svg(name) { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[name] || ''}</svg>`; }
@@ -52,6 +64,10 @@ const timeOf = (ts) => new Date(ts).toLocaleTimeString(LOC(), { hour: '2-digit',
 const whenShort = (ts) => (!ts ? '' : isoOf(ts) === todayIso() ? timeOf(ts) : fmtDay(isoOf(ts)));
 const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' ' + t('МБ') : Math.max(1, Math.round(n / 1024)) + ' ' + t('КБ'));
 const daysLeft = (iso) => Math.round((new Date(iso + 'T00:00') - new Date(todayIso() + 'T00:00')) / 864e5);
+/* Цвет аватара по id — как в Telegram: у каждого собеседника свой */
+function hue(s) { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; }
+const CLUB_ICON = { ball: 'ball', hoop: 'hoop', heart: 'heart', msg: 'chat', crown: 'crown' };
+const clubIco = (c, cls) => `<span class="cl-ico ${cls || ''}" style="--h:${hue(c.id)}">${svg(CLUB_ICON[c.icon] || 'flag')}</span>`;
 function initials(fio) { const w = String(fio || '?').trim().split(/\s+/); return esc(((w[1] || '')[0] || '') + ((w[0] || '?')[0])).toUpperCase(); }
 /* Только **жирный** и ссылки; всё остальное — экранированный текст */
 function md(s) {
@@ -153,6 +169,7 @@ const NOTIF = { seen: null, timer: null };
 function notifText(n) {
   if (n.type === 'msg') return [t('Новое сообщение'), [n.from, n.text].filter(Boolean).join(': ')];
   if (n.type === 'material') return [t('Новый материал'), `${tv(n.subject)} — ${n.title}`];
+  if (n.type === 'club') return [t(n.accepted ? 'Заявка принята' : 'Заявка отклонена'), n.accepted ? t('Вы в клубе «{c}» — канал и чат открыты', { c: tv(n.club) }) : tv(n.club)];
   if (n.type === 'task') return [n.moved ? t('Срок задания изменён') : t('Новое задание'), `${tv(n.subject)} — ${n.title}${n.due ? ' · ' + t('до {d}', { d: fmtDay(n.due) }) : ''}`];
   return null;
 }
@@ -199,7 +216,8 @@ function readLaunchParams() {
   if (h.get('mode')) { portalLook = { palette: h.get('theme') || '', mode: h.get('mode') }; try { sessionStorage.setItem('kum_look', JSON.stringify(portalLook)); } catch { } }
   if (h.get('lang')) setLang(h.get('lang'));
   const back = safeBack(h.get('back') || ''); if (back) { try { localStorage.setItem('kum_back', back); } catch { } }
-  history.replaceState(null, '', location.pathname); // код одноразовый — убрать из адреса и истории
+  const open = /^\/c\/[\w-]+(\/chat)?$/.test(h.get('open') || '') ? '#' + h.get('open') : ''; // портал может открыть клуб сразу
+  history.replaceState(null, '', location.pathname + open); // код одноразовый — убрать из адреса и истории
   return h.get('code');
 }
 function signOut(expired) {
@@ -213,7 +231,7 @@ async function enter(token) {
   M.token = token; localStorage.setItem('kum_token', token);
   M.user = (await api('/me')).user;
   M.srv = await api('/settings');
-  M.tab = 'subjects';
+  M.tab = 'chats';
   applyTheme();
   pollInbox(); NOTIF.timer = setInterval(pollInbox, 20000);
   startApp();

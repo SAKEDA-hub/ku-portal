@@ -20,13 +20,13 @@ function paintChatBadge() {
     if (CHAT.unread) a.querySelector('.ic').insertAdjacentHTML('beforeend', `<span class="nav-n">${CHAT.unread > 9 ? '9+' : CHAT.unread}</span>`);
   });
 }
-async function openMessage(newTab) {
+async function openMessage(newTab, open) { // open — раздел KU Message, например '/c/<клуб>' (канал клуба)
   const w = newTab ? window.open('about:blank', '_blank') : null; // окно — сразу по клику, иначе браузер заблокирует
   try {
     const { code } = await api('/message/handoff', { method: 'POST', body: {} });
     const th = resolvedTheme();
     const u = new URL(messagePath(), location.origin);
-    u.hash = new URLSearchParams({ code, back: location.href.split('#')[0] + '#/chats', lang: getLang(), theme: th.palette, mode: th.mode || 'light' }).toString();
+    u.hash = new URLSearchParams({ code, back: location.href.split('#')[0] + '#/chats', lang: getLang(), theme: th.palette, mode: th.mode || 'light', ...(open ? { open } : {}) }).toString();
     if (w) { w.opener = null; w.location.href = u.href; }
     else appTransition(u.href, { icon: 'kumsg', title: t('Открываем KU Message…'), sub: t('Переходим в мессенджер университета') });
   } catch (e) { if (w) w.close(); toast(e.message, true); }
