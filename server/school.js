@@ -26,6 +26,7 @@ function createSchool({ dataDir }) {
   const json = (res, body, status = 200) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(body));
+    return true;
   };
   const save = () => store.save(db);
   const userOf = req => {
