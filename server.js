@@ -15,7 +15,8 @@ const HOST = process.env.IP || process.env.ALWAYSDATA_HTTPD_IP || (process.env.D
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
-const { dataDir: DATA, grantOf } = require('./server/access');
+const SCHOOL_DIR = path.join(ROOT, 'school'); // закрытый кабинет результатов учебной базы (/school/)
+const { dataDir: DATA, grantOf, demo: DEMO_ON } = require('./server/access');
 const { clientIp, readJson, HttpError } = require('./server/http');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
@@ -298,7 +299,7 @@ function subjectForDiscipline(u, disc) {
 }
 
 /* Бета-аккаунты (server/demo.js) и AI-помощник для сайта университета (server/ai.js) */
-const { seedDemo, DEMO_ON, DEMO_PASS, DEMO_ACCOUNTS } = require('./server/demo').createDemo({ getDB: () => db, saveDB, nid, setPasswordSync: sec.setPasswordSync, subjectForDiscipline });
+const { seedDemo } = require('./server/demo').createDemo({ getDB: () => db, saveDB, nid, setPasswordSync: sec.setPasswordSync, subjectForDiscipline, dataDir: DATA });
 const ai = require('./server/ai');
 
 /* ------------------------------- Статика --------------------------------- */
@@ -321,6 +322,8 @@ function serveStatic(req, res, url) {
   let root = PUB;
   if (p === '/ku-message' || p === '/connect' || p.startsWith('/connect/')) { res.writeHead(301, { Location: '/ku-message/' }); res.end(); return; }
   if (p.startsWith('/ku-message/')) { root = MESSAGE_DIR; p = p.slice('/ku-message'.length); if (p === '/') p = '/index.html'; }
+  if (p === '/school' || p === '/school/') { root = SCHOOL_DIR; p = '/index.html'; }
+  else if (p.startsWith('/school/')) { root = SCHOOL_DIR; p = p.slice('/school'.length); }
   p = path.normalize(p).replace(/^([.][.][\/\\])+/, '');
   const file = path.join(root, p);
   const relative = path.relative(root, file);
@@ -341,6 +344,7 @@ function serveStatic(req, res, url) {
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON });
+const school = require('./server/school').createSchool({ dataDir: DATA });
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
@@ -396,6 +400,12 @@ async function handleRequest(req, res) {
 
   // «Онлайн-экзамен» (exam-sync), встроенный в портал: /exam-sync/...
   if (await examSync(req, res)) return;
+  // Отдельная учебная база: собственный вход и роли, независимые от портала/экзамена.
+  if (p.startsWith('/api/school/')) {
+    const limit = p === '/api/school/test-file' ? Math.ceil(5 * 1024 * 1024 * 1.5) + 100_000 : 1e6;
+    if (Number(req.headers['content-length'] || 0) > limit) { res.setHeader('Connection', 'close'); return bad(res, 413, 'Слишком большой запрос'); }
+    if (await school.handle(req, res, url)) return;
+  }
 
   if (!p.startsWith('/api/')) return serveStatic(req, res, url);
 
@@ -447,7 +457,7 @@ async function handleRequest(req, res) {
       if (typeof email !== 'string' || email.length > 254 || typeof password !== 'string' || password.length > 4096) return bad(res, 401, 'Неверный email или пароль');
       const em = String(email).trim().toLowerCase(), ip = clientIp(req), emIp = em + '|' + ip;
       const user = db.users.find((x) => x.email === em);
-      const guardEmail = !(user && user.demo);
+      const guardEmail = true; // бета-аккаунты теперь закрыты и используют личные случайные пароли
       if (loginByEmailIp.blocked(emIp) || loginByIp.blocked(ip) || (guardEmail && loginByEmail.blocked(em))) return bad(res, 429, TOO_MANY_LOGINS);
       const releasePair = loginByEmailIp.reserve(emIp), releaseIp = loginByIp.reserve(ip);
       const releaseEmail = guardEmail && loginByEmail.reserve(em);
@@ -511,9 +521,7 @@ async function handleRequest(req, res) {
     }
 
     if (p === '/api/demo' && req.method === 'GET') {
-      return ok(res, DEMO_ON
-        ? { enabled: true, password: DEMO_PASS, accounts: DEMO_ACCOUNTS.map((x) => ({ role: x.role, email: x.email, fio: x.lastName + ' ' + x.firstName, program: x.program || 'ku', group: x.group || '', track: trackOf(Object.assign({}, x)) })) }
-        : { enabled: false });
+      return ok(res, { enabled: false });
     }
 
     if (p === '/api/ai/status' && req.method === 'GET') {

@@ -339,6 +339,7 @@ function viewAuth(msg) {
     <div id="authform"></div>
     <div class="err" id="autherr">${msg ? esc(msg) : ''}</div>
     <div id="demoBox"></div>
+    <div style="text-align:center;margin-top:12px"><a href="/school/" class="muted">${t('Учебная база результатов')}</a></div>
   </div>`;
   renderAuthForm();
   renderDemoBox();
@@ -717,6 +718,7 @@ function viewExam() {
       <div class="oe-status" id="oeStatus"><i></i><span>${t('Проверяем доступность сайта…')}</span></div>
       <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}${t('Перейти к онлайн-экзамену')}</a>
       <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}${t('Открыть в новой вкладке')}</a>
+      <a class="btn ghost oe-new" href="/school/">${svg('chart')}${t('Открыть учебную базу результатов')}</a>
     </div>
     <div class="oe-feat">
       ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, ti, d]) => `

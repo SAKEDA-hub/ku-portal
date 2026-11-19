@@ -1,10 +1,14 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
 /*
  * Бета-аккаунты портала: 3 преподавателя (языки, IT, биотехнологии) и 2 студента (ИСУ — IT, БТ — биотехнологии),
  * их занятия и оценки. seedDemo() идемпотентно создаёт и дополняет их и в уже существующей базе. Включить в отдельном каталоге: DEMO=1.
  */
-function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline }) {
+function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline, dataDir }) {
   const DEMO_ON = require('./access').demo;
-  const DEMO_PASS = '1234';
+  const CREDENTIALS_FILE = path.join(dataDir, 'demo-credentials.json');
   const DEMO_GROUP = 'ИСУ-26-2-а';
   const BT_GROUP = 'БТ-26-1-а';
   /* Бета-аккаунты: 3 преподавателя (языки, IT, биотехнологии) и 2 студента (ИСУ — IT, БТ — биотехнологии) */
@@ -36,8 +40,17 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline 
       id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role, fio: fioOf(a), firstName: a.firstName, email: a.email,
       group: a.group || '', program: a.program || 'ku', dept: a.dept, createdAt: Date.now(), demo: true,
     };
-    setPasswordSync(u, DEMO_PASS);
     return u;
+  }
+  function credentialsRead() {
+    try { return JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8')); } catch { return {}; }
+  }
+  function credentialsWrite(value) {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const tmp = `${CREDENTIALS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, CREDENTIALS_FILE);
+    try { fs.chmodSync(CREDENTIALS_FILE, 0o600); } catch { }
   }
   /* Бета-аккаунты создаются при старте и дополняются в уже существующей базе (идемпотентно):
      недостающие пользователи, ФИО/группа/программа/кафедра, занятия и оценки. Только в режиме DEMO=1. */
@@ -45,6 +58,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline 
     if (!DEMO_ON) return;
     const db = getDB();
     let changed = false;
+    const credentials = credentialsRead();
     const users = {};
     for (const a of DEMO_ACCOUNTS) {
       let u = db.users.find((x) => x.email === a.email);
@@ -53,8 +67,16 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline 
         const want = { fio: fioOf(a), firstName: a.firstName, group: a.group || '', program: a.program || 'ku', dept: a.dept };
         for (const [k, v] of Object.entries(want)) if (u[k] !== v) { u[k] = v; changed = true; }
       }
+      if (!credentials[a.email] || !u.demoPasswordVersion) {
+        const password = crypto.randomBytes(18).toString('base64url');
+        setPasswordSync(u, password);
+        u.demoPasswordVersion = 1;
+        credentials[a.email] = password;
+        changed = true;
+      }
       users[a.email] = u;
     }
+    credentialsWrite(credentials);
     const subOf = (email, disc) => subjectForDiscipline(users[email], disc);
     for (const [email, disc, type, group, day, start, end, room] of DEMO_LESSONS) {
       const t = users[email], s = subOf(email, disc);
@@ -78,7 +100,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline 
     if (changed) saveDB();
   }
 
-  return { seedDemo, DEMO_ON, DEMO_PASS, DEMO_ACCOUNTS };
+  return { seedDemo, DEMO_ON, DEMO_ACCOUNTS };
 }
 
 module.exports = { createDemo };
