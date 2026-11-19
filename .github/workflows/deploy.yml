@@ -6,7 +6,8 @@
 #      ALWAYSDATA_SSH_PASSWORD  — пароль SSH-пользователя (alwaysdata → Remote access → SSH)
 #      ALWAYSDATA_API_TOKEN     — API-токен (alwaysdata → Profile → Tokens)
 #      ALWAYSDATA_SITE_ID       — ID сайта (число в адресе страницы сайта в панели alwaysdata)
-#    Пока секретов нет, шаг пропускается.
+# Переменная Actions ALWAYSDATA_KNOWN_HOSTS задаёт проверенный публичный SSH-ключ хоста.
+# При отсутствии учётных данных SSH шаг выкладки пропускается.
 # Код кладётся в ~/ku-portal; data/db.json и data/exam-sync.json не трогаются (их нет в git).
 # Старый адрес GitHub Pages можно оставить как резервный, но основной сайт открывайте на alwaysdata.
 name: Deploy
@@ -29,9 +30,11 @@ jobs:
           node-version: 22
       - name: Check JS syntax
         run: |
-          for f in server.js server/*.js exam-sync/handler.js public/*.js ku-message/*.js; do
+          for f in server.js server/*.js scripts/*.js exam-sync/*.js public/*.js ku-message/*.js; do
             node --check "$f"
           done
+      - name: Run backend tests
+        run: npm test
 
   backend:
     needs: check
@@ -44,6 +47,7 @@ jobs:
       SSHPASS: ${{ secrets.ALWAYSDATA_SSH_PASSWORD }}
       API_TOKEN: ${{ secrets.ALWAYSDATA_API_TOKEN }}
       SITE_ID: ${{ secrets.ALWAYSDATA_SITE_ID }}
+      KNOWN_HOSTS: ${{ vars.ALWAYSDATA_KNOWN_HOSTS }}
     steps:
       - name: Check secrets
         id: cfg
@@ -51,6 +55,9 @@ jobs:
           if [ -z "$ACCOUNT" ] || [ -z "$SSHPASS" ]; then
             echo "::notice::Секреты alwaysdata не заданы — деплой backend пропущен."
             echo "skip=1" >> "$GITHUB_OUTPUT"
+          elif [ -z "$KNOWN_HOSTS" ]; then
+            echo "::error::Для SSH-деплоя задайте проверенный публичный ключ сервера в ALWAYSDATA_KNOWN_HOSTS."
+            exit 1
           fi
 
       - uses: actions/checkout@v4
@@ -61,9 +68,12 @@ jobs:
         run: |
           sudo apt-get install -y -qq sshpass > /dev/null
           HOST="ssh-${ACCOUNT}.alwaysdata.net"
-          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ${ACCOUNT}@${HOST}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=20 ${ACCOUNT}@${HOST}"
           # только файлы из git: data/db.json и data/exam-sync.json на сервере остаются как есть
-          git archive --format=tar HEAD | $SSH 'mkdir -p ~/ku-portal && tar -xf - -C ~/ku-portal && echo "uploaded to ~/ku-portal"'
+          git archive --format=tar HEAD | $SSH 'mkdir -p ~/ku-portal && tar -xf - -C ~/ku-portal'
+          git rev-parse HEAD | $SSH 'cd ~/ku-portal && cat > .release-commit.tmp && mv .release-commit.tmp .release-commit'
 
       - name: Restart site
         if: steps.cfg.outputs.skip != '1'
@@ -79,11 +89,13 @@ jobs:
       - name: Health check
         if: steps.cfg.outputs.skip != '1'
         run: |
-          URL="https://${ACCOUNT}.alwaysdata.net/api/demo"
+          URL="https://${ACCOUNT}.alwaysdata.net/api/version"
+          EXPECTED=$(git rev-parse --short=7 HEAD | cut -c1-7)
           for i in 1 2 3 4 5 6; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)
-            echo "try $i: $URL -> $code"
-            [ "$code" = "200" ] && exit 0
+            actual=$(curl -fsS --max-time 8 "$URL" | jq -r '.commit // empty' || true)
+            echo "try $i: expected $EXPECTED, running $actual"
+            [ "$actual" = "$EXPECTED" ] && exit 0
             sleep 10
           done
-          echo "::warning::Сервер не ответил 200 — смотрите логи в alwaysdata (Web → Sites → Logs)."
+          echo "::error::Сервер не подтвердил запрошенную версию — проверьте перезапуск и журнал alwaysdata."
+          exit 1

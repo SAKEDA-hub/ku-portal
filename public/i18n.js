@@ -24,6 +24,10 @@ document.documentElement.lang = LANG;
 
 /* [английский, казахский] */
 const I18N = {
+  'Доступ ожидает подтверждения администратором': ['Access is awaiting administrator approval', 'Кіру үшін әкімшінің растауы қажет'],
+  'Группа не назначена на этот предмет': ['This group is not assigned to this subject', 'Бұл топ осы пәнге бекітілмеген'],
+  'Некорректные данные': ['Invalid data', 'Деректер дұрыс емес'],
+  'Превышена квота вложений': ['The attachment storage quota has been reached', 'Тіркемелерді сақтау шегі толды'],
   /* --- общие --- */
   'Главная': ['Home', 'Басты бет'],
   'Экзамен': ['Exam', 'Емтихан'],

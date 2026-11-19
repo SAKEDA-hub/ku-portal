@@ -1,0 +1,49 @@
+'use strict';
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const { dataDir, grantOf, approve, revoke } = require('../server/access');
+const { setPasswordSync } = require('../server/security');
+const { writeJsonAtomic } = require('../server/store');
+
+function run([command, key, role, name]) {
+  if (command === 'exam-reset' || command === 'exam-disable') {
+    if (!key?.trim() || key.length > 100) throw new Error('Укажите логин экзамена');
+    if (command === 'exam-reset' && (!['teacher', 'student'].includes(role) || !name?.trim() || name.length > 150)) {
+      throw new Error('exam-reset <логин> <teacher|student> "<ФИО>"');
+    }
+    const login = key.trim().toLowerCase();
+    const directory = path.join(dataDir, 'exam-provision');
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const record = { login, version: crypto.randomUUID(), action: command };
+    let password;
+    if (command === 'exam-reset') {
+      password = crypto.randomBytes(18).toString('base64url');
+      Object.assign(record, { role, name: name.trim() });
+      setPasswordSync(record, password);
+    }
+    writeJsonAtomic(path.join(directory, Date.now() + '-' + record.version + '.json'), record);
+    console.log('Изменение вступит в силу при следующем запуске сервера.');
+    if (password) { console.log('Передайте новый пароль лично пользователю.'); console.log(password); }
+    return;
+  }
+  if (!['list', 'approve', 'revoke'].includes(command)) {
+    throw new Error('Команды: list | approve <ID> | revoke <ID> | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
+  }
+  const file = path.join(dataDir, 'db.json');
+  const users = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).users : [];
+  if (command === 'list') {
+    console.table(users.map(u => ({ id: u.id, name: u.fio, email: u.email, role: u.role, group: u.group, access: !!grantOf(u) })));
+    return;
+  }
+  const user = users.find(u => u.id === key);
+  if (!user) throw new Error('Пользователь не найден');
+  if (require('../server/access').demo) throw new Error('Подтверждение и отзыв доступны в рабочем режиме DEMO=0');
+  if (command === 'approve') approve(user);
+  else revoke(user);
+  require('../server/audit').createAudit(dataDir)('portal.' + command, 'operator', user.id);
+  console.log(JSON.stringify({ action: command, userId: user.id, at: new Date().toISOString() }));
+}
+
+try { run(process.argv.slice(2)); } catch (error) { console.error(error.message); process.exitCode = 1; }

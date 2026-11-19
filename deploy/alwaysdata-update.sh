@@ -7,7 +7,9 @@ APP="$HOME/ku-portal"
 cd "$APP"
 git fetch -q origin main
 if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
-  git reset -q --hard origin/main
+  git merge --quiet --ff-only origin/main
+  git rev-parse HEAD > "$APP/.release-commit.tmp"
+  mv "$APP/.release-commit.tmp" "$APP/.release-commit"
   echo "$(date '+%F %T') обновлено до $(git rev-parse --short HEAD)"
   # сайт работает на другой машине alwaysdata (общий только диск): сервер видит обновление .restart,
   # сохраняет базу и завершается, alwaysdata запускает его заново

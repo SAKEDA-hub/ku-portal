@@ -1,104 +1,227 @@
 'use strict';
-/*
- * «Онлайн-экзамен» (EXAM SYNC, github.com/StephCurrysvg/exam-sync), встроенный в KU Portal.
- * Логика сервера синхронизации перенесена из exam-sync/server.js без изменений поведения,
- * только смонтирована под префиксом (по умолчанию /exam-sync), чтобы портал и экзамены
- * работали одним сервисом (один деплой на Render, один адрес).
- *
- *   GET  <base>/             — интерфейс (index.html)
- *   GET  <base>/api/state    — всё состояние
- *   GET  <base>/api/events   — SSE с полным состоянием после каждого изменения
- *   POST <base>/api/sync     — { changes: { <col>: { up: [...], del: [...] } } }
- *
- * Данные: dataFile (по умолчанию data/exam-sync.json, в .gitignore). При первом запуске
- * берутся из seedFile (exam-sync/seed.json — демо-аккаунты и тесты из исходного репозитория).
- */
-const fs = require('fs');
-const path = require('path');
-const { createStore } = require('../server/store'); // атомарная запись и ежедневные копии, как у базы портала
 
-const COLS = ['users', 'tests', 'rooms', 'attempts', 'writings', 'queue', 'grades', 'timers'];
-const MAX_BODY = 5 * 1024 * 1024;
-const keyOf = (x) => x.id || [x.roomId, x.userId, x.testId || x.part || ''].join('|');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { createStore } = require('../server/store');
+const { readJson, clientIp, HttpError } = require('../server/http');
+const { createLimiter, checkPassword, setPassword, setPasswordSync, PASSWORD_MIN, htmlPolicy } = require('../server/security');
+const { collections, view, publicUser, startTest, submitTest, submitWriting, applyChanges, validId } = require('./model');
 
-function createExamSync({ base = '/exam-sync', dataFile, seedFile = path.join(__dirname, 'seed.json') } = {}) {
-  const INDEX = path.join(__dirname, 'index.html');
-  let rev = 0;
-  const db = Object.fromEntries(COLS.map((c) => [c, new Map()]));
+const empty = () => ({ format: 2, rev: 0, db: Object.fromEntries(collections.map(c => [c, []])) });
+function valid(snapshot) {
+  return snapshot && Number.isSafeInteger(snapshot.rev) && snapshot.rev >= 0 &&
+    snapshot.db && Array.isArray(snapshot.db.users) && collections.every(c =>
+      (c === 'timers' && snapshot.db[c] === undefined) || (Array.isArray(snapshot.db[c]) &&
+      snapshot.db[c].every(entry => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string' &&
+        entry[1] && typeof entry[1] === 'object')));
+}
 
-  const store = createStore({ file: dataFile, backupDir: path.join(path.dirname(dataFile), 'backups'), empty: () => null, space: 0 });
-  function apply(s) {
-    rev = s.rev || 0;
-    COLS.forEach((c) => (s.db && s.db[c] || []).forEach(([k, r]) => db[c].set(k, r)));
+function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile = path.join(__dirname, 'seed.json') }) {
+  const directory = path.dirname(dataFile);
+  const audit = require('../server/audit').createAudit(directory);
+  const index = fs.readFileSync(path.join(__dirname, 'index.html'));
+  const policy = htmlPolicy(index);
+  const store = createStore({ file: dataFile, backupDir: path.join(directory, 'backups'), space: 0, valid,
+    empty: () => demo ? JSON.parse(fs.readFileSync(seedFile, 'utf8')) : empty() });
+  const snapshot = store.load();
+  let rev = snapshot.rev;
+  let db = Object.fromEntries(collections.map(c => [c, new Map(snapshot.db[c])]));
+  const sessions = new Map();
+  const streams = new Map();
+  const loginLimit = createLimiter({ max: 50, windowMs: 15 * 60_000 });
+  const accountLimit = createLimiter({ max: 10, windowMs: 15 * 60_000 });
+  const passwordLimit = createLimiter({ max: 8, windowMs: 15 * 60_000 });
+  const dummy = {}; setPasswordSync(dummy, crypto.randomUUID());
+  const uidByLogin = login => [...db.users.values()].find(u => u.login.toLowerCase() === login);
+
+  function persist(next) {
+    const nextRev = rev + 1;
+    store.save({ format: 2, rev: nextRev, db: Object.fromEntries(collections.map(c => [c, [...next[c]]])) });
+    db = next; rev = nextRev;
+    for (const [res, token] of streams) {
+      if (!sessionFor(token)) { res.end(); streams.delete(res); }
+      else res.write('data: ' + JSON.stringify({ rev }) + '\n\n');
+    }
   }
-  const seed = () => { try { apply(JSON.parse(fs.readFileSync(seedFile, 'utf8'))); } catch { /* пустая база — клиент создаст демо-данные сам */ } };
-  try { const s = store.load(); if (s) apply(s); else seed(); }
-  catch (e) {
-    // файл испорчен и копий нет: откладываем его (не затираем) и стартуем с демо-данными
-    console.error('[exam-sync]', e.message);
-    try { fs.renameSync(dataFile, `${dataFile}.corrupt-${Date.now()}`); } catch { }
-    seed();
-  }
 
-  const state = () => ({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].values()]])) });
-  const save = () => {
-    try {
-      fs.mkdirSync(path.dirname(dataFile), { recursive: true });
-      store.save({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].entries()]])) });
-    } catch (e) { console.error('[exam-sync] save:', e.message); }
+  // Legacy clients received the complete user table. Keep IDs and coursework, require new credentials.
+  let migrated = snapshot.format !== 2;
+  if (migrated) for (const [id, old] of db.users) {
+    const u = publicUser(old);
+    if (demo && typeof old.password === 'string') setPasswordSync(u, old.password);
+    db.users.set(id, u);
+  }
+  const provisionDir = path.join(directory, 'exam-provision');
+  const processed = [];
+  const accountEvents = [];
+  if (fs.existsSync(provisionDir)) {
+    for (const file of fs.readdirSync(provisionDir).filter(n => /^\d+-[a-f0-9-]{36}\.json$/.test(n)).sort()) {
+      const p = JSON.parse(fs.readFileSync(path.join(provisionDir, file), 'utf8'));
+      const old = uidByLogin(p.login);
+      processed.push(file);
+      if (p.action === 'exam-disable') {
+        if (old) { db.users.set(old.id, publicUser(old)); migrated = true; accountEvents.push(['exam.disable', old.id]); }
+        continue;
+      }
+      if (old && old.role !== p.role) throw new Error('Роль в поручении exam-reset расходится с ролью в базе');
+      if (old?.provisionVersion === p.version) continue;
+      const id = old?.id || crypto.randomUUID();
+      accountEvents.push(['exam.reset', id]);
+      db.users.set(id, { id, login: p.login, name: p.name, role: p.role, passAlgo: 'scrypt',
+        passHash: p.passHash, salt: p.salt, provisionVersion: p.version });
+      migrated = true;
+    }
+  }
+  if (migrated) persist(db);
+  for (const [event, id] of accountEvents) audit(event, 'operator', id);
+  for (const file of processed) fs.unlinkSync(path.join(provisionDir, file));
+
+  function sessionFor(token) {
+    const s = sessions.get(token);
+    if (!s) return null;
+    if (s.expires <= Date.now() || db.users.get(s.uid)?.passHash !== s.hash) {
+      sessions.delete(token); return null;
+    }
+    return s;
+  }
+  function invalidate(uid, except) {
+    for (const [token, session] of sessions) if (session.uid === uid && token !== except) sessions.delete(token);
+  }
+  setInterval(() => {
+    for (const token of sessions.keys()) sessionFor(token);
+    for (const [res, token] of streams) {
+      if (!sessionFor(token)) { res.end(); streams.delete(res); }
+      else res.write(': ping\n\n');
+    }
+  }, 25_000).unref();
+
+  function current(s) {
+    const user = db.users.get(s.uid);
+    return { rev, user: publicUser(user), gradingUntil: s.gradingUntil || 0, db: view(db, user) };
+  }
+  const requireSession = token => {
+    const session = sessionFor(token);
+    if (!session) throw new HttpError(401, 'Войдите в онлайн-экзамен');
+    return session;
+  };
+  const requirePassword = async (user, password) => {
+    const release = passwordLimit.reserve(user.id);
+    if (!release) throw new HttpError(429, 'Слишком много попыток');
+    if (typeof password !== 'string' || password.length > 256 || !await checkPassword(user, password)) throw new HttpError(403, 'Неверный пароль');
+    release();
+  };
+  const nextDb = () => Object.fromEntries(collections.map(c => [c, new Map(db[c])]));
+  const json = (res, value, status = 200) => {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(value)); return true;
   };
 
-  const clients = new Set();
-  setInterval(() => clients.forEach((c) => c.write(': ping\n\n')), 25000).unref();
-
-  const json = (res, o, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
-
-  /* Возвращает true, если запрос относится к экзаменам и обработан */
-  return async function handle(req, res) {
-    const p = req.url.split('?')[0];
-    if (p !== base && !p.startsWith(base + '/')) return false;
-    const u = p.slice(base.length) || '';
-
-    // Без завершающего «/» относительные пути api/... в index.html уйдут мимо — перенаправляем
-    if (u === '' && req.method === 'GET') {
-      const q = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-      res.writeHead(301, { Location: base + '/' + q });
-      res.end();
-      return true;
+  async function handle(req, res) {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname !== base && !url.pathname.startsWith(base + '/')) return false;
+    const route = url.pathname.slice(base.length);
+    res.setHeader('Cache-Control', 'no-store');
+    if (!route && req.method === 'GET') {
+      res.writeHead(301, { Location: base + '/' + url.search }); res.end(); return true;
     }
-    if (req.method === 'GET' && (u === '/' || u === '/index.html')) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
-      res.end(fs.readFileSync(INDEX));
-      return true;
+    if (['GET', 'HEAD'].includes(req.method) && ['/', '/index.html'].includes(route)) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Security-Policy', policy);
+      res.end(req.method === 'HEAD' ? undefined : index); return true;
     }
-    if (req.method === 'HEAD' && (u === '/' || u === '/api/state')) { res.writeHead(200, { 'Cache-Control': 'no-store' }); res.end(); return true; } // проверка доступности
-    if (req.method === 'GET' && u === '/api/state') { json(res, state()); return true; }
-    if (req.method === 'GET' && u === '/api/events') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write('data: ' + JSON.stringify(state()) + '\n\n');
-      clients.add(res);
-      req.on('close', () => clients.delete(res));
-      return true;
+    if (route === '/client.js' && req.method === 'GET') {
+      res.setHeader('Content-Type', 'text/javascript; charset=utf-8'); res.end(fs.readFileSync(path.join(__dirname, 'client.js'))); return true;
     }
-    if (req.method === 'POST' && u === '/api/sync') {
-      let s = '';
-      for await (const c of req) { s += c; if (s.length > MAX_BODY) { json(res, { error: 'too large' }, 413); req.destroy(); return true; } }
-      let b; try { b = JSON.parse(s); } catch { json(res, { error: 'bad json' }, 400); return true; }
-      const ch = (b && b.changes) || {};
-      COLS.forEach((c) => {
-        const x = ch[c]; if (!x) return;
-        (Array.isArray(x.del) ? x.del : []).forEach((k) => db[c].delete(k));
-        (Array.isArray(x.up) ? x.up : []).forEach((r) => { if (r && typeof r === 'object') db[c].set(keyOf(r), r); });
-      });
-      rev++; save();
-      const d = 'data: ' + JSON.stringify(state()) + '\n\n';
-      clients.forEach((c) => c.write(d));
-      json(res, { ok: true, rev });
-      return true;
+    if (route === '/api/info' && req.method === 'GET') return json(res, { demo });
+    if (route === '/api/login' && req.method === 'POST') {
+      const body = await readJson(req, 4096);
+      const login = String(body.login || '').trim().toLowerCase(), ip = clientIp(req);
+      if (loginLimit.blocked(ip) || accountLimit.blocked(login)) throw new HttpError(429, 'Слишком много попыток');
+      const releaseIp = loginLimit.reserve(ip), releaseAccount = accountLimit.reserve(login);
+      const user = uidByLogin(login);
+      const hash = user?.passHash;
+      const ok = typeof body.password === 'string' && body.password.length <= 256 && await checkPassword(hash ? user : dummy, body.password);
+      if (!ok || !hash || db.users.get(user.id)?.passHash !== hash) throw new HttpError(401, 'Неверный логин или пароль');
+      releaseIp(); releaseAccount();
+      const token = crypto.randomBytes(32).toString('hex');
+      const session = { uid: user.id, hash, gradingUntil: 0, expires: Date.now() + 12 * 3600_000 };
+      sessions.set(token, session);
+      return json(res, { token, ...current(session) });
     }
-    json(res, { error: 'not found' }, 404);
-    return true;
-  };
+    const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
+    const s = requireSession(token);
+    const user = db.users.get(s.uid);
+    if (route === '/api/state' && req.method === 'GET') {
+      if (url.searchParams.get('since') === String(rev)) { res.writeHead(304); res.end(); return true; }
+      return json(res, current(s));
+    }
+    if (route === '/api/events' && req.method === 'GET') {
+      for (const [old, key] of streams) if (key === token) { old.end(); streams.delete(old); }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'X-Accel-Buffering': 'no' });
+      res.write('data: ' + JSON.stringify({ rev }) + '\n\n');
+      streams.set(res, token); res.on('close', () => streams.delete(res)); return true;
+    }
+    if (req.method !== 'POST') throw new HttpError(404, 'Не найдено');
+    const limit = { '/api/sync': 5 * 1024 * 1024, '/api/attempt': 1_000_000, '/api/writing': 500_000 };
+    const body = await readJson(req, limit[route] || 8192);
+    requireSession(token);
+    if (route === '/api/logout') { sessions.delete(token); return json(res, { ok: true }); }
+    if (route === '/api/grade-lock') { s.gradingUntil = 0; return json(res, { gradingUntil: 0 }); }
+    if (route === '/api/password' || route === '/api/grade-unlock') {
+      await requirePassword(user, body.password); requireSession(token);
+      if (route === '/api/grade-unlock') {
+        if (user.role !== 'teacher') throw new HttpError(403, 'Нет доступа');
+        s.gradingUntil = Date.now() + 3600_000; return json(res, { gradingUntil: s.gradingUntil });
+      }
+      if (typeof body.next !== 'string' || body.next.length < PASSWORD_MIN || body.next.length > 256) throw new HttpError(400, 'Пароль должен содержать от 8 до 256 символов');
+      const changed = { ...user }; await setPassword(changed, body.next); requireSession(token);
+      const next = nextDb(); next.users.set(user.id, changed); persist(next);
+      s.hash = changed.passHash; s.gradingUntil = 0; invalidate(user.id, token);
+      sessions.set(token, s);
+      audit('exam.password', user.id, user.id);
+      return json(res, { ok: true });
+    }
+    if (route === '/api/student') {
+      if (user.role !== 'teacher') throw new HttpError(403, 'Нет доступа');
+      const id = body.id || crypto.randomUUID(), old = db.users.get(id);
+      if (!validId(id) || (body.id && old?.role !== 'student')) throw new HttpError(400, 'Студент не найден');
+      const login = String(body.login || '').trim().toLowerCase(), name = String(body.name || '').trim();
+      if (!login || login.length > 100 || !name || name.length > 150) throw new HttpError(400, 'Укажите логин и имя');
+      const changed = { ...old, id, role: 'student', login, name };
+      if (!old || body.password) {
+        if (typeof body.password !== 'string' || body.password.length < PASSWORD_MIN || body.password.length > 256) throw new HttpError(400, 'Пароль должен содержать от 8 до 256 символов');
+        await setPassword(changed, body.password);
+      }
+      requireSession(token);
+      if (db.users.get(id) !== old || (uidByLogin(login) && uidByLogin(login).id !== id)) throw new HttpError(409, 'Логин занят или запись изменилась');
+      const next = nextDb(); next.users.set(id, changed); persist(next);
+      audit('exam.student.save', user.id, id);
+      if (body.password) invalidate(id);
+      return json(res, current(s));
+    }
+    const next = nextDb(), now = Date.now();
+    let result = {};
+    if (route === '/api/student/delete') {
+      if (user.role !== 'teacher' || db.users.get(body.id)?.role !== 'student') throw new HttpError(403, 'Нет доступа');
+      next.users.delete(body.id);
+      for (const col of ['attempts', 'grades', 'queue', 'writings', 'timers']) {
+        for (const [key, row] of next[col]) if (row.userId === body.id) next[col].delete(key);
+      }
+    } else if (route === '/api/start') result = startTest(next, user, body, now);
+    else if (route === '/api/attempt') result = submitTest(next, user, body, now);
+    else if (route === '/api/writing') result = submitWriting(next, user, body, now);
+    else if (route === '/api/sync') {
+      if (body.rev !== rev) throw new HttpError(409, 'Данные изменились. Обновите и повторите действие');
+      applyChanges(next, user, s, body.changes, now);
+    } else throw new HttpError(404, 'Не найдено');
+    persist(next);
+    if (route === '/api/student/delete') audit('exam.student.delete', user.id, body.id);
+    if (route === '/api/sync' && body.changes.grades) audit('exam.grades', user.id, 'grades');
+    return json(res, { ...current(s), ...result });
+  }
+  handle.openRooms = () => [...db.rooms.values()].filter(r => r.open).map(r => ({ id: r.id, title: r.title }));
+  return handle;
 }
 
 module.exports = { createExamSync };

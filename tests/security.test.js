@@ -163,3 +163,26 @@ test('store keeps only the newest backups', () => {
   assert.strictEqual(left.length, 3);
   assert.ok(!left.includes('db-2026-01-01.json'));
 });
+
+test('storage refuses a blank restart when both the live file and the only usable copy are missing', () => {
+  const dir = tmpDir();
+  try {
+    const backupDir = path.join(dir, 'backups'); fs.mkdirSync(backupDir);
+    fs.writeFileSync(path.join(backupDir, 'db-2026-01-01.json'), 'not json');
+    const file = path.join(dir, 'db.json');
+    const store = createStore({ file, backupDir, empty: () => ({ users: [] }) });
+    assert.throws(() => store.load(), /резервной копии/);
+    assert.ok(!fs.existsSync(file));
+  } finally { fs.rmSync(dir, { recursive:true, force:true }); }
+});
+
+test('parallel password checks reserve slots and can release only their own attempt', () => {
+  const limiter = createLimiter({ max:2, windowMs:1000 });
+  const first = limiter.reserve('key'), second = limiter.reserve('key');
+  assert.equal(limiter.reserve('key'), null);
+  first(); first();
+  const third = limiter.reserve('key');
+  assert.equal(typeof third, 'function'); assert.equal(limiter.reserve('key'), null);
+  third(); second();
+  assert.equal(limiter.blocked('key'), false);
+});

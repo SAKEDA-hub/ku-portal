@@ -887,6 +887,7 @@ html.from-ku #app,html.from-ku .topbar{animation:kuIn .45s cubic-bezier(.2,.8,.2
 <input type="file" id="imgpick" accept="image/*" hidden>
 <input type="file" id="jsonpick" accept="application/json,.json" hidden>
 
+<script src="client.js"></script>
 <script>
 "use strict";
 
@@ -1090,13 +1091,11 @@ function changePassword(){
   formModal(L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту'), [
     { k:'old', label:L('Текущий пароль', 'Current password', 'Ағымдағы құпиясөз'), type:'password', ac:'current-password' },
     { k:'pw', label:L('Новый пароль', 'New password', 'Жаңа құпиясөз'), type:'password', ac:'new-password' },
-    { k:'pw2', label:L('Повторите новый пароль', 'Repeat new password', 'Жаңа құпиясөзді қайталаңыз'), type:'password', ac:'new-password' }], {}, v => {
-    const u = userById(ME.id);
-    if(!u || v.old !== u.password) return L('Неверный текущий пароль', 'Wrong current password', 'Ағымдағы құпиясөз қате');
+    { k:'pw2', label:L('Повторите новый пароль', 'Repeat new password', 'Жаңа құпиясөзді қайталаңыз'), type:'password', ac:'new-password' }], {}, async v => {
     if(!v.pw) return L('Введите новый пароль', 'Enter a new password', 'Жаңа құпиясөзді енгізіңіз');
     if(v.pw !== v.pw2) return L('Пароли не совпадают', 'Passwords do not match', 'Құпиясөздер сәйкес емес');
     if(v.pw === v.old) return L('Новый пароль совпадает с текущим', 'The new password is the same as the current one', 'Жаңа құпиясөз ағымдағымен бірдей');
-    u.password = v.pw; ME = u; persist();
+    await examCommand('password', {password:v.old, next:v.pw});
     toast(L('Пароль изменён', 'Password changed', 'Құпиясөз өзгертілді'));
   }, { ok:L('Сохранить', 'Save', 'Сақтау') });
 }
@@ -1331,26 +1330,14 @@ function strip(pre, title, p, pass){
     ${row}${p == null ? '' : `<div class="s-over" aria-hidden="true">${row}</div>`}</div>`;
 }
 
-/* ---------- хранилище ----------
-   Данные (D) лежат в localStorage и общие для всех вкладок этого браузера:
-   студент и преподаватель в соседних вкладках видят изменения друг друга сразу.
-   Вход хранится в sessionStorage — у каждой вкладки свой пользователь. */
-const LS_KEY = 'edu-exam-v1', SES_KEY = 'edu-exam-session', GA_KEY = 'edu-exam-gradeauth', DRAFT_KEY = 'edu-exam-draft:', RUN_KEY = 'edu-exam-run:';
-const GA_TTL = 3600000; // пароль для выставления баллов действует 1 час
+/* Персональные черновики и учебные карточки хранятся отдельно от серверных данных. */
+const DRAFT_KEY = 'edu-exam-draft:', RUN_KEY = 'edu-secure-run:';
 let D = null, ME = null;
 const S = { view:'login', params:{}, draft:null, draftBase:'', rdraft:null, rdraftBase:'', run:null, pendingRun:null, errors:[], rvTab:'all', animKey:'',
   edTab:'rooms', learnTab:'rules', learnQ:'', fc:null, quiz:null, scoreRoom:'', syncPending:false };
 Object.defineProperty(S, 'tests', { get:() => D.tests });
 Object.defineProperty(S, 'attempts', { get:() => D.attempts });
 
-function freshDB(){
-  return { version:1,
-    users:[ { id:'u-student', login:'user', password:'1', name:'Студент', role:'student' },
-            { id:'u-teacher', login:'teacher', password:'admin', name:'Преподаватель', role:'teacher' },
-            // дополнительные студенты — чтобы проверять очередь и вызов нескольких учеников
-            ...[1, 2, 3, 4].map(i => ({ id:'u-student' + i, login:'user' + i, password:'1', name:'Студент ' + i, role:'student' })) ],
-    tests:examTests(false), rooms:[demoRoom()], attempts:[], writings:[], queue:[], grades:[], timers:[], learn:seedLearn(), quiz:{} };
-}
 function normRoom(r){
   const n = newRoom();
   ['test','writing','speaking'].forEach(k => { r[k] = Object.assign({}, n[k], r[k] || {}); });
@@ -1365,11 +1352,10 @@ function normDB(d){ // защита от неполных данных
   d.rooms.forEach(normRoom);
   return d;
 }
-function loadDB(){ try{ const raw = localStorage.getItem(LS_KEY); if(raw){ const d = JSON.parse(raw); if(d && Array.isArray(d.users)) return normDB(d); } }catch(e){} return null; }
 function persist(){
-  try{ syncPush(); }catch(e){}
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(D)); }
-  catch(e){ toast(L('Не удалось сохранить: хранилище браузера недоступно или переполнено', 'Could not save: browser storage is unavailable or full', 'Сақтау мүмкін болмады: браузер жады қолжетімсіз немесе толып қалған')); }
+  if(!ME) return;
+  try{ localStorage.setItem('edu-learn:' + ME.id, JSON.stringify({ learn:D.learn, quiz:D.quiz })); }catch{}
+  syncPush();
 }
 const testById = id => D.tests.find(t => t.id === id);
 const roomById = id => D.rooms.find(r => r.id === id);
@@ -1383,14 +1369,8 @@ const roleName = u => u.role === 'teacher' ? L('Преподаватель', 'Te
 function saveRun(){ try{ if(S.run && ME) localStorage.setItem(RUN_KEY + ME.id, JSON.stringify(S.run)); }catch(e){} }
 function dropRunSave(){ try{ if(ME) localStorage.removeItem(RUN_KEY + ME.id); }catch(e){} }
 function loadRun(){ try{ const r = JSON.parse(localStorage.getItem(RUN_KEY + ME.id) || 'null'); return r && r.test && Array.isArray(r.order) ? r : null; }catch(e){ return null; } }
-// сессия вкладки
-function sesGet(){ try{ return sessionStorage.getItem(SES_KEY); }catch(e){ return null; } }
-function sesSet(id){ try{ if(id) sessionStorage.setItem(SES_KEY, id); else sessionStorage.removeItem(SES_KEY); }catch(e){} }
-// доступ к выставлению баллов: после ввода пароля — на 1 час
-function gaAll(){ try{ return JSON.parse(localStorage.getItem(GA_KEY) || '{}') || {}; }catch(e){ return {}; } }
-const gaUntil = () => ME ? (+gaAll()[ME.id] || 0) : 0;
+const gaUntil = () => SYNC.gradingUntil;
 const gaOpen = () => gaUntil() > Date.now();
-function gaSet(until){ const a = gaAll(); if(until) a[ME.id] = until; else delete a[ME.id]; try{ localStorage.setItem(GA_KEY, JSON.stringify(a)); }catch(e){} }
 // черновик письменной работы
 const draftKey = roomId => DRAFT_KEY + ME.id + ':' + roomId;
 function draftGet(roomId){ try{ return localStorage.getItem(draftKey(roomId)) || ''; }catch(e){ return ''; } }
@@ -1413,7 +1393,7 @@ const attemptFor = (roomId, userId, testId) => D.attempts.find(a => a.roomId ===
 const writingFor = (roomId, userId) => D.writings.find(w => w.roomId === roomId && w.userId === userId);
 const queueFor = (roomId, userId) => D.queue.find(q => q.roomId === roomId && q.userId === userId);
 const gradeFor = (roomId, userId, part) => D.grades.find(g => g.roomId === roomId && g.userId === userId && g.part === part);
-function queuePos(q){ return D.queue.filter(x => x.roomId === q.roomId && x.status === 'waiting').sort((a, b) => a.addedAt - b.addedAt).indexOf(q) + 1; }
+function queuePos(q){ if(Number.isInteger(q.position)) return q.position; return D.queue.filter(x => x.roomId === q.roomId && x.status === 'waiting').sort((a, b) => a.addedAt - b.addedAt).indexOf(q) + 1; }
 // прогресс студента в комнате
 function progress(r, userId){
   const p = { grades:{} };
@@ -1453,7 +1433,6 @@ function tmStart(roomId, part, testId, limit, title){
   t = { id:tmId(roomId, ME.id, part, testId), roomId, userId:ME.id, part, testId:testId || '', title:title || '', limit, startedAt:Date.now(), pauseMs:0, awayAt:null, frozen:false };
   D.timers.push(t); persist(); return t;
 }
-function tmDone(t){ if(t) D.timers = D.timers.filter(x => x.id !== t.id); }
 // студент «на месте»: тест — на экране прохождения этого теста, письменная работа — на странице своего экзамена
 const tmHere = t => t.part === 'test' ? S.view === 'run' && !!S.run && S.run.timerId === t.id : S.view === 'room' && S.params.id === t.roomId;
 function tmPresence(leaving){
@@ -1470,18 +1449,22 @@ function tmPresence(leaving){
 function tmExpire(){
   if(!ME || ME.role !== 'student') return;
   const now = Date.now();
-  D.timers.filter(t => t.userId === ME.id && tmLeft(t, now) <= 0).forEach(t => {
+  D.timers.filter(t => t.userId === ME.id && t.limit > 0 && tmLeft(t, now) <= 0).forEach(t => {
     if(t.part === 'writing'){ const r = roomById(t.roomId); if(!r || r.open) autoSubmitWriting(t); }
     else if(S.pendingRun && S.pendingRun.timerId === t.id && !(S.run && S.run.timerId === t.id)){ const r = S.pendingRun; S.pendingRun = null; S.run = r; finish(true); }
     // если прохождения на этом устройстве нет — таймер остаётся: при новом старте тест сразу завершится
   });
 }
-function autoSubmitWriting(t){
-  const r = roomById(t.roomId);
-  if(r && !writingFor(r.id, ME.id)){ const text = draftGet(r.id).trim();
-    D.writings.push({ id:uid(), roomId:r.id, userId:ME.id, text, words:wc(text), submittedAt:Date.now(), auto:true }); draftSet(r.id, '');
-    toast(L('Время письменной работы вышло — работа сдана автоматически', 'Writing time is up — your work was submitted automatically', 'Жазбаша жұмыс уақыты бітті — жұмыс автоматты түрде тапсырылды')); }
-  tmDone(t); persist(); render();
+const writingPending = new Map();
+function autoSubmitWriting(t){ sendWriting(t.roomId, true); }
+async function sendWriting(roomId, auto){
+  if(writingFor(roomId, ME.id) || (writingPending.get(roomId) || 0) > Date.now()) return;
+  writingPending.set(roomId, Infinity);
+  try{
+    await examCommand('writing', { roomId, text:draftGet(roomId).trim(), auto });
+    draftSet(roomId, ''); writingPending.delete(roomId); render();
+    toast(L('Работа сдана', 'Work submitted', 'Жұмыс тапсырылды'));
+  }catch(e){ writingPending.set(roomId, auto ? Date.now() + 15000 : 0); toast(e.message); }
 }
 const tmPartName = t => t.part === 'test' ? L('Тест', 'Test', 'Тест') + ' «' + t.title + '»' : partName('writing');
 const pctOf = (v, max) => max ? Math.round(v / max * 100) : 0;
@@ -1509,12 +1492,6 @@ function examTests(fresh){
         q('tf',{ text:'"Significant" means «незначительный».', correct:false, points:1 })
       ]}
   ];
-}
-function demoRoom(){
-  return { id:'r-demo', title:'Пробный экзамен по английскому', description:'Тест, эссе и устная часть. Спикинг откроется после теста и письменной работы.', open:true, createdAt:Date.now(),
-    test:{ on:true, testIds:['t-grammar','t-vocab'], max:40 },
-    writing:{ on:true, prompt:'Write an essay (120–180 words).\nTopic: Is online learning as effective as classroom learning? Give reasons and examples.', minWords:120, max:30 },
-    speaking:{ on:true, prompt:'Part 1. Tell me about yourself: your studies and hobbies.\nPart 2. Describe a skill you learned recently. How did you learn it? Why was it useful?\nPart 3. Does technology make learning easier? Why or why not?', minutes:5, max:30 } };
 }
 function seedLearn(){
   const R = (title, body, example) => ({ id:uid(), title, body, example });
@@ -1560,52 +1537,6 @@ function seedLearn(){
 }
 
 /* ---------- оценивание и валидация ---------- */
-/* ---------- оценивание (чистая функция) ---------- */
-function norm(s, cs){ s = String(s ?? '').trim().replace(/\s+/g,' ').replace(/[’‘`´]/g,"'"); return cs ? s : s.toLowerCase(); }
-const leftName = (p, j) => p.label || ('картинка '+(j+1));
-function grade(q, a, aux){
-  const max = +q.points || 0; let frac = 0, empty = false, user = '—', corr = '';
-  switch(q.type){
-    case 'single':
-      empty = a == null; if(!empty){ user = q.options[a]; frac = a === q.correct ? 1 : 0; }
-      corr = q.options[q.correct]; break;
-    case 'multi': {
-      const sel = Array.isArray(a) ? a : []; const C = new Set(q.correct);
-      empty = !sel.length;
-      user = sel.slice().sort((x,y)=>x-y).map(j=>q.options[j]).join(', ') || '—';
-      corr = q.correct.slice().sort((x,y)=>x-y).map(j=>q.options[j]).join(', ');
-      const right = sel.filter(j=>C.has(j)).length, wrong = sel.length - right;
-      frac = q.partial ? Math.max(0, (right - wrong) / C.size) : (wrong === 0 && right === C.size ? 1 : 0);
-      break; }
-    case 'tf':
-      empty = a == null; user = empty ? '—' : (a ? 'Верно' : 'Неверно');
-      corr = q.correct ? 'Верно' : 'Неверно'; frac = !empty && a === q.correct ? 1 : 0; break;
-    case 'input': {
-      const v = String(a ?? '').trim(); empty = !v; user = v || '—';
-      corr = q.answers.join(' / ');
-      frac = !empty && q.answers.some(x => norm(x, q.caseSensitive) === norm(v, q.caseSensitive)) ? 1 : 0;
-      break; }
-    case 'match': {
-      const map = (a && a.map) || {}; const n = q.pairs.length; let ok = 0, cnt = 0; const parts = [];
-      q.pairs.forEach((p, j) => { const k = map[j];
-        if(k != null){ cnt++; if(q.pairs[k].right === p.right) ok++; }
-        parts.push(leftName(p,j) + ' → ' + (k != null ? q.pairs[k].right : '?')); });
-      empty = cnt === 0; user = empty ? '—' : parts.join('; ');
-      corr = q.pairs.map((p,j) => leftName(p,j) + ' → ' + p.right).join('; ');
-      frac = q.partial ? ok / n : (ok === n ? 1 : 0);
-      break; }
-    case 'order': {
-      const seq = (Array.isArray(a) ? a : []).map(p => q.items[aux.pool[p]]);
-      empty = !seq.length; user = seq.join(' ') || '—'; corr = q.items.join(' ');
-      if(q.partial){ let ok = 0; q.items.forEach((w,k) => { if(seq[k] === w) ok++; }); frac = ok / q.items.length; }
-      else frac = seq.length === q.items.length && seq.every((w,k) => w === q.items[k]) ? 1 : 0;
-      break; }
-  }
-  const earned = r2(max * frac);
-  const status = empty ? 'empty' : frac >= 1 ? 'correct' : frac > 0 ? 'partial' : 'wrong';
-  return { earned, max, status, user, corr };
-}
-
 /* ---------- валидация ---------- */
 function validateTest(t){
   const e = [];
@@ -1669,10 +1600,12 @@ function formModal(title, fields, vals, onSave, o = {}){
       <div class="lg-err" id="fm-err" role="alert"></div>
       <div class="btns fm-btns"><button type="button" class="btn sec" data-close>${esc(o.cancel || L('Отмена', 'Cancel', 'Болдырмау'))}</button><button class="btn" type="submit">${esc(o.ok || L('Сохранить', 'Save', 'Сақтау'))}</button></div></form></div>`);
   const form = ov.querySelector('form');
-  form.addEventListener('submit', e => {
+  form.addEventListener('submit', async e => {
     e.preventDefault();
     const out = {}; fields.forEach(f => { const v = form.querySelector('#fm-' + f.k).value; out[f.k] = f.type === 'password' ? v : v.trim(); });
-    const err = onSave(out);
+    const button = form.querySelector('[type="submit"]'); if(button.disabled) return;
+    button.disabled = true;
+    let err; try{ err = await onSave(out); }catch(e){ err = e.message; }finally{ button.disabled = false; }
     if(err){ ov.querySelector('#fm-err').textContent = err; const f = form.querySelector('input,textarea'); if(f) f.focus(); return; }
     ov._close(); if(o.after) setTimeout(o.after, 0);
   });
@@ -1681,10 +1614,8 @@ function formModal(title, fields, vals, onSave, o = {}){
 // выставление баллов: пароль преподавателя, после ввода действует 1 час
 function withGradeAuth(fn){
   if(gaOpen()) return fn();
-  formModal(L('Подтвердите выставление баллов', 'Confirm grading', 'Ұпай қоюды растаңыз'), [{ k:'pw', label:L('Пароль преподавателя', 'Teacher password', 'Оқытушы құпиясөзі'), type:'password', ac:'current-password' }], {}, v => {
-    const u = userById(ME.id);
-    if(!u || v.pw !== u.password) return L('Неверный пароль', 'Wrong password', 'Құпиясөз қате');
-    gaSet(Date.now() + GA_TTL); toast(L('Доступ к выставлению баллов открыт на 1 час', 'Grading unlocked for 1 hour', 'Ұпай қою 1 сағатқа ашылды'));
+  formModal(L('Подтвердите выставление баллов', 'Confirm grading', 'Ұпай қоюды растаңыз'), [{ k:'pw', label:L('Пароль преподавателя', 'Teacher password', 'Оқытушы құпиясөзі'), type:'password', ac:'current-password' }], {}, async v => {
+    SYNC.gradingUntil = (await examCommand('grade-unlock', { password:v.pw })).gradingUntil; toast(L('Доступ к выставлению баллов открыт на 1 час', 'Grading unlocked for 1 hour', 'Ұпай қою 1 сағатқа ашылды'));
   }, { ok:L('Подтвердить', 'Confirm', 'Растау'), text:L('Пароль действует 1 час — в течение этого времени баллы можно выставлять без повторного ввода.', 'The password stays valid for 1 hour — you won’t need to enter it again during this time.', 'Құпиясөз 1 сағат жарамды — осы уақыт ішінде ұпайларды қайта енгізбей-ақ қоюға болады.'), after:fn });
 }
 
@@ -1837,27 +1768,35 @@ function vLogin(){
       <button class="btn block" type="submit">${L('Войти', 'Log in', 'Кіру')}</button>
     </form>
     ${KU_BACK ? `<div class="ku-login">${L('Перешли из портала университета?', 'Came from the university portal?', 'Университет порталынан келдіңіз бе?')} ${kuBackBtn('inline')}</div>` : ''}
-    <details class="demo"><summary>${L('Демо-аккаунты', 'Demo accounts', 'Демо-аккаунттар')}</summary>
+    ${SYNC.demo ? `<details class="demo"><summary>${L('Демо-аккаунты', 'Demo accounts', 'Демо-аккаунттар')}</summary>
       <div class="kv"><div><span>${L('Студент', 'Student', 'Студент')}</span><b>user, user1–user4 / 1</b></div><div><span>${L('Преподаватель', 'Teacher', 'Оқытушы')}</span><b>teacher / admin</b></div></div>
-      <div class="fhint">${L('Откройте две вкладки и войдите в разные аккаунты — изменения видны сразу.', 'Open two tabs and sign in to different accounts — changes show up instantly.', 'Екі қойынды ашып, әртүрлі аккаунттарға кіріңіз — өзгерістер бірден көрінеді.')}</div></details>
+      <div class="fhint">${L('Откройте две вкладки и войдите в разные аккаунты — изменения видны сразу.', 'Open two tabs and sign in to different accounts — changes show up instantly.', 'Екі қойынды ашып, әртүрлі аккаунттарға кіріңіз — өзгерістер бірден көрінеді.')}</div></details>` : ''}
   </section></div>`;
 }
-function doLogin(){
+async function doLogin(){
   const lg = document.getElementById('lg-login').value.trim().toLowerCase(), pw = document.getElementById('lg-pass').value;
   const err = document.getElementById('lg-err');
   if(!lg || !pw){ err.textContent = L('Введите логин и пароль', 'Enter username and password', 'Логин мен құпиясөзді енгізіңіз'); return; }
-  const u = D.users.find(x => x.login.toLowerCase() === lg && x.password === pw);
-  if(!u){ err.textContent = L('Неверный логин или пароль', 'Wrong username or password', 'Логин немесе құпиясөз қате'); document.getElementById('lg-pass').select(); return; }
-  ME = u; sesSet(u.id); applyTheme(); // личные настройки оформления пользователя
-  const pr = loadRun(); S.pendingRun = pr && testById(pr.test.id) ? pr : null; if(!S.pendingRun) dropRunSave();
-  go('exam', {}, {force:true, replace:true});
-  toast(L('Вы вошли как ', 'Signed in as ', 'Сіз кірдіңіз: ') + u.name);
+  try {
+    const state = await examApi('login', { login:lg, password:pw });
+    rememberToken(state.token); applyExamState(state); enterExam();
+    toast(L('Вы вошли как ', 'Signed in as ', 'Сіз кірдіңіз: ') + ME.name);
+  }catch(e){ err.textContent = e.message; }
 }
-function doLogout(){
+function enterExam(){
+  try{
+    const cached = JSON.parse(localStorage.getItem('edu-learn:' + ME.id) || '{}');
+    D = normDB({ ...D, learn:cached.learn, quiz:cached.quiz });
+  }catch{}
+  applyTheme();
+  const pr = loadRun(); S.pendingRun = pr && testById(pr.test.id) ? pr : null;
+  if(!S.pendingRun) dropRunSave();
+  go('exam', {}, {force:true, replace:true});
+}
+async function doLogout(){
   tmPresence(true);
-  stopTimer(); S.run = null; S.draft = null; S.rdraft = null; S.pendingRun = null; S.quiz = null; S.fc = null;
-  ME = null; sesSet(null); applyTheme();
-  go('login', {}, {force:true, replace:true});
+  try{ await examCommand('logout', {}); }catch(e){ if(ME){ toast(e.message); return; } }
+  examSignedOut();
 }
 
 /* ---------- общие фрагменты ---------- */
@@ -1987,12 +1926,14 @@ let timerId = null;
 function stopTimer(){ clearInterval(timerId); timerId = null; }
 let SHOW_TIMER = true; // настройка «Показывать таймер» (если выключено — таймер виден только в последнюю минуту)
 function startTimer(){ stopTimer(); SHOW_TIMER = !!prefsGet().showTimer; timerId = setInterval(updateTimer, 250); updateTimer(); }
-function startTest(id, o = {}){
-  const src = testById(id), room = roomById(o.roomId); if(!src || !src.questions.length || !room) return;
+async function startTest(id, o = {}){
+  const src = testById(id), room = roomById(o.roomId); if(!src || !room) return;
   if(!room.open){ toast(L('Экзамен закрыт', 'The exam is closed', 'Емтихан жабық')); return; }
   if(!room.test.testIds.includes(id)){ toast(L('Тест не входит в этот экзамен', 'This test is not part of the exam', 'Бұл тест осы емтиханға кірмейді')); return; }
   if(attemptFor(room.id, ME.id, id)){ toast(L('Этот тест уже сдан', 'This test is already submitted', 'Бұл тест тапсырылып қойған')); return; }
-  const t = clone(src);
+  let started;
+  try{ started = await examCommand('start', { roomId:room.id, testId:id }); }catch(e){ toast(e.message); return; }
+  const t = started.test;
   const order = t.questions.map((_, i) => i); if(t.shuffle) shuffle(order);
   const aux = {};
   t.questions.forEach((q, i) => {
@@ -2005,7 +1946,7 @@ function startTest(id, o = {}){
   });
   const now = Date.now();
   // тест с лимитом: время берётся из общего таймера — сброс или повторный старт его не обнуляют
-  const tm = t.timeLimit > 0 ? tmStart(room.id, 'test', id, t.timeLimit, t.title) : null;
+  const tm = t.timeLimit > 0 ? started.timer : null;
   S.pendingRun = null; dropRunSave();
   S.run = { test:t, roomId:room.id, tab:'exam', order, pos:0, answers:{}, aux, startedAt:tm ? tm.startedAt : now, qStart:now, qTime:{}, msel:null, timerId:tm ? tm.id : null };
   if(tm && tmLeft(tm) <= 0){ finish(true); return; } // время на тест уже истекло (например, после сброса) — попытка засчитывается
@@ -2095,19 +2036,19 @@ function finishAsk(){
   if(left) ask(L('Завершить тест?', 'Finish the test?', 'Тестті аяқтау керек пе?'), L(`Без ответа ${left} ${pl(left, 'задание', 'задания', 'заданий', 'question', 'questions', 'тапсырма')}. Их можно вернуться и заполнить.`, `${left} ${left === 1 ? 'question is' : 'questions are'} unanswered. You can go back and answer them.`, `Жауапсыз қалған тапсырмалар: ${left}. Оларға қайтып оралып, толтыруға болады.`), L('Завершить', 'Finish', 'Аяқтау'), () => finish(false), {cancel:L('Вернуться', 'Go back', 'Қайту')});
   else ask(L('Завершить тест?', 'Finish the test?', 'Тестті аяқтау керек пе?'), L('Все задания отвечены. Изменить ответы после завершения будет нельзя.', 'All questions are answered. You won’t be able to change your answers after finishing.', 'Барлық тапсырмаға жауап берілді. Аяқтағаннан кейін жауаптарды өзгерту мүмкін болмайды.'), L('Завершить', 'Finish', 'Аяқтау'), () => finish(false));
 }
-function finish(auto){
-  const r = S.run; if(!r) return;
+async function finish(auto){
+  const r = S.run; if(!r || r.submitting) return; r.submitting = true;
   closeOverlays(); commitQTime(); stopTimer();
-  const t = r.test, now = Date.now(), lim = t.timeLimit * 60000;
-  const duration = lim > 0 ? Math.min(runElapsed(r), lim) : runElapsed(r);
-  const details = r.order.map(i => { const q = t.questions[i], g = grade(q, r.answers[i], r.aux[i]); return Object.assign({ text:q.text, type:q.type, time:r.qTime[i] || 0 }, g); });
-  const score = r2(details.reduce((s, d) => s + d.earned, 0)), max = maxPoints(t);
-  const percent = max ? Math.round(score / max * 100) : 0;
-  const att = { id:uid(), userId:ME.id, roomId:r.roomId, testId:t.id, testTitle:t.title, startedAt:r.startedAt, finishedAt:now, duration, auto:!!auto, timeLimit:t.timeLimit,
-    score, max, percent, passed:percent >= t.passPercent, passPercent:t.passPercent, showAnswers:t.showAnswers, details };
-  if(attemptFor(r.roomId, ME.id, t.id)){ S.run = null; dropRunSave(); toast(L('Тест уже был сдан в другой вкладке', 'The test was already submitted in another tab', 'Тест басқа қойындыда тапсырылып қойған')); go('room', {id:r.roomId}, {force:true, replace:true}); return; }
-  tmDone(tmById(r.timerId));
-  D.attempts.unshift(att); persist(); S.run = null; dropRunSave();
+  const answers = r.test.questions.map((q, i) => {
+    const a = r.answers[i];
+    if(q.type === 'match') return q.pairs.map((_, j) => a?.map?.[j] ?? null);
+    if(q.type === 'order') return (a || []).map(p => r.aux[i].pool[p]);
+    return a ?? null;
+  });
+  let att;
+  try{ att = await examCommand('attempt', {roomId:r.roomId, testId:r.test.id, answers, times:r.qTime, auto}); }
+  catch(e){ delete r.submitting; saveRun(); toast(e.message); return; }
+  S.run = null; dropRunSave();
   if(auto) toast(L('Время вышло — тест завершён автоматически', 'Time’s up — the test was finished automatically', 'Уақыт бітті — тест автоматты түрде аяқталды'));
   S.rvTab = 'all';
   if(S.view === 'run') go('result', {id:att.id, tab:r.tab, fresh:1}, {force:true, replace:true});
@@ -2241,7 +2182,7 @@ function partTestS(r, p, n, closed){
       : pend ? `<button class="btn sm" data-act="resume">${ico('play')}${L('Продолжить', 'Resume', 'Жалғастыру')}</button>`
       : `<button class="btn sm" data-act="start" data-id="${t.id}" data-room="${r.id}" ${closed ? 'disabled' : ''}>${ico('play')}${L('Начать', 'Start', 'Бастау')}</button>`;
     return `<div class="card prow ${a ? 'is-done' : ''}"><div class="row wrap"><div class="grow"><p class="ttl">${a ? ico('check', 'okic') : ''}${esc(t.title)}</p>
-      <div class="meta">${nQ(t.questions.length)}<span class="dot">·</span>${timeTxt(t)}</div></div>${btn}</div></div>`; }).join('');
+      <div class="meta">${nQ(t.questionCount ?? t.questions.length)}<span class="dot">·</span>${timeTxt(t)}</div></div>${btn}</div></div>`; }).join('');
   return W(stepTitle(n, 'test'), `<p class="w-p">${L('Каждый тест проходится один раз — после завершения ответы изменить нельзя.', 'Each test can be taken once — answers can’t be changed after finishing.', 'Әр тест бір рет тапсырылады — аяқтағаннан кейін жауаптарды өзгертуге болмайды.')}</p>${rows}${gradeLine(p.grades.test, r.test.max)}`,
     { right: p.test.done ? doneChip() : `<span class="chip">${p.test.n} / ${p.test.of}</span>`, cls:'part' });
 }
@@ -2252,7 +2193,7 @@ function partWritingS(r, p, n, closed){
     <button class="btn" data-act="startWriting" data-room="${r.id}">${ico('play')}${L('Начать письменную работу', 'Start writing', 'Жазбаша жұмысты бастау')}</button>`, { right:`<span class="chip">${L('Не сдано', 'Not submitted', 'Тапсырылмаған')}</span>`, cls:'part' });
   let body = `<div class="prompt">${esc(r.writing.prompt)}</div>`;
   if(!w && !closed && tw) body = `<div class="tstrip" style="margin:0 0 12px"><span class="tm">${ico('hourglass')}<b class="num" data-tm="${tw.id}">${fmtT(Math.max(0, tmLeft(tw)))}</b></span><span class="muted">${L('осталось', 'left', 'қалды')}</span></div>` + body;
-  if(w) body += `<div class="essay">${esc(w.text)}</div><div class="meta">${L('Сдано', 'Submitted', 'Тапсырылды')} ${fmtDate(w.submittedAt)} · ${wordsTxt(w.words)}${w.auto ? ' · ' + L('время вышло', 'time’s up', 'уақыт бітті') : ''}</div>`;
+  if(w) body += `<div class="essay">${esc(w.text)}</div><div class="meta">${L('Сдано', 'Submitted', 'Тапсырылды')} ${fmtDate(w.submittedAt)} · ${wordsTxt(w.words)}${w.late ? ' · ' + L('Получено после срока', 'Received after the deadline', 'Мерзімнен кейін алынды') : ''}${w.auto ? ' · ' + L('время вышло', 'time’s up', 'уақыт бітті') : ''}</div>`;
   else if(closed) body += `<div class="note">${ico('lock')}<span>${L('Экзамен закрыт — сдать работу нельзя.', 'The exam is closed — submissions are not accepted.', 'Емтихан жабық — жұмысты тапсыру мүмкін емес.')}</span></div>`;
   else { const dr = draftGet(r.id), c = wc(dr);
     body += `<label class="f" for="essay">${L('Ваш ответ', 'Your answer', 'Сіздің жауабыңыз')}</label><textarea class="field essay-in" id="essay" data-inp="essay" data-room="${r.id}" placeholder="${L('Напишите работу здесь…', 'Write your work here…', 'Жұмысыңызды осында жазыңыз…')}">${esc(dr)}</textarea>
@@ -2347,6 +2288,7 @@ function vResult(){
         <div class="stat"><b class="num">${cnt('wrong')}</b><span>${L('ошибок', 'wrong', 'қате')}</span></div></div>
       <div class="dist" aria-hidden="true">${['correct', 'partial', 'wrong', 'empty'].map((s, k) => cnt(s) ? `<i class="${['b-ok', 'b-mid', 'b-low', 'b-none'][k]}" style="flex:${cnt(s)}"></i>` : '').join('')}</div>
       <div class="legend"><span><i class="b-ok"></i>${L('верно', 'correct', 'дұрыс')} ${cnt('correct')}</span><span><i class="b-mid"></i>${L('частично', 'partial', 'ішінара')} ${cnt('partial')}</span><span><i class="b-low"></i>${L('неверно', 'wrong', 'қате')} ${cnt('wrong')}</span><span><i class="b-none"></i>${L('без ответа', 'no answer', 'жауапсыз')} ${cnt('empty')}</span></div>
+      ${a.late ? `<div class="note">${L('Ответы пришли после срока. Автоматический балл — 0.', 'The answers arrived after the deadline. The automatic score is 0.', 'Жауаптар мерзімнен кейін келді. Автоматты ұпай — 0.')}</div>` : ''}
       ${a.auto ? `<div class="chips"><span class="chip mid">${ico('clock')}${L('Время вышло', 'Time’s up', 'Уақыт бітті')}</span></div>` : ''}
       <div class="fhint">${L('Итоговый балл за тестовую часть выставляет преподаватель.', 'The final score for the test part is set by the teacher.', 'Тест бөлімі бойынша қорытынды ұпайды оқытушы қояды.')}</div></div>
     ${S.params.fresh ? `<div class="btns res-btns"><button class="btn" data-act="back" data-fb="${back}">${L('Готово', 'Done', 'Дайын')}</button></div>` : ''}`;
@@ -2471,7 +2413,7 @@ function gradePart(r, u, p, k, n){
     body += gradeForm(r, u, p, k, p.test.auto);
   } else if(k === 'writing'){
     const w = p.writing.w;
-    body = `<div class="prompt">${esc(r.writing.prompt)}</div>` + (w ? `<div class="essay">${esc(w.text)}</div><div class="meta">${w.auto ? `<span class="c-mid">${L('сдано автоматически — время вышло', 'auto-submitted — time’s up', 'автоматты түрде тапсырылды — уақыт бітті')}</span><span class="dot">·</span>` : ''}${wordsTxt(w.words)} ${w.words < r.writing.minWords ? `<span class="c-mid">(${L('меньше минимума', 'below minimum', 'ең аз шектен төмен')} ${r.writing.minWords})</span>` : ''}<span class="dot">·</span>${L('сдано', 'submitted', 'тапсырылды')} ${fmtDate(w.submittedAt)}</div>` : '') + gradeForm(r, u, p, k);
+    body = `<div class="prompt">${esc(r.writing.prompt)}</div>` + (w ? `<div class="essay">${esc(w.text)}</div><div class="meta">${w.auto ? `<span class="c-mid">${L('сдано автоматически — время вышло', 'auto-submitted — time’s up', 'автоматты түрде тапсырылды — уақыт бітті')}</span><span class="dot">·</span>` : ''}${wordsTxt(w.words)}${w.late ? ' · ' + L('Получено после срока', 'Received after the deadline', 'Мерзімнен кейін алынды') : ''} ${w.words < r.writing.minWords ? `<span class="c-mid">(${L('меньше минимума', 'below minimum', 'ең аз шектен төмен')} ${r.writing.minWords})</span>` : ''}<span class="dot">·</span>${L('сдано', 'submitted', 'тапсырылды')} ${fmtDate(w.submittedAt)}</div>` : '') + gradeForm(r, u, p, k);
   } else {
     const q = p.speaking.q;
     body = `<div class="prompt">${esc(r.speaking.prompt)}</div>` +
@@ -2636,12 +2578,11 @@ function vRoomEditor(){
 /* --- студенты --- */
 function userForm(u){
   formModal(u ? L('Изменить студента', 'Edit student', 'Студентті өзгерту') : L('Новый студент', 'New student', 'Жаңа студент'), [
-    { k:'name', label:L('Имя и фамилия', 'Full name', 'Аты-жөні') }, { k:'login', label:L('Логин', 'Login', 'Логин') }, { k:'password', label:L('Пароль', 'Password', 'Құпиясөз') }],
-    u ? { name:u.name, login:u.login, password:u.password } : {}, v => {
-      if(!v.name || !v.login || !v.password) return L('Заполните все поля', 'Fill in all fields', 'Барлық өрісті толтырыңыз');
+    { k:'name', label:L('Имя и фамилия', 'Full name', 'Аты-жөні') }, { k:'login', label:L('Логин', 'Login', 'Логин') }, { k:'password', type:'password', label:u ? L('Новый пароль (по желанию)', 'New password (optional)', 'Жаңа құпиясөз (міндетті емес)') : L('Пароль', 'Password', 'Құпиясөз') }],
+    u ? { name:u.name, login:u.login } : {}, async v => {
+      if(!v.name || !v.login || (!u && !v.password)) return L('Заполните все поля', 'Fill in all fields', 'Барлық өрісті толтырыңыз');
       if(D.users.some(x => x !== u && x.login.toLowerCase() === v.login.toLowerCase())) return L('Такой логин уже занят', 'This login is already taken', 'Бұл логин бос емес');
-      if(u) Object.assign(u, v); else D.users.push({ id:uid(), name:v.name, login:v.login, password:v.password, role:'student' });
-      persist(); render(); toast(u ? L('Данные студента обновлены', 'Student updated', 'Студент деректері жаңартылды') : L('Студент добавлен', 'Student added', 'Студент қосылды'));
+      await examCommand('student', { ...v, id:u?.id }); render(); toast(u ? L('Данные студента обновлены', 'Student updated', 'Студент деректері жаңартылды') : L('Студент добавлен', 'Student added', 'Студент қосылды'));
     });
 }
 function userMenu(id){
@@ -2649,7 +2590,7 @@ function userMenu(id){
   sheet(u.name, [
     { icon:'edit', label:L('Изменить', 'Edit', 'Өзгерту'), fn:() => userForm(u) },
     { icon:'trash', label:L('Удалить', 'Delete', 'Жою'), danger:true, fn:() => ask(L('Удалить студента?', 'Delete student?', 'Студентті жою керек пе?'), L('Удалятся его попытки, работы, место в очереди и баллы.', 'Their attempts, work, queue place and scores will be deleted.', 'Оның әрекеттері, жұмыстары, кезектегі орны және ұпайлары жойылады.'), L('Удалить', 'Delete', 'Жою'), () => {
-      D.users = D.users.filter(x => x !== u); ['attempts','writings','queue','grades','timers'].forEach(k => D[k] = D[k].filter(x => x.userId !== id)); persist(); render(); toast(L('Студент удалён', 'Student deleted', 'Студент жойылды')); }, {danger:true}) }
+      examCommand('student/delete', {id}).then(() => toast(L('Студент удалён', 'Student deleted', 'Студент жойылды'))).catch(e => toast(e.message)); }, {danger:true}) }
   ]);
 }
 
@@ -2793,7 +2734,7 @@ const ACT = {
     const r = roomById(el.dataset.room); if(!r || !r.open) return;
     const text = draftGet(r.id).trim(), n = wc(text);
     if(!text){ toast(L('Работа пустая', 'The work is empty', 'Жұмыс бос')); document.getElementById('essay').focus(); return; }
-    const doIt = () => { if(writingFor(r.id, ME.id)) return; tmDone(timerOf(r.id, ME.id, 'writing')); D.writings.push({ id:uid(), roomId:r.id, userId:ME.id, text, words:n, submittedAt:Date.now() }); persist(); draftSet(r.id, ''); render(); toast(L('Работа сдана', 'Work submitted', 'Жұмыс тапсырылды')); };
+    const doIt = () => sendWriting(r.id, false);
     if(n < r.writing.minWords) ask(L('Меньше минимума слов', 'Below the word minimum', 'Сөздер саны ең аз шектен аз'), L(`В работе ${wordsTxt(n)} при минимуме ${r.writing.minWords}. Всё равно сдать? Изменить текст после сдачи будет нельзя.`, `Your work has ${wordsTxt(n)}, the minimum is ${r.writing.minWords}. Submit anyway? You can’t edit it after submitting.`, `Жұмыста ${wordsTxt(n)}, ал ең аз саны — ${r.writing.minWords}. Бәрібір тапсыру керек пе? Тапсырғаннан кейін мәтінді өзгерту мүмкін болмайды.`), L('Сдать', 'Submit', 'Тапсыру'), doIt);
     else ask(L('Сдать работу?', 'Submit your work?', 'Жұмысты тапсыру керек пе?'), L('После сдачи изменить текст будет нельзя.', 'You won’t be able to edit it after submitting.', 'Тапсырғаннан кейін мәтінді өзгерту мүмкін болмайды.'), L('Сдать', 'Submit', 'Тапсыру'), doIt);
   },
@@ -2820,7 +2761,7 @@ const ACT = {
   // проверка
   openGrade: el => go('grade', {room:el.dataset.room, user:el.dataset.user, tab:el.dataset.tab || NAV_OF[S.view] || 'exam'}),
   gaUnlock: () => withGradeAuth(() => render()),
-  gaLock: () => { gaSet(0); render(); toast(L('Доступ к оценкам закрыт', 'Grading locked', 'Бағалауға рұқсат жабылды')); },
+  gaLock: async () => { try{ await examCommand('grade-lock', {}); }catch(e){ toast(e.message); return; } SYNC.gradingUntil = 0; render(); toast(L('Доступ к оценкам закрыт', 'Grading locked', 'Бағалауға рұқсат жабылды')); },
   useAuto: el => { const i = document.getElementById('sc-' + el.dataset.part); if(i){ i.value = fmtN(+el.dataset.v); i.focus(); } },
   saveGrade: el => saveGrade(el.dataset.part),
   annul: el => { const a = D.attempts.find(x => x.id === el.dataset.id); if(!a) return;
@@ -2968,73 +2909,13 @@ document.addEventListener('keydown', e => {
 const LIVE = { exam:1, room:1, grade:1, scores:1, results:1, learn:1, editorList:1, result:1 };
 const fieldFocused = () => { const a = document.activeElement; return !!a && app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio'; };
 window.addEventListener('storage', e => {
-  if(e.key === LS_KEY){
-    const d = loadDB(); if(!d) return; notifyDiff(D, d); D = d;
-    if(ME){ const u = userById(ME.id); if(!u){ doLogout(); toast(L('Ваш аккаунт удалён', 'Your account was deleted', 'Сіздің аккаунтыңыз жойылды')); return; } ME = u; }
-    if(LIVE[S.view] || S.view === 'login'){ if(fieldFocused() || document.querySelector('.ov')) S.syncPending = true; else render(); }
-  } else if((e.key === THEME_KEY || e.key === MODE_KEY) && !ssGet('edu-theme-ku') && !ssGet('edu-mode-ku')){ COLOR = colorOf(lsGet(THEME_KEY)); const m = lsGet(MODE_KEY); MODE = MODES.includes(m) ? m : 'auto'; applyTheme(); render(); refreshSettings(); }
-  else if(e.key === GA_KEY && S.view === 'grade' && !document.querySelector('.ov')) render();
+  if((e.key === THEME_KEY || e.key === MODE_KEY) && !ssGet('edu-theme-ku') && !ssGet('edu-mode-ku')){ COLOR = colorOf(lsGet(THEME_KEY)); const m = lsGet(MODE_KEY); MODE = MODES.includes(m) ? m : 'auto'; applyTheme(); render(); refreshSettings(); }
 });
 setInterval(() => { tick(); if(S.syncPending && !fieldFocused() && !document.querySelector('.ov')) render(); }, 1000);
 
-/* ===== СИНХРОНИЗАЦИЯ С СЕРВЕРОМ (добавлено): общая очередь, румы, студенты, баллы между устройствами =====
-   Если сервера нет (файл открыт с диска) — приложение работает как раньше, только на localStorage. */
-const SYNC = { on:false, last:{} };
-const SYNC_COLS = ['users','tests','rooms','attempts','writings','queue','grades','timers'];
-const syncKey = x => x.id || [x.roomId, x.userId, x.testId || x.part || ''].join('|');
-function syncSnapOf(db){ const o = {}; SYNC_COLS.forEach(c => { o[c] = {}; (db[c] || []).forEach(x => { o[c][syncKey(x)] = JSON.stringify(x); }); }); return o; }
-const syncSig = o => JSON.stringify(Object.keys(o).sort().map(c => [c, Object.keys(o[c]).sort().map(k => o[c][k])]));
-async function syncPush(){
-  if(!SYNC.on) return;
-  const cur = syncSnapOf(D), prev = SYNC.last, ch = {}; let any = false;
-  SYNC_COLS.forEach(c => { const up = [], del = [];
-    for(const k in cur[c]) if(prev[c][k] !== cur[c][k]) up.push(JSON.parse(cur[c][k]));
-    for(const k in prev[c]) if(!(k in cur[c])) del.push(k);
-    if(up.length || del.length){ ch[c] = { up, del }; any = true; } });
-  if(!any) return;
-  SYNC.last = cur;
-  try{ const r = await fetch('api/sync', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ changes:ch }), keepalive:true }); if(!r.ok) throw 0; }
-  catch(e){ SYNC.last = prev; }
-}
-function syncApply(db, force){
-  if(!force && syncSig(syncSnapOf(db)) === syncSig(syncSnapOf(D))) return;
-  if(!force) notifyDiff(D, db); // вызов на speaking, открытие экзамена
-  const d = Object.assign({}, D); SYNC_COLS.forEach(c => { d[c] = db[c] || []; });
-  D = normDB(d); SYNC.last = syncSnapOf(D);
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(D)); }catch(e){}
-  if(ME){ const u = userById(ME.id); if(!u){ doLogout(); toast(L('Ваш аккаунт удалён', 'Your account was deleted', 'Сіздің аккаунтыңыз жойылды')); return; } ME = u; }
-  if(LIVE[S.view] || S.view === 'login'){ if(fieldFocused() || document.querySelector('.ov')) S.syncPending = true; else render(); }
-}
-async function syncStart(){
-  if(location.protocol === 'file:') return;
-  try{
-    const r = await fetch('api/state'); if(!r.ok) return; const s = await r.json();
-    SYNC.last = syncSnapOf({}); SYNC.on = true;
-    if(!s.rev){ syncPush(); } else syncApply(s.db, true);
-    const es = new EventSource('api/events'); es.onmessage = e => { try{ syncApply(JSON.parse(e.data).db); }catch(x){} };
-  }catch(e){}
-}
-
-window.addEventListener('pagehide', () => { try{ tmPresence(true); }catch(e){} });
-/* ---------- старт ---------- */
-(function init(){
-  applyLang(); applyTheme();
-  D = loadDB();
-  if(!D){ D = freshDB(); persist(); } // первый заход: создаются аккаунты user/1 и teacher/admin и пробный экзамен
-  const sid = sesGet(); ME = sid ? userById(sid) || null : null;
-  if(ME) applyTheme(); // настройки пользователя (размер текста, контраст, анимация)
-  if(ME){ const pr = loadRun(); S.pendingRun = pr && testById(pr.test.id) ? pr : null; }
-  let hs = null; try{ hs = history.state; }catch(e){}
-  const VIEWS = ['exam','room','result','results','learn','editorList','editor','roomEditor','scores','grade'];
-  if(ME && hs && VIEWS.includes(hs.view)){ S.view = hs.view; S.params = hs.params || {}; render(); return; }
-  S.view = ME ? 'exam' : 'login';
-  try{ history.replaceState({view:S.view, params:{}, depth:(hs && hs.depth) || 0}, ''); }catch(e){ HIST = false; }
-  render();
-})();
-syncStart();
-// доступ для автотестов
-window.__edu = { S, get D(){ return D; }, get ME(){ return ME; }, grade, validateTest, validateRoom, progress, startTest, fmtT, quality, go, GA_TTL };
-
+window.addEventListener('pagehide', () => { try{ tmPresence(true); }catch{} });
+D = normDB({}); applyLang(); applyTheme(); render();
+syncStart().catch(e => toast(e.message));
 </script>
 </body>
 </html>

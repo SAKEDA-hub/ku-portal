@@ -7,6 +7,7 @@
  */
 const crypto = require('crypto');
 const { promisify } = require('util');
+const { isHttps } = require('./http');
 
 const scrypt = promisify(crypto.scrypt);
 const PASSWORD_MIN = 8; // для новых паролей; старые короткие продолжают работать
@@ -46,7 +47,7 @@ const KEY_MAX = 300; // ключ (email, IP) обрезается — длинн
 function createLimiter({ max, windowMs, now = Date.now }) {
   const hits = new Map(); // key → { n, t }; порядок вставки — от старых к новым
   const live = (key) => { const h = hits.get(key); if (h && now() - h.t >= windowMs) { hits.delete(key); return null; } return h; };
-  return {
+  const limiter = {
     blocked: (key) => { const h = live(String(key).slice(0, KEY_MAX)); return !!h && h.n >= max; },
     hit(key) {
       key = String(key).slice(0, KEY_MAX);
@@ -56,15 +57,36 @@ function createLimiter({ max, windowMs, now = Date.now }) {
       if (hits.size > LIMITER_KEYS_MAX) hits.delete(hits.keys().next().value); // вытесняем самый старый
     },
     reset: (key) => { hits.delete(String(key).slice(0, KEY_MAX)); },
+    // Reserve before async password hashing. A successful check releases only its own slot.
+    reserve(key) {
+      key = String(key).slice(0, KEY_MAX);
+      if (limiter.blocked(key)) return null;
+      limiter.hit(key);
+      const slot = hits.get(key);
+      let pending = true;
+      return () => {
+        if (pending && hits.get(key) === slot && --slot.n === 0) hits.delete(key);
+        pending = false;
+      };
+    },
   };
+  return limiter;
 }
 
+const basePolicy = "object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'";
+function htmlPolicy(html) {
+  const scripts = [...html.toString().replace(/\r\n?/g, '\n').matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+  const hashes = scripts.map(m => "'sha256-" + crypto.createHash('sha256').update(m[1]).digest('base64') + "'");
+  return basePolicy + "; default-src 'self'; script-src 'self' " + hashes.join(' ') +
+    "; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com";
+}
 function securityHeaders(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-  if (String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https') res.setHeader('Strict-Transport-Security', 'max-age=15552000');
+  res.setHeader('Content-Security-Policy', basePolicy);
+  if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
 }
 
-module.exports = { PASSWORD_MIN, setPassword, setPasswordSync, checkPassword, needsRehash, createLimiter, securityHeaders };
+module.exports = { PASSWORD_MIN, setPassword, setPasswordSync, checkPassword, needsRehash, createLimiter, securityHeaders, htmlPolicy };

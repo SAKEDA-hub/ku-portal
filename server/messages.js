@@ -25,7 +25,7 @@ const clip = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
 function createMessages(ctx) {
   const { getDB, saveDB, markDirty, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA } = ctx;
   const UPLOADS = path.join(DATA, 'uploads');
-  if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true });
+  if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true, mode: 0o700 });
 
   function store() {
     const db = getDB();
@@ -121,11 +121,10 @@ function createMessages(ctx) {
     const groups = new Set(db.schedule.filter((r) => r.subjectId === sub.id).map((r) => r.group));
     db.users.filter((x) => x.role === 'student' && groups.has(x.group)).forEach((x) => pushInbox(x, item));
   }
-  function attachFile(u, fileId, ch) {
+  function attachFile(u, fileId) {
     if (!fileId) return null;
     const f = store().files.find((x) => x.id === fileId && x.owner === u.id);
     if (!f) return undefined;
-    f.chs = [...new Set((f.chs || []).concat(ch))];
     return { id: f.id, name: f.name, size: f.size };
   }
   const pubMsg = (m) => ({ id: m.id, from: m.from, text: m.text, file: m.file || null, at: m.at });
@@ -169,7 +168,7 @@ function createMessages(ctx) {
     if (!a.manage) return bad(res, 403, 'Публикует преподаватель предмета');
     const title = clip(body.title, 160);
     if (title.length < 2) return bad(res, 400, 'Укажите тему');
-    const file = attachFile(u, body.fileId, ch);
+    const file = attachFile(u, body.fileId);
     if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
     const m = { id: nid('mat'), ch, teacherId: u.id, kind: MATERIAL_KINDS.includes(body.kind) ? body.kind : 'other', title, text: clip(body.text, MAX_TEXT), file, at: Date.now() };
     db.chat.materials.push(m);
@@ -183,7 +182,7 @@ function createMessages(ctx) {
     const title = clip(body.title, 160);
     if (title.length < 2) return bad(res, 400, 'Укажите название задания');
     if (!isDate(body.due) || body.due < ymd(new Date(Date.now() + MIN_TASK_DAYS * DAY_MS))) return bad(res, 400, 'Срок сдачи — не раньше чем через 7 дней');
-    const file = attachFile(u, body.fileId, ch);
+    const file = attachFile(u, body.fileId);
     if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
     const t = { id: nid('task'), ch, teacherId: u.id, title, text: clip(body.text, MAX_TEXT), due: body.due, file, at: Date.now() };
     db.chat.tasks.push(t);
@@ -232,7 +231,7 @@ function createMessages(ctx) {
       const ch = String(body.ch || ''), a = access(u, ch);
       if (!a.ok || a.kind !== 'dm') return bad(res, 403, 'Нет доступа');
       const text = clip(body.text, MAX_TEXT);
-      const file = attachFile(u, body.fileId, ch);
+      const file = attachFile(u, body.fileId);
       if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
       if (!text && !file) return bad(res, 400, 'Пустое сообщение');
       const m = { id: nid('msg'), ch, from: u.id, text, file, at: Date.now() };
@@ -266,16 +265,28 @@ function createMessages(ctx) {
       const buf = Buffer.from(String(body.data || ''), 'base64');
       if (!buf.length) return bad(res, 400, 'Пустой файл');
       if (buf.length > MAX_FILE_BYTES) return bad(res, 400, 'Файл больше 10 МБ');
+      let total = 0, mine = 0;
+      for (const f of store().files) {
+        total += f.size;
+        if (f.owner === u.id) mine += f.size;
+      }
+      if (mine + buf.length > 100 * 1024 ** 2 || total + buf.length > 1024 ** 3) return bad(res, 413, 'Превышена квота вложений');
       const id = crypto.randomBytes(12).toString('hex');
-      fs.writeFileSync(path.join(UPLOADS, id), buf);
-      store().files.push({ id, name, size: buf.length, owner: u.id, at: Date.now(), chs: [] });
-      saveDB();
+      const target = path.join(UPLOADS, id);
+      fs.writeFileSync(target, buf, { flag: 'wx', mode: 0o600 });
+      const files = store().files;
+      files.push({ id, name, size: buf.length, owner: u.id, at: Date.now() });
+      try { saveDB(); } catch (error) { files.pop(); fs.unlinkSync(target); throw error; }
       return ok(res, { id, name, size: buf.length });
     }
     const m = /^\/api\/files\/([a-f0-9]{24})$/.exec(p);
     if (m && req.method === 'GET') {
       const f = store().files.find((x) => x.id === m[1]);
-      if (!f || !(f.owner === u.id || (f.chs || []).some((ch) => access(u, ch).ok))) return bad(res, 404, 'Файл не найден');
+      if (!f) return bad(res, 404, 'Файл не найден');
+      const chat = store().chat;
+      const shared = () => [chat.msgs, chat.materials, chat.tasks].some(rows =>
+        rows.some(row => row.file?.id === f.id && access(u, row.ch).ok));
+      if (f.owner !== u.id && !shared()) return bad(res, 404, 'Файл не найден');
       const file = path.join(UPLOADS, f.id);
       if (!fs.existsSync(file)) return bad(res, 404, 'Файл не найден');
       res.writeHead(200, {
@@ -284,7 +295,7 @@ function createMessages(ctx) {
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
       });
-      fs.createReadStream(file).pipe(res);
+      fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
       return true;
     }
     return false;

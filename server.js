@@ -11,21 +11,28 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || process.env.ALWAYSDATA_HTTPD_PORT || 3000;
 // alwaysdata требует слушать конкретный IP из настроек сайта (переменные IP / ALWAYSDATA_HTTPD_IP); без них — все интерфейсы, как раньше
-const HOST = process.env.IP || process.env.ALWAYSDATA_HTTPD_IP || undefined;
+const HOST = process.env.IP || process.env.ALWAYSDATA_HTTPD_IP || (process.env.DEMO === '1' ? '127.0.0.1' : undefined);
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
-const DATA = path.join(ROOT, 'data');
+const { dataDir: DATA, grantOf } = require('./server/access');
+const { clientIp, readJson, HttpError } = require('./server/http');
+const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
 const { createStore } = require('./server/store');
 const sec = require('./server/security');
 
-if (!fs.existsSync(DATA)) fs.mkdirSync(DATA, { recursive: true });
+fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
 
 /* Версия кода, с которой запущен сервер (для проверки, что автообновление перезапустило сервер): /api/version.
    Читается из .git один раз при старте; git на машине сайта не нужен. */
 function readCommit() {
   try {
+    const release = path.join(ROOT, '.release-commit');
+    if (fs.existsSync(release)) {
+      const sha = fs.readFileSync(release, 'utf8').trim();
+      if (/^[a-f0-9]{40,64}$/.test(sha)) return sha.slice(0, 7);
+    }
     const head = fs.readFileSync(path.join(ROOT, '.git', 'HEAD'), 'utf8').trim();
     if (!head.startsWith('ref: ')) return head.slice(0, 7);
     const ref = head.slice(5);
@@ -46,10 +53,16 @@ let db = null;
 const store = createStore({
   file: DB_FILE, backupDir: path.join(DATA, 'backups'),
   empty: () => ({ users: [], subjects: [], schedule: [], grades: [], seq: {} }),
-  valid: (d) => !!d && typeof d === 'object' && Array.isArray(d.users), // иначе файл считается испорченным
+  valid: d => !!d && ['users', 'grades', 'schedule', 'subjects'].every(k => Array.isArray(d[k])),
 });
 function loadDB() { db = store.load(); }
-function saveDB() { store.save(db); }
+function saveDB() {
+  try { store.save(db); } catch (error) {
+    console.error('[store] Сбой записи портала, процесс будет перезапущен:', error.code || error.message);
+    process.nextTick(() => process.exit(1));
+    throw error;
+  }
+}
 function nid(prefix) {
   db.seq = db.seq || {};
   db.seq[prefix] = (db.seq[prefix] || 0) + 1;
@@ -65,15 +78,6 @@ function send(res, code, obj) {
 function bad(res, code, msg) { send(res, code, { error: msg }); }
 function ok(res, obj) { send(res, 200, obj || { ok: true }); }
 
-function readBody(req, limit = 1e6) {
-  return new Promise((resolve) => {
-    let d = '';
-    req.on('data', (c) => { d += c; if (d.length > limit) req.destroy(); });
-    req.on('end', () => { try { const v = d ? JSON.parse(d) : {}; resolve(v && typeof v === 'object' && !Array.isArray(v) ? v : {}); } catch { resolve({}); } });
-    req.on('error', () => resolve({}));
-    req.on('close', () => resolve({})); // тело больше лимита: соединение закрыто, end не придёт
-  });
-}
 /* Ограничения попыток (server/security.js):
    вход — по паре email + IP (чужой человек не может запереть владельца аккаунта), по email в целом — выше, против
    перебора с разных адресов (кроме бета-аккаунтов: их пароль и так публичный), по IP — общий (у кампуса общий IP — лимит выше);
@@ -91,15 +95,15 @@ const PASS_SHORT = 'Пароль — минимум 8 символов';
 const NO_USER = {}; sec.setPasswordSync(NO_USER, crypto.randomBytes(16).toString('hex'));
 /* Пароль для действия с аккаунтом: неверный — счётчик, исчерпан — 429 (текст ошибки или null, если верный) */
 async function passError(u, pw) {
-  if (passCheckByUser.blocked(u.id)) return [429, TOO_MANY_PASS];
-  if (await sec.checkPassword(u, pw)) { passCheckByUser.reset(u.id); return null; }
-  passCheckByUser.hit(u.id);
+  const release = passCheckByUser.reserve(u.id);
+  if (!release) return [429, TOO_MANY_PASS];
+  if (await sec.checkPassword(u, pw)) { release(); return null; }
   return [400, null];
 }
 
 const sessions = new Map(); // token -> user
 const SESSION_IDLE_MS = 30 * 24 * 60 * 60 * 1000; // сеанс без активности 30 дней — выход
-// сеанс без метаданных тоже считается истёкшим: все сеансы создаются через saveSession, старые получают метаданные в loadSessions
+// После обновления принимаются только сеансы с отпечатком токена и действующим допуском.
 const sessionExpired = (tok, now) => { const m = db.sessMeta && db.sessMeta[tok]; return !m || now - (m.lastSeen || m.created || 0) > SESSION_IDLE_MS; };
 function loadSessions() {
   if (!db.sessions) return;
@@ -107,30 +111,36 @@ function loadSessions() {
   db.sessMeta = db.sessMeta || {};
   for (const [tok, uid] of Object.entries(db.sessions)) {
     const user = db.users.find((x) => x.id === uid);
-    // сеансы без метаданных (созданные раньше) получают их сейчас — и тоже истекут без активности
-    if (user && !db.sessMeta[tok]) db.sessMeta[tok] = { sid: crypto.randomBytes(6).toString('hex'), uid, created: now, lastSeen: now, ua: '', ip: '' };
-    if (!user || sessionExpired(tok, now)) { delete db.sessions[tok]; delete db.sessMeta[tok]; continue; }
+    if (!user || !tok.startsWith('sha256:') || sessionExpired(tok, now) ||
+        !db.sessMeta[tok].grant || grantOf(user) !== db.sessMeta[tok].grant) {
+      delete db.sessions[tok]; delete db.sessMeta[tok]; continue;
+    }
     sessions.set(tok, user);
   }
   saveDB();
 }
 /* Метаданные сеанса (для «Активных сеансов»): db.sessMeta[token] = { sid, uid, created, lastSeen, ua, ip }.
    Наружу отдаётся только sid — сам токен никогда не показывается. */
-const reqToken = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-// адрес клиента — последняя запись X-Forwarded-For (её добавляет прокси хостинга; начало заголовка клиент может подделать)
-const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',').pop().trim() || (req.socket && req.socket.remoteAddress) || '';
-function saveSession(token, user, req) {
+const digestToken = raw => 'sha256:' + crypto.createHash('sha256').update(raw).digest('hex');
+function reqToken(req) {
+  const match = /^Bearer ([0-9a-f]{48})$/i.exec(req.headers.authorization || '');
+  return match ? digestToken(match[1]) : '';
+}
+function saveSession(user, req, grant) {
+  const raw = crypto.randomBytes(24).toString('hex'), token = digestToken(raw);
+  sessions.set(token, user);
   db.sessions = db.sessions || {};
   db.sessions[token] = user.id;
   db.sessMeta = db.sessMeta || {};
   db.sessMeta[token] = {
-    sid: crypto.randomBytes(6).toString('hex'), uid: user.id, created: Date.now(), lastSeen: Date.now(),
+    sid: crypto.randomBytes(6).toString('hex'), uid: user.id, grant, created: Date.now(), lastSeen: Date.now(),
     ua: req ? String(req.headers['user-agent'] || '').slice(0, 200) : '', ip: req ? clientIp(req) : '',
   };
   saveDB();
+  return raw;
 }
 function dropSession(token, save = true) {
-  sessions.delete(token);
+  if (!sessions.delete(token)) return;
   if (db.sessions) delete db.sessions[token];
   if (db.sessMeta) delete db.sessMeta[token];
   if (save) saveDB();
@@ -148,7 +158,7 @@ function userOf(req) {
   const u = sessions.get(t) || null;
   if (u) {
     const now = Date.now();
-    if (sessionExpired(t, now)) { dropSession(t); return null; }
+    if (sessionExpired(t, now) || grantOf(u) !== db.sessMeta[t].grant) { dropSession(t); return null; }
     if (!u.lastSeen || now - u.lastSeen > 15000) { u.lastSeen = now; dbDirty = true; }
     const m = db.sessMeta && db.sessMeta[t];
     if (m && now - (m.lastSeen || 0) > 15000) { m.lastSeen = now; dbDirty = true; }
@@ -306,16 +316,19 @@ const MIME = {
 };
 /* Статика: public/ в корне, KU Message (ku-message/) — под /ku-message/ */
 function serveStatic(req, res, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
   let p = url.pathname === '/' ? '/index.html' : url.pathname;
   let root = PUB;
   if (p === '/ku-message' || p === '/connect' || p.startsWith('/connect/')) { res.writeHead(301, { Location: '/ku-message/' }); res.end(); return; }
   if (p.startsWith('/ku-message/')) { root = MESSAGE_DIR; p = p.slice('/ku-message'.length); if (p === '/') p = '/index.html'; }
   p = path.normalize(p).replace(/^([.][.][\/\\])+/, '');
   const file = path.join(root, p);
-  if (!file.startsWith(root)) { res.writeHead(403); res.end(); return; }
+  const relative = path.relative(root, file);
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) { res.writeHead(403); res.end(); return; }
   fs.readFile(file, (e, buf) => {
     if (e) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('404'); return; }
     const mime = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+    if (mime.startsWith('text/html')) res.setHeader('Content-Security-Policy', sec.htmlPolicy(buf));
     const noCache = /\.(html|js|css)$/i.test(file) ? { 'Cache-Control': 'no-cache' }
       : /\.woff2$/i.test(file) ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : {};
     res.writeHead(200, Object.assign({ 'Content-Type': mime }, noCache));
@@ -327,36 +340,28 @@ function serveStatic(req, res, url) {
 
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
-const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json') });
+const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON });
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
 const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx)];
-const publicAIRate = new Map();
+const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
 const handoffCodes = new Map(); // одноразовые коды перехода в KU Message: code → { uid, exp }
 const HANDOFF_CODE_MS = 60 * 1000;
 const PAGES_ORIGINS = new Set((process.env.PAGES_ORIGINS || 'https://sakeda-hub.github.io').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean));
 
 function allowPublicAI(req) {
   const ip = clientIp(req) || 'unknown';
-  const now = Date.now();
-  let window = publicAIRate.get(ip);
-  if (!window || now - window.startedAt >= 60_000) {
-    window = { startedAt: now, count: 0 };
-    publicAIRate.set(ip, window);
-  }
-  if (window.count >= 30) return false;
-  window.count++;
-  if (publicAIRate.size > 10_000) {
-    for (const [key, value] of publicAIRate) if (now - value.startedAt >= 60_000) publicAIRate.delete(key);
-  }
+  if (publicAIRate.blocked(ip)) return false;
+  publicAIRate.hit(ip);
   return true;
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  const p = url.pathname;
+async function handleRequest(req, res) {
   sec.securityHeaders(req, res);
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch { throw new HttpError(400, 'Некорректный адрес'); }
+  const p = url.pathname;
 
   // Для старой копии интерфейса на GitHub Pages разрешаем отдельный origin из PAGES_ORIGINS.
   // Основная версия на alwaysdata использует same-origin запросы; авторизация — заголовок Authorization, без cookie.
@@ -396,18 +401,16 @@ const server = http.createServer(async (req, res) => {
 
   // загрузка файла приходит в base64 (+~37%), остальные запросы — до 1 МБ
   const bodyLimit = p === '/api/files' ? Math.ceil(MAX_FILE_BYTES * 1.4) + 1000 : 1e6;
-  if (Number(req.headers['content-length'] || 0) > bodyLimit) {
-    res.setHeader('Connection', 'close');
-    return bad(res, 413, p === '/api/files' ? 'Файл больше 10 МБ' : 'Слишком большой запрос');
-  }
-  const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, bodyLimit) : {};
+  if (p === '/api/files' && !userOf(req)) return bad(res, 401, 'Не авторизован');
+  const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readJson(req, bodyLimit) : {};
   const u = userOf(req);
 
-  try {
     /* ---------- Аутентификация ---------- */
     if (p === '/api/auth/register' && req.method === 'POST') {
       const { lastName = '', firstName = '', middleName = '', email = '', password = '', role = 'student', group = '', program = 'ku' } = body;
-      if (!String(lastName).trim() || !String(firstName).trim()) return bad(res, 400, 'Укажите фамилию и имя');
+      if (![lastName, firstName, middleName, group].every(v => typeof v === 'string' && v.length <= 100) ||
+          !lastName.trim() || !firstName.trim()) return bad(res, 400, 'Укажите фамилию и имя');
+      if (typeof email !== 'string' || email.length > 254 || typeof password !== 'string' || password.length > 256) return bad(res, 400, 'Некорректные данные');
       if (!/^\S+@\S+\.\S+$/.test(email)) return bad(res, 400, 'Некорректный email');
       if (registerByIp.blocked(clientIp(req))) return bad(res, 429, 'Слишком много регистраций с этого адреса. Попробуйте позже');
       if (String(password).length < sec.PASSWORD_MIN) return bad(res, 400, PASS_SHORT);
@@ -416,6 +419,7 @@ const server = http.createServer(async (req, res) => {
       if (role === 'student' && !String(group).trim()) return bad(res, 400, 'Укажите группу');
       const em = String(email).trim().toLowerCase();
       if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
+      registerByIp.hit(clientIp(req));
       const fio = [lastName, firstName, middleName].filter(Boolean).map((s) => String(s).trim()).join(' ');
       const user = {
         id: nid(role === 'teacher' ? 'tch' : 'std'),
@@ -428,25 +432,34 @@ const server = http.createServer(async (req, res) => {
       await sec.setPassword(user, String(password));
       // повторная проверка после await: два одновременных запроса с одним email не создадут дубль
       if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
-      registerByIp.hit(clientIp(req));
       db.users.push(user); saveDB();
-      const token = crypto.randomBytes(24).toString('hex');
-      sessions.set(token, user);
-      saveSession(token, user, req);
+      const grant = grantOf(user);
+      if (!grant) {
+        console.info('[access] registration.pending', user.id);
+        return send(res, 202, { pending: true });
+      }
+      const token = saveSession(user, req, grant);
       return ok(res, { token, user: pubUser(user) });
     }
 
     if (p === '/api/auth/login' && req.method === 'POST') {
       const { email = '', password = '' } = body;
+      if (typeof email !== 'string' || email.length > 254 || typeof password !== 'string' || password.length > 4096) return bad(res, 401, 'Неверный email или пароль');
       const em = String(email).trim().toLowerCase(), ip = clientIp(req), emIp = em + '|' + ip;
       const user = db.users.find((x) => x.email === em);
       const guardEmail = !(user && user.demo);
       if (loginByEmailIp.blocked(emIp) || loginByIp.blocked(ip) || (guardEmail && loginByEmail.blocked(em))) return bad(res, 429, TOO_MANY_LOGINS);
-      const passOk = await sec.checkPassword(user || NO_USER, String(password));
-      if (!user || !passOk) {
-        loginByEmailIp.hit(emIp); loginByIp.hit(ip); if (guardEmail) loginByEmail.hit(em);
+      const releasePair = loginByEmailIp.reserve(emIp), releaseIp = loginByIp.reserve(ip);
+      const releaseEmail = guardEmail && loginByEmail.reserve(em);
+      const eligible = user && (!user.demo || DEMO_ON);
+      const passHash = eligible && user.passHash;
+      const passOk = await sec.checkPassword(eligible ? user : NO_USER, password);
+      if (!eligible || !passOk || user.passHash !== passHash || !db.users.includes(user)) {
         return bad(res, 401, 'Неверный email или пароль');
       }
+      releasePair(); releaseIp(); if (releaseEmail) releaseEmail();
+      const grant = grantOf(user);
+      if (!grant) return bad(res, 403, 'Доступ ожидает подтверждения администратором');
       // старый хеш (sha256) — переводим на scrypt, пока пароль известен
       if (sec.needsRehash(user)) { await sec.setPassword(user, String(password)); saveDB(); }
       // Двухфакторная аутентификация: сначала пароль, затем код из приложения
@@ -456,7 +469,6 @@ const server = http.createServer(async (req, res) => {
         if (!totpOk(user.totp.secret, body.code)) { codeFail(user.id); return bad(res, 401, 'Неверный код подтверждения'); }
         codeFails.delete(user.id);
       }
-      loginByEmailIp.reset(emIp);
       // Оповещение о входе с нового устройства (идентификатор устройства хранится в браузере)
       const dev = String(body.deviceId || '').slice(0, 64);
       if (dev) {
@@ -466,9 +478,7 @@ const server = http.createServer(async (req, res) => {
           user.devices.push(dev); if (user.devices.length > 20) user.devices.shift();
         }
       }
-      const token = crypto.randomBytes(24).toString('hex');
-      sessions.set(token, user);
-      saveSession(token, user, req);
+      const token = saveSession(user, req, grant);
       return ok(res, { token, user: pubUser(user) });
     }
 
@@ -489,11 +499,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/message/redeem' && req.method === 'POST') {
       const c = handoffCodes.get(String(body.code || ''));
       handoffCodes.delete(String(body.code || ''));
-      const user = c && Date.now() < c.exp && db.users.find((x) => x.id === c.uid);
-      if (!user) return bad(res, 401, 'Ссылка для входа устарела — откройте KU Message из портала ещё раз');
-      const token = crypto.randomBytes(24).toString('hex');
-      sessions.set(token, user);
-      saveSession(token, user, req);
+      const user = c && Date.now() < c.exp && sessions.get(c.session);
+      const grant = user && grantOf(user);
+      if (!grant || sessionExpired(c.session, Date.now()) || db.sessMeta[c.session].grant !== grant) return bad(res, 401, 'Ссылка для входа устарела — откройте KU Message из портала ещё раз');
+      const token = saveSession(user, req, grant);
       return ok(res, { token, user: pubUser(user) });
     }
 
@@ -508,6 +517,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/ai/status' && req.method === 'GET') {
+      if (!allowPublicAI(req)) return bad(res, 429, 'Слишком много запросов. Попробуйте позже.');
       return ok(res, await ai.aiStatus());
     }
 
@@ -531,13 +541,16 @@ const server = http.createServer(async (req, res) => {
 
     if (!u) return bad(res, 401, 'Не авторизован');
 
+    if (p === '/api/exams/open' && req.method === 'GET') return ok(res, { rooms: examSync.openRooms() });
+
     for (const handle of apiModules) if (await handle(p, req, res, u, body, url) !== false) return;
 
     if (p === '/api/message/handoff' && req.method === 'POST') {
       const now = Date.now();
-      for (const [k, v] of handoffCodes) if (v.exp < now) handoffCodes.delete(k);
+      const session = reqToken(req);
+      for (const [k, v] of handoffCodes) if (v.exp <= now || v.session === session) handoffCodes.delete(k);
       const code = crypto.randomBytes(18).toString('hex');
-      handoffCodes.set(code, { uid: u.id, exp: now + HANDOFF_CODE_MS });
+      handoffCodes.set(code, { session, exp: now + HANDOFF_CODE_MS });
       return ok(res, { code });
     }
 
@@ -575,6 +588,7 @@ const server = http.createServer(async (req, res) => {
       const pe = await passError(u, cur);
       if (pe) return bad(res, pe[0], pe[1] || 'Неверный текущий пароль');
       if (nx.length < sec.PASSWORD_MIN) return bad(res, 400, PASS_SHORT);
+      if (nx.length > 256) return bad(res, 400, 'Некорректные данные');
       if (nx === cur) return bad(res, 400, 'Новый пароль совпадает с текущим');
       await sec.setPassword(u, nx);
       u.passChangedAt = Date.now();
@@ -582,6 +596,7 @@ const server = http.createServer(async (req, res) => {
       const me = reqToken(req);
       for (const [tok, uid] of Object.entries(db.sessions || {})) if (uid === u.id && tok !== me) dropSession(tok);
       saveDB();
+      audit('portal.password', u.id, u.id);
       return ok(res, { passChangedAt: u.passChangedAt });
     }
     if (p === '/api/2fa/setup' && req.method === 'POST') {
@@ -597,12 +612,14 @@ const server = http.createServer(async (req, res) => {
       if (codeBlocked(u.id)) return bad(res, 429, 'Слишком много попыток. Попробуйте через 5 минут');
       if (!totpOk(u.totp.secret, body.code)) { codeFail(u.id); return bad(res, 400, 'Неверный код подтверждения'); }
       u.totp.enabled = true; codeFails.delete(u.id); saveDB();
+      audit('portal.2fa.enable', u.id, u.id);
       return ok(res, { twoFactor: true });
     }
     if (p === '/api/2fa/disable' && req.method === 'POST') {
       const pe = await passError(u, String(body.password || ''));
       if (pe) return bad(res, pe[0], pe[1] || 'Неверный пароль');
       delete u.totp; saveDB();
+      audit('portal.2fa.disable', u.id, u.id);
       return ok(res, { twoFactor: false });
     }
     if (p === '/api/sessions' && req.method === 'GET') {
@@ -701,7 +718,7 @@ const server = http.createServer(async (req, res) => {
       return ok(res, { items: db.subjects.filter((s) => s.teacherId === u.id) });
     }
     if (p === '/api/teacher/subjects' && req.method === 'POST' && u.role === 'teacher') {
-      const name = String(body.name || '').trim();
+      const name = String(body.name || '').trim().slice(0, 160);
       if (name.length < 2) return bad(res, 400, 'Укажите название предмета');
       const s = { id: nid('sub'), name, teacherId: u.id, discipline: detectDiscipline(name) };
       db.subjects.push(s); saveDB();
@@ -710,7 +727,8 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/teacher/students' && req.method === 'GET' && u.role === 'teacher') {
       const g = String(url.searchParams.get('group') || '').trim();
-      const items = db.users.filter((x) => x.role === 'student' && (!g || x.group === g))
+      const groups = new Set(db.schedule.filter(r => r.teacherId === u.id).map(r => r.group));
+      const items = db.users.filter((x) => x.role === 'student' && groups.has(x.group) && (!g || x.group === g))
         .map((x) => ({ id: x.id, fio: x.fio, group: x.group, online: isOnline(x) }));
       return ok(res, { items });
     }
@@ -722,11 +740,13 @@ const server = http.createServer(async (req, res) => {
       const sc = Number(score);
       if (!st) return bad(res, 400, 'Выберите студента');
       if (!sub) return bad(res, 400, 'Выберите свой предмет');
+      if (!db.schedule.some(r => r.teacherId === u.id && r.subjectId === sub.id && r.group === st.group)) return bad(res, 403, 'Группа не назначена на этот предмет');
       if (!(sc >= 0 && sc <= 100)) return bad(res, 400, 'Балл — число от 0 до 100');
       const g = { id: nid('gr'), studentId, subjectId, teacherId: u.id, score: sc, date: new Date().toISOString().slice(0, 10) };
       db.grades.push(g);
       pushInbox(st, { type: 'grade', subject: sub.name, score: sc });
       saveDB();
+      audit('portal.grade', u.id, st.id);
       return ok(res, { id: g.id });
     }
 
@@ -734,8 +754,10 @@ const server = http.createServer(async (req, res) => {
       const { subjectId = '', type = 'Практ.', group = '', day = 0, startTime = '', endTime = '', room = '' } = body;
       const sub = db.subjects.find((s) => s.id === subjectId && s.teacherId === u.id);
       if (!sub) return bad(res, 400, 'Выберите свой предмет');
-      if (!String(group).trim()) return bad(res, 400, 'Укажите группу');
-      if (!/^\d{2}:\d{2}$/.test(String(startTime)) || !/^\d{2}:\d{2}$/.test(String(endTime))) return bad(res, 400, 'Укажите время (ЧЧ:ММ)');
+      if (typeof group !== 'string' || !group.trim() || group.length > 100) return bad(res, 400, 'Укажите группу');
+      const hm = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+      if (!hm.test(startTime) || !hm.test(endTime) || startTime >= endTime) return bad(res, 400, 'Укажите время (ЧЧ:ММ)');
+      if (!Number.isInteger(Number(day)) || day < 0 || day > 6 || String(room).length > 100 || String(type).length > 80) return bad(res, 400, 'Некорректные данные');
       const e = {
         id: nid('sc'), subjectId, teacherId: u.id, type: String(type || 'Практ.'),
         group: String(group).trim(), day: Math.max(0, Math.min(6, Number(day))),
@@ -748,15 +770,17 @@ const server = http.createServer(async (req, res) => {
       return ok(res, { id: e.id });
     }
 
-    if (p === '/api/ai/status' && req.method === 'GET') {
-      return ok(res, await ai.aiStatus());
-    }
-
     return bad(res, 404, 'Не найдено');
-  } catch (e) {
-    console.error('[API]', req.method, p, e);
-    return bad(res, 500, 'Внутренняя ошибка'); // подробности — только в журнале сервера
-  }
+}
+
+const server = http.createServer((req, res) => {
+  handleRequest(req, res).catch(error => {
+    const expected = error instanceof HttpError;
+    if (!expected) console.error('[API]', req.method, error.message);
+    if (res.destroyed || res.headersSent) return;
+    if (error.status === 413) res.setHeader('Connection', 'close');
+    bad(res, expected ? error.status : 500, expected ? error.message : 'Внутренняя ошибка');
+  });
 });
 
 /* -------------------------------- Старт ---------------------------------- */
@@ -764,7 +788,10 @@ const server = http.createServer(async (req, res) => {
 try { loadDB(); } catch (e) { console.error('[DB]', e.message); process.exit(1); }
 seedDemo();
 loadSessions();
-server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localhost'}:${PORT}`));
+server.listen(PORT, HOST, () => {
+  console.log(`KU Portal: http://${HOST || 'localhost'}:${server.address().port}`);
+  console.log('[startup]', JSON.stringify({ commit: VERSION.commit, data: DATA, demo: DEMO_ON }));
+});
 
 /* Перезапуск после обновления кода: deploy/alwaysdata-update.sh обновляет файл .restart рядом с server.js.
    Сервер сохраняет базу и завершается, хостинг (alwaysdata) запускает его заново уже с новым кодом.

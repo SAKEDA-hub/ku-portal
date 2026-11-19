@@ -239,10 +239,7 @@ async function pollInbox() {
 async function pollExams() {
   if (!S.user || !getPrefs().notifExam) return;
   try {
-    const r = await fetch(EXAM_SYNC_PATH + 'api/state', { cache: 'no-store' });
-    if (!r.ok) return;
-    const rooms = ((await r.json()).db || {}).rooms || [];
-    const open = rooms.filter((x) => x.open);
+    const { rooms: open } = await api('/exams/open');
     const key = 'ku_exam_open:' + S.user.id;
     let known = NOTIF.examOpen;
     if (!known) { try { known = new Set(JSON.parse(localStorage.getItem(key) || 'null') || open.map((x) => x.id)); } catch { known = new Set(open.map((x) => x.id)); } }
@@ -460,6 +457,11 @@ async function doRegister() {
         deviceId: deviceId(),
       },
     });
+    if (d.pending) {
+      authTab = 'login';
+      viewAuth(t('Доступ ожидает подтверждения администратором'));
+      return;
+    }
     S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
   } catch (e) { authErr(e.message); }
 }
@@ -728,7 +730,7 @@ function viewExam() {
 
   const st = document.getElementById('oeStatus');
   const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
-  fetch(EXAM_SYNC_PATH + 'api/state', { method: 'HEAD', cache: 'no-store' })
+  fetch(EXAM_SYNC_PATH + 'api/info', { cache: 'no-store' })
     .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? t('Сайт доступен') : t('Сайт экзаменов временно недоступен')))
     .catch(() => setSt('bad', t('Не удалось связаться с сайтом экзаменов')));
 

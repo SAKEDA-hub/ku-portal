@@ -1,14 +1,9 @@
 /*
  * Бета-аккаунты портала: 3 преподавателя (языки, IT, биотехнологии) и 2 студента (ИСУ — IT, БТ — биотехнологии),
- * их занятия и оценки. seedDemo() идемпотентно создаёт и дополняет их и в уже существующей базе. Отключить: DEMO=0.
+ * их занятия и оценки. seedDemo() идемпотентно создаёт и дополняет их и в уже существующей базе. Включить в отдельном каталоге: DEMO=1.
  */
 function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline }) {
-  /*
-   * Тестовые аккаунты создаются при старте, если их ещё нет (идемпотентно).
-   * Отключить: DEMO=0. На бесплатном Render база сбрасывается при рестарте —
-   * демо-данные просто создаются заново.
-   */
-  const DEMO_ON = process.env.DEMO !== '0';
+  const DEMO_ON = require('./access').demo;
   const DEMO_PASS = '1234';
   const DEMO_GROUP = 'ИСУ-26-2-а';
   const BT_GROUP = 'БТ-26-1-а';
@@ -45,7 +40,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline 
     return u;
   }
   /* Бета-аккаунты создаются при старте и дополняются в уже существующей базе (идемпотентно):
-     недостающие пользователи, ФИО/группа/программа/кафедра, занятия и оценки. Отключить: DEMO=0. */
+     недостающие пользователи, ФИО/группа/программа/кафедра, занятия и оценки. Только в режиме DEMO=1. */
   function seedDemo() {
     if (!DEMO_ON) return;
     const db = getDB();
@@ -53,7 +48,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline 
     const users = {};
     for (const a of DEMO_ACCOUNTS) {
       let u = db.users.find((x) => x.email === a.email);
-      if (!u) { u = demoUser(a); db.users.push(u); changed = true; console.log(`[DEMO] Создан аккаунт ${a.email} (пароль ${DEMO_PASS})`); }
+      if (!u) { u = demoUser(a); db.users.push(u); changed = true; }
       else if (u.demo) {
         const want = { fio: fioOf(a), firstName: a.firstName, group: a.group || '', program: a.program || 'ku', dept: a.dept };
         for (const [k, v] of Object.entries(want)) if (u[k] !== v) { u[k] = v; changed = true; }

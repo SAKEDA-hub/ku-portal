@@ -9,12 +9,15 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 
 function writeJsonAtomic(file, data, space) {
-  const tmp = `${file}.tmp`;
-  const fd = fs.openSync(tmp, 'w');
-  try { fs.writeFileSync(fd, JSON.stringify(data, null, space)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  fs.renameSync(tmp, file);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try {
+    try { fs.writeFileSync(fd, JSON.stringify(data, null, space)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, file);
+  } finally { fs.rmSync(tmp, { force: true }); }
 }
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const tmpOf = (file) => `${file}.tmp`;
@@ -32,8 +35,8 @@ function createStore({ file, backupDir, keep = 14, empty, valid = () => true, sp
     if (!fs.existsSync(file)) return; // базы ещё нет — копировать нечего, копия будет при следующей записи
     const target = path.join(backupDir, `${name}-${day}.json`);
     if (!fs.existsSync(target)) {
-      fs.mkdirSync(backupDir, { recursive: true });
-      fs.copyFileSync(file, target);
+      fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+      writeJsonAtomic(target, readValid(file), space);
       const all = backups();
       for (const old of all.slice(0, Math.max(0, all.length - keep))) fs.unlinkSync(path.join(backupDir, old));
     }
@@ -58,7 +61,12 @@ function createStore({ file, backupDir, keep = 14, empty, valid = () => true, sp
   }
 
   function load() {
-    if (!fs.existsSync(file)) return restore('файла нет') || empty();
+    if (!fs.existsSync(file)) {
+      if (!backups().length) return empty();
+      const data = restore('файла нет');
+      if (!data) throw new Error(`${path.basename(file)} отсутствует, исправной резервной копии нет`);
+      return data;
+    }
     try { return readValid(file); } catch (e) {
       const data = restore(`повреждён (${e.message})`);
       if (data) return data;

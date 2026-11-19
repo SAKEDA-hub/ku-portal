@@ -5,8 +5,16 @@ data/exam-sync.json
 *.log
 .DS_Store
 .restart
+.release-commit
+.release-commit.tmp
 data/uploads/
 # резервные копии и служебные файлы базы (server/store.js) — содержат хеши паролей
 data/backups/
 data/*.corrupt-*
 data/*.tmp
+data/access/
+data/audit/
+data/exam-provision/
+data/demo/
+.env
+.env.*
