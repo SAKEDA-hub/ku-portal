@@ -109,9 +109,27 @@ node server.js
 5. Адрес сервера для Pages — `KU_BACKEND_URL` в `public/config.js` (сейчас `https://ku-portal.alwaysdata.net`).
 6. Альтернатива п. 3–4 — деплой из GitHub Actions по SSH (job `backend` в `deploy.yml`, секреты `ALWAYSDATA_*`); без секретов он пропускается.
 
+### База MySQL на alwaysdata (один раз)
+
+Без этих шагов портал работает как раньше — на файле `data/db.json`. С ними основная база — MySQL (данные видны в phpMyAdmin), а файл остаётся запасной копией.
+
+1. **Databases → MySQL → Add a database** — например, `<аккаунт>_portal`.
+2. **Databases → MySQL → Users → Add a user** — например, `<аккаунт>_app`, надёжный пароль; права на базу из п. 1.
+3. **Web → Sites** → сайт → **Environment** — добавить переменные (или файл `~/ku-portal/.env` с теми же строками — он не в git):
+   ```
+   MYSQL_HOST=mysql-<аккаунт>.alwaysdata.net
+   MYSQL_USER=<аккаунт>_app
+   MYSQL_PASSWORD=<пароль из п. 2>
+   MYSQL_DATABASE=<аккаунт>_portal
+   ```
+4. Перезапустить сайт (**Web → Sites → ↻**). При первом запуске сервер сам создаст таблицы и перенесёт в них всю базу из `data/db.json` и `data/exam-sync.json`.
+5. Проверить: `https://<аккаунт>.alwaysdata.net/api/version` → `"storage":{"mode":"mysql","ok":true}`. Данные — **Databases → MySQL → phpMyAdmin**: таблицы `users` (email, ФИО, роль, группа, тип хеша пароля), `grades` (студент, предмет, балл, дата), `subjects`, `schedule`, `sessions`, `kv` (сообщения, клубы, общежитие), `exam_sync` (онлайн-экзамен). Полная запись — в колонке `data` (JSON); пароли хранятся только в виде хешей.
+
+Драйвер MySQL (`mysql2`) ставит `deploy/alwaysdata-update.sh` (`npm ci` из `package-lock.json`). Если MySQL недоступна, сайт не падает: работает на `data/db.json`, а при следующем запуске с MySQL более свежие данные уходят в неё (`mode: json`, `ok: false` в `/api/version` — повод заглянуть в журнал сайта).
+
 Заметки:
 - Сервер слушает IP и порт, которые задаёт alwaysdata (`IP`/`PORT` или `ALWAYSDATA_HTTPD_IP`/`ALWAYSDATA_HTTPD_PORT`).
-- `data/db.json` и `data/exam-sync.json` деплой не трогает — данные сохраняются.
+- `data/` (база, копии `data/backups/`), `.env` и `node_modules/` деплой не трогает — данные сохраняются.
 - Какой код сейчас запущен на сервере: `https://<аккаунт>.alwaysdata.net/api/version` (`commit` — коммит из `main`, `startedAt` — время последнего запуска). После push в `main` коммит сменится в течение ~5 минут.
 - Бесплатный тариф alwaysdata — только некоммерческое использование, один бесплатный аккаунт на человека.
 - AI-помощник с LM Studio по частному адресу (Tailscale/LAN) с хостинга недоступен — помощник отвечает выдержками с сайта ku.edu.kz. Для модели укажите публичный `https://` адрес туннеля в `LM_STUDIO_URL` (переменные окружения сайта в alwaysdata).

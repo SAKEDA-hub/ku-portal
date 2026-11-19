@@ -36,6 +36,8 @@ jobs:
           for f in server.js server/*.js exam-sync/handler.js public/*.js ku-message/*.js; do
             node --check "$f"
           done
+      - name: Tests
+        run: npm test
 
   backend:
     needs: check
@@ -68,6 +70,8 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ${ACCOUNT}@${HOST}"
           # только файлы из git: data/db.json и data/exam-sync.json на сервере остаются как есть
           git archive --format=tar HEAD | $SSH 'mkdir -p ~/ku-portal && tar -xf - -C ~/ku-portal && echo "uploaded to ~/ku-portal"'
+          # драйвер MySQL (package-lock.json); без него портал работает на data/db.json
+          $SSH 'cd ~/ku-portal && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --silent && sha256sum package-lock.json | cut -d" " -f1 > .deps-hash && echo "deps installed" || echo "::warning::npm ci не выполнен"'
 
       - name: Restart site
         if: steps.cfg.outputs.skip != '1'
