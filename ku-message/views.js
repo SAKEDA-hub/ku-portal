@@ -32,16 +32,34 @@ function viewLogin(msg) {
     <input class="inp" id="lgPass" type="password" placeholder="${t('Пароль')}" autocomplete="current-password">
     <div class="err">${msg ? esc(msg) : ''}</div>
     <button class="btn wide" id="lgGo">${t('Войти')}</button>
+    <div id="demoBox"></div>
   </div></div>`;
-  const go = async () => {
+  const login = async (email, password) => {
     try {
-      const d = await api('/auth/login', { method: 'POST', body: { email: document.getElementById('lgEmail').value.trim(), password: document.getElementById('lgPass').value } });
+      const d = await api('/auth/login', { method: 'POST', body: { email, password } });
       if (d.need2fa) throw new Error(t('Для аккаунта с двухфакторной защитой войдите через KU Portal'));
       await enter(d.token);
     } catch (e) { app.querySelector('.err').textContent = e.message; }
   };
+  const go = () => login(document.getElementById('lgEmail').value.trim(), document.getElementById('lgPass').value);
   document.getElementById('lgGo').onclick = go;
   document.getElementById('lgPass').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  demoBox(login);
+}
+/* Бета-аккаунты (как на входе в портал): вход в один клик */
+async function demoBox(login) {
+  let d;
+  try { d = await api('/demo'); } catch { return; }
+  const box = document.getElementById('demoBox');
+  if (!box || !d.enabled) return;
+  const TRACK = { it: 'IT', bio: 'Биотехнологии', lang: 'Языки' };
+  const btn = (a) => `<button class="demo-acc" data-demo="${esc(a.email)}"><span class="ava sm" style="--h:${hue(a.email)}">${initials(a.fio)}</span>
+    <span class="demo-t"><b>${esc(a.fio)}</b><small>${esc([a.group || t('Преподаватель'), a.track ? t(TRACK[a.track]) : ''].filter(Boolean).join(' · '))}</small></span></button>`;
+  const part = (role, l) => `<div class="demo-lbl">${t(l)}</div><div class="demo-grid">${d.accounts.filter((a) => a.role === role).map(btn).join('')}</div>`;
+  box.innerHTML = `<div class="demo-box"><b>${t('Бета-аккаунты')}</b>
+    <small>${esc(t('Пароль у всех: {p}. Группы ИСУ — направление IT, группы БТ — биотехнологии.', { p: d.password }))}</small>
+    ${part('student', 'Студенты')}${part('teacher', 'Преподаватели')}</div>`;
+  box.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = () => login(b.dataset.demo, d.password)));
 }
 
 /* ============================ Каркас ============================ */
