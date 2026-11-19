@@ -27,6 +27,16 @@ function clientIp(req) {
   const addr = normalize(String(req.headers['x-forwarded-for'] || '').split(',').pop().trim());
   return isIP(addr) ? addr : peer;
 }
+/* Диагностика для настройки KU_TRUSTED_PROXIES: один раз за запуск пишет в журнал адрес соединения
+   (это адрес прокси) и какие заголовки прокси передаёт. Адреса посетителей в журнал не попадают. */
+let proxyReported = false;
+function reportProxy(req, log = console.log) {
+  if (proxyReported || !req.headers['x-forwarded-for']) return;
+  proxyReported = true;
+  log('[proxy] ' + JSON.stringify({ peer: normalize(req.socket.remoteAddress), trusted: fromProxy(req),
+    forwardedProto: String(req.headers['x-forwarded-proto'] || '').slice(0, 20) || null,
+    forwarded: !!req.headers.forwarded, realIp: !!req.headers['x-real-ip'] }));
+}
 const isHttps = req => !!req.socket.encrypted || (fromProxy(req) &&
   String(req.headers['x-forwarded-proto'] || '').split(',').pop().trim() === 'https');
 
@@ -85,4 +95,4 @@ function readJson(req, limit) {
   });
 }
 
-module.exports = { clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic };
+module.exports = { clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic, reportProxy };

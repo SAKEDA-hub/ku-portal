@@ -7,7 +7,7 @@
  */
 const crypto = require('crypto');
 const { promisify } = require('util');
-const { isHttps } = require('./http');
+const { isHttps, reportProxy } = require('./http');
 
 const scrypt = promisify(crypto.scrypt);
 const PASSWORD_MIN = 8; // для новых паролей; старые короткие продолжают работать
@@ -81,6 +81,7 @@ function htmlPolicy(html) {
     "; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com";
 }
 function securityHeaders(req, res) {
+  reportProxy(req);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
