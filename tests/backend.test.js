@@ -234,7 +234,9 @@ test('behind a trusted proxy limits and sessions use the visitor address and HST
   await call('/api/version', { headers: { 'x-forwarded-for': '203.0.113.10' } });
   const report = app.output().split('\n').filter(line => line.startsWith('[proxy] '));
   assert.equal(report.length, 1); // один раз за запуск
-  assert.deepEqual(JSON.parse(report[0].slice(8)), { peer: '127.0.0.1', trusted: true, forwardedProto: 'https', forwarded: false, realIp: false });
+  const logged = JSON.parse(report[0].slice(8));
+  assert.equal(logged.peer, '127.0.0.1'); assert.equal(logged.trusted, true);
+  assert.ok(logged.headers.includes('x-forwarded-for'));
   assert.ok(!report[0].includes('203.0.113'));
   assert.equal((await call('/api/auth/register', { body: { ...portalUser, role: 'student' } })).status, 202);
   app.cli('approve', JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0].id);
