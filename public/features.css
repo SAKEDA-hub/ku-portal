@@ -71,7 +71,6 @@
 .act-bar.zero i { background: var(--ring-track); }
 .act-bv { font-size: calc(11px * var(--fs)); font-weight: 700; color: var(--accent-deep); white-space: nowrap; min-height: 14px; }
 .act-bar small { font-size: calc(11.5px * var(--fs)); color: var(--muted); font-weight: 600; text-transform: capitalize; }
-.act-cl-h { display: flex; justify-content: space-between; gap: 8px; } .act-cl-h span { font-weight: 700; color: var(--accent-deep); font-size: calc(13.5px * var(--fs)); }
 .act-meter { height: 7px; border-radius: 99px; background: var(--ring-track); overflow: hidden; margin: 3px 0 2px; }
 .act-meter i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-deep)); }
 .act-badges { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 0 var(--gut) 12px; }
@@ -130,7 +129,7 @@
 .cl-my .btn { flex-shrink: 0; }
 .cl-my .btn svg { width: 17px; height: 17px; }
 .cl-my .badge { align-self: flex-start; }
-.act-cl-h { display: flex; justify-content: space-between; gap: 8px; } .act-cl-h span { font-weight: 700; color: var(--accent-deep); font-size: calc(13.5px * var(--fs)); }
+.act-cl-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; min-width: 0; } .act-cl-h b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .act-cl-h span { white-space: nowrap; flex-shrink: 0; font-weight: 700; color: var(--accent-deep); font-size: calc(13.5px * var(--fs)); }
 .act-meter { height: 7px; border-radius: 99px; background: var(--ring-track); overflow: hidden; margin: 2px 0 1px; }
 .act-meter i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, hsl(var(--h, 190) 66% 58%), hsl(var(--h, 190) 56% 42%)); }
 .cl-empty { display: flex; gap: 12px; align-items: flex-start; background: var(--card-2); }
@@ -169,6 +168,13 @@
 .cl-hint { margin: -4px 16px 10px; }
 @media (min-width: 640px) { .cl-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 1024px) { .act-hero2, .cl-grid { margin-left: 0; margin-right: 0; } .cl-hint { margin-left: 2px; } }
+/* телефон: в «Моих клубах» кнопка чата — отдельной строкой во всю ширину, полоса вклада — во всю ширину карточки */
+@media (max-width: 560px) {
+  .cl-my { flex-wrap: wrap; row-gap: 12px; padding: 14px; }
+  .cl-my .club-t { flex: 1 1 calc(100% - 64px); }
+  .cl-my > .btn.sm { width: 100% !important; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; }
+  .cl-req { row-gap: 10px; } .cl-req-b { width: 100%; } .cl-req-b .btn { flex: 1; }
+}
 @media (max-width: 420px) { .ah-tiles { gap: 6px; } .ah-tile { padding: 9px 8px; } .ah-tile small { font-size: calc(10.5px * var(--fs)); text-overflow: clip; } .ah-tile b { font-size: calc(17px * var(--fs)); } .ah-top { gap: 12px; } .act-hero2 .act-ring { width: 92px; height: 92px; } }
 
 /* ---------- бета-аккаунты на экране входа ---------- */
