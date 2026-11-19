@@ -6,11 +6,40 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { Readable } = require('node:stream');
 const { setPassword, setPasswordSync, checkPassword, needsRehash, createLimiter, PASSWORD_MIN } = require('../server/security');
 const { createStore, writeJsonAtomic } = require('../server/store');
+const { assertPrivateDataRoot } = require('../server/access');
+const { readJson } = require('../server/http');
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ku-test-'));
 const legacyHash = (pw, salt) => crypto.createHash('sha256').update(salt + pw).digest('hex');
+
+test('KU_DATA_DIR is rejected inside every statically served directory, including results and symlink aliases', () => {
+  const root = path.resolve(__dirname, '..');
+  const outside = tmpDir();
+  try {
+    assert.doesNotThrow(() => assertPrivateDataRoot(path.join(outside, 'private'), root));
+    for (const folder of ['public', 'ku-message', 'exam-sync', 'results']) {
+      assert.throws(() => assertPrivateDataRoot(path.join(root, folder, 'private'), root), /веб-интерфейса/);
+    }
+    const alias = path.join(outside, 'results-alias');
+    fs.symlinkSync(path.join(root, 'results'), alias, 'dir');
+    assert.throws(() => assertPrivateDataRoot(path.join(alias, 'private'), root), /веб-интерфейса/);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('readJson handles UTF-8 split across chunks and enforces request size in bytes', async () => {
+  const bytes = Buffer.from('{"text":"Привет"}');
+  const split = bytes.indexOf(Buffer.from('р')) + 1; // split the two-byte UTF-8 character
+  const request = Readable.from([bytes.subarray(0, split), bytes.subarray(split)]);
+  request.headers = {};
+  assert.deepStrictEqual(await readJson(request, 100), { text: 'Привет' });
+
+  const oversized = Readable.from([Buffer.from('{"text":"я"}')]);
+  oversized.headers = {};
+  await assert.rejects(readJson(oversized, 10), error => error.status === 413);
+});
 
 test('setPassword stores scrypt hash, never the password itself', async () => {
   const u = {};

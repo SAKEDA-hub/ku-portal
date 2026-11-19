@@ -7,12 +7,27 @@ const { writeJsonAtomic } = require('./store');
 
 const demo = process.env.DEMO === '1';
 const dataRoot = path.resolve(process.env.KU_DATA_DIR || path.join(__dirname, '..', 'data'));
-for (const folder of ['public', 'ku-message', 'exam-sync']) {
-  const relative = path.relative(path.resolve(__dirname, '..', folder), dataRoot);
-  if (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
-    throw new Error('KU_DATA_DIR должен находиться за пределами каталогов веб-интерфейса');
+function canonicalPath(candidate) {
+  let existing = path.resolve(candidate);
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
   }
+  return path.resolve(fs.realpathSync(existing), path.relative(existing, path.resolve(candidate)));
 }
+function assertPrivateDataRoot(candidate, projectRoot = path.resolve(__dirname, '..')) {
+  const resolvedData = canonicalPath(candidate);
+  for (const folder of ['public', 'ku-message', 'exam-sync', 'results']) {
+    const webRoot = canonicalPath(path.join(projectRoot, folder));
+    const relative = path.relative(webRoot, resolvedData);
+    if (relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))) {
+      throw new Error('KU_DATA_DIR должен находиться за пределами каталогов веб-интерфейса');
+    }
+  }
+  return path.resolve(candidate);
+}
+assertPrivateDataRoot(dataRoot);
 const dataDir = demo ? path.join(dataRoot, 'demo') : dataRoot;
 const accessDir = path.join(dataDir, 'access');
 
@@ -101,4 +116,4 @@ function setPerms(user, perms) {
   return next;
 }
 
-module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms };
+module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms, assertPrivateDataRoot };

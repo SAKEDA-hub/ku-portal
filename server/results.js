@@ -21,6 +21,14 @@ const MAX_DOCX = 5 * 1024 * 1024;
 const SKILLS = new Set(['тесты', 'письмо', 'говорение']);
 const newId = prefix => `${prefix}_${crypto.randomBytes(12).toString('hex')}`;
 const safeUser = u => ({ id: u.id, username: u.username, role: u.role, direction: u.direction, year: u.year, group: u.group, number: u.number, portal: !!u.portal });
+function writePrivateFileAtomic(file, bytes) {
+  const temp = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    const fd = fs.openSync(temp, 'wx', 0o600);
+    try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(temp, file);
+  } finally { fs.rmSync(temp, { force: true }); }
+}
 
 /* Прежние имена (school.json, school-backups, school-files и ID с префиксом school_) переводятся один раз при запуске */
 function migrateLegacy(dataDir) {
@@ -60,7 +68,13 @@ function createResults({ dataDir, portal = null }) {
     res.end(JSON.stringify(body));
     return true;
   };
-  const save = () => store.save(db);
+  const save = () => {
+    try { store.save(db); } catch (error) {
+      // Keep a failed write from leaving uncommitted changes visible in this process.
+      db = store.load();
+      throw error;
+    }
+  };
   /* Кем человек из портала входит в базу: преподаватель или администратор; остальные — никем */
   function portalIdentity(access) {
     if (!access || !['teacher', 'admin'].includes(access.role)) return null;
@@ -148,7 +162,9 @@ function createResults({ dataDir, portal = null }) {
       const title = String(body.title || '').trim().slice(0, 160);
       const comps = Array.isArray(body.components) ? body.components : [];
       if (!title || db.tests.some(t => t.title.toLowerCase() === title.toLowerCase())) return reject(res, 400, 'Укажите уникальное название теста');
-      if (!comps.length || comps.some(c => !SKILLS.has(c.skill) || !Number.isInteger(c.maxPoints) || c.maxPoints < 1) || comps.reduce((s, c) => s + c.maxPoints, 0) > 100) return reject(res, 400, 'Проверьте навыки и лимиты: сумма должна быть не больше 100');
+      if (!comps.length || new Set(comps.map(c => c && c.skill)).size !== comps.length ||
+          comps.some(c => !c || !SKILLS.has(c.skill) || !Number.isInteger(c.maxPoints) || c.maxPoints < 1 || c.maxPoints > 100) ||
+          comps.reduce((s, c) => s + c.maxPoints, 0) > 100) return reject(res, 400, 'Проверьте навыки и лимиты: сумма должна быть не больше 100');
       const test = { id: newId('test'), title, ownerId: u.id };
       db.tests.push(test);
       for (const c of comps) db.components.push({ id: newId('component'), testId: test.id, skill: c.skill, maxPoints: c.maxPoints, docxFilename: null });
@@ -175,8 +191,17 @@ function createResults({ dataDir, portal = null }) {
       const content = Buffer.from(base64, 'base64');
       if (content.length > MAX_DOCX || content.length < 4 || content.readUInt32LE(0) !== 0x04034b50) return reject(res, 400, 'Файл не похож на DOCX или превышает 5 МБ');
       const dir = path.join(dataDir, 'results-files'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const name = `${component.id}.docx`; fs.writeFileSync(path.join(dir, name), content, { mode: 0o600 });
-      component.docxFilename = filename; save(); return json(res, { ok: true });
+      const name = `${component.id}.docx`, target = path.join(dir, name);
+      const previous = fs.existsSync(target) ? fs.readFileSync(target) : null;
+      writePrivateFileAtomic(target, content);
+      component.docxFilename = filename;
+      try { save(); }
+      catch (error) {
+        if (previous) writePrivateFileAtomic(target, previous);
+        else fs.rmSync(target, { force: true });
+        throw error;
+      }
+      return json(res, { ok: true });
     }
     const fileMatch = p.match(/^\/api\/results\/test-file\/([\w-]+)$/);
     if (fileMatch && req.method === 'GET') {
