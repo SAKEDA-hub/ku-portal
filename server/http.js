@@ -1,10 +1,25 @@
 'use strict';
 
-const { isIP } = require('node:net');
+const { isIP, BlockList } = require('node:net');
+const zlib = require('node:zlib');
 const normalize = ip => String(ip || '').replace(/^::ffff:(?=\d+\.)/i, '');
-const trusted = new Set((process.env.KU_TRUSTED_PROXIES || '').split(',').map(s => normalize(s.trim())).filter(Boolean));
-for (const ip of trusted) if (!isIP(ip)) throw new Error('KU_TRUSTED_PROXIES должен содержать IP-адреса через запятую');
-const fromProxy = req => trusted.has(normalize(req.socket.remoteAddress));
+
+/* KU_TRUSTED_PROXIES: IP-адреса или диапазоны CIDR (10.0.0.0/8, fd00::/8) через запятую */
+function parseTrusted(value) {
+  const list = new BlockList();
+  for (const raw of String(value || '').split(',').map(s => s.trim()).filter(Boolean)) {
+    const [addr, bits, extra] = raw.split('/');
+    const ip = normalize(addr), family = isIP(ip), max = family === 6 ? 128 : 32;
+    if (!family || extra !== undefined || (bits !== undefined && !(/^\d+$/.test(bits) && Number(bits) <= max))) {
+      throw new Error('KU_TRUSTED_PROXIES должен содержать IP-адреса или диапазоны CIDR через запятую');
+    }
+    const type = family === 6 ? 'ipv6' : 'ipv4';
+    if (bits === undefined) list.addAddress(ip, type); else list.addSubnet(ip, Number(bits), type);
+  }
+  return (ip) => { const family = isIP(ip); return !!family && list.check(ip, family === 6 ? 'ipv6' : 'ipv4'); };
+}
+const trusted = parseTrusted(process.env.KU_TRUSTED_PROXIES);
+const fromProxy = req => trusted(normalize(req.socket.remoteAddress));
 
 function clientIp(req) {
   const peer = normalize(req.socket.remoteAddress);
@@ -14,6 +29,30 @@ function clientIp(req) {
 }
 const isHttps = req => !!req.socket.encrypted || (fromProxy(req) &&
   String(req.headers['x-forwarded-proto'] || '').split(',').pop().trim() === 'https');
+
+/* Ответ со статикой: текстовые файлы больше 1 КБ сжимаются gzip, если браузер это принимает.
+   Сжатая копия кешируется, пока содержимое файла не изменилось. */
+const GZIP_MIN = 1024;
+const gzipCache = new Map(); // ключ (путь) → { src, gz }
+function sendStatic(req, res, key, buf, headers) {
+  const text = /^(text\/|application\/json|image\/svg)/.test(headers['Content-Type'] || '');
+  const accepts = String(req.headers['accept-encoding'] || '').split(',').some(part => {
+    const [name, ...params] = part.trim().toLowerCase().split(';').map(s => s.trim());
+    const q = params.find(x => x.startsWith('q='));
+    return (name === 'gzip' || name === '*') && !(q && Number(q.slice(2)) === 0);
+  });
+  const out = Object.assign({}, headers);
+  let body = buf;
+  if (text) out.Vary = 'Accept-Encoding';
+  if (text && accepts && buf.length >= GZIP_MIN) {
+    let hit = gzipCache.get(key);
+    if (!hit || !hit.src.equals(buf)) { hit = { src: buf, gz: zlib.gzipSync(buf) }; gzipCache.set(key, hit); }
+    body = hit.gz; out['Content-Encoding'] = 'gzip';
+  }
+  out['Content-Length'] = body.length;
+  res.writeHead(200, out);
+  res.end(req.method === 'HEAD' ? undefined : body);
+}
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -46,4 +85,4 @@ function readJson(req, limit) {
   });
 }
 
-module.exports = { clientIp, isHttps, HttpError, readJson };
+module.exports = { clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic };

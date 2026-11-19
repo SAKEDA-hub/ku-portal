@@ -24,3 +24,4 @@ data/exam-provision/
 data/demo/
 .env
 .env.*
+data/exam-sessions.json

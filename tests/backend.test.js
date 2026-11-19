@@ -10,11 +10,13 @@ const { once } = require('node:events');
 const { createInterface } = require('node:readline');
 const { studentQuestion, scoreQuestion } = require('../exam-sync/grading');
 const { applyChanges } = require('../exam-sync/model');
+const { parseTrusted } = require('../server/http');
+const crypto = require('node:crypto');
 const root = path.join(__dirname, '..');
 
-function installation(t, demo = false) {
+function installation(t, demo = false, extraEnv = {}) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'ku-integration-'));
-  const env = { ...process.env, PORT: '0', IP: '127.0.0.1', KU_DATA_DIR: data, DEMO: demo ? '1' : '0', KU_TRUSTED_PROXIES: '' };
+  const env = { ...process.env, PORT: '0', IP: '127.0.0.1', KU_DATA_DIR: data, DEMO: demo ? '1' : '0', KU_TRUSTED_PROXIES: '', ...extraEnv };
   let proc, base;
   async function stop() {
     if (proc && proc.exitCode === null && proc.signalCode === null) {
@@ -113,7 +115,8 @@ test('production upgrade preserves exam IDs and results, retires old credentials
   app.cli('exam-disable', old.login);
   await app.stop(); await app.start();
   assert.equal((await signIn(credentials)).status, 401);
-  assert.equal((await call('state', { token: teacher.token })).status, 401);
+  assert.equal((await call('state', { token: student.token })).status, 401); // отключённый студент выходит
+  assert.equal((await call('state', { token: teacher.token })).status, 200); // остальные сеансы переживают перезапуск
 });
 
 test('exam teacher and student complete a test, change a password and grade a written submission', async t => {
@@ -210,4 +213,89 @@ test('timed writing reveals its prompt after server start and preserves the subm
   assert.equal(second.id, first.id);
   assert.equal(second.db.writings.find(w => w.id === first.id).text, body.text);
   assert.ok(!second.db.timers.some(row => row.id === timer.id));
+});
+
+test('trusted proxies accept single addresses and CIDR ranges and reject malformed entries', () => {
+  const trusted = parseTrusted('192.0.2.10, 10.0.0.0/8, fd00::/8');
+  assert.equal(trusted('192.0.2.10'), true);
+  assert.equal(trusted('10.20.30.40'), true);
+  assert.equal(trusted('fd12::1'), true);
+  assert.equal(trusted('192.0.2.11'), false);
+  assert.equal(trusted('not-an-ip'), false);
+  assert.equal(parseTrusted('')('127.0.0.1'), false);
+  for (const bad of ['10.0.0.0/33', 'proxy.example', '10.0.0.0/8/1', '10.0.0.0/x']) assert.throws(() => parseTrusted(bad));
+});
+
+test('behind a trusted proxy limits and sessions use the visitor address and HSTS is sent', async t => {
+  const app = installation(t, false, { KU_TRUSTED_PROXIES: '127.0.0.0/8' }); await app.start();
+  const call = app.request;
+  assert.equal((await call('/api/auth/register', { body: { ...portalUser, role: 'student' } })).status, 202);
+  app.cli('approve', JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0].id);
+  const headers = { 'x-forwarded-for': '198.51.100.1, 192.0.2.3', 'x-forwarded-proto': 'https' };
+  const login = await call('/api/auth/login', { body: portalUser, headers });
+  assert.equal(login.status, 200);
+  assert.match(login.headers.get('strict-transport-security') || '', /max-age=/);
+  assert.equal((await call('/api/sessions', { token: login.value.token })).value.items[0].ip, '192.0.2.3');
+  // восемь ошибок с одного адреса не запирают владельца на другом адресе
+  for (let i = 0; i < 8; i++) await call('/api/auth/login', { body: { ...portalUser, password: 'wrong-password' }, headers: { 'x-forwarded-for': '192.0.2.66' } });
+  assert.equal((await call('/api/auth/login', { body: { ...portalUser, password: 'wrong-password' }, headers: { 'x-forwarded-for': '192.0.2.66' } })).status, 429);
+  assert.equal((await call('/api/auth/login', { body: portalUser, headers: { 'x-forwarded-for': '192.0.2.4' } })).status, 200);
+});
+
+test('school login is limited per visitor address and the owner can still sign in', async t => {
+  const app = installation(t, false, { KU_TRUSTED_PROXIES: '127.0.0.0/8' });
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passHash = crypto.scryptSync('school-password', salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }).toString('hex');
+  fs.writeFileSync(path.join(app.data, 'school.json'), JSON.stringify({ version: 1, tests: [], components: [], results: [], scores: [],
+    users: [{ id: 'user_1', username: 'pupil', role: 'student', salt, passHash, passAlgo: 'scrypt' }] }));
+  await app.start();
+  const login = (password, ip) => app.request('/api/school/login', { body: { username: 'pupil', password }, headers: { 'x-forwarded-for': ip } });
+  for (let i = 0; i < 5; i++) assert.equal((await login('wrong', '192.0.2.50')).status, 401);
+  assert.equal((await login('school-password', '192.0.2.50')).status, 429);
+  const owner = await login('school-password', '192.0.2.51');
+  assert.equal(owner.status, 200);
+  assert.equal((await app.request('/api/school/me', { token: owner.value.token })).value.user.username, 'pupil');
+  assert.equal((await app.request('/api/school/login', { body: 'x'.repeat(10) })).status, 400);
+});
+
+test('a teacher can schedule and grade only groups assigned by the operator', async t => {
+  const app = installation(t, true); await app.start();
+  const credentials = JSON.parse(fs.readFileSync(path.join(app.data, 'demo', 'demo-credentials.json')));
+  const sign = async email => (await app.request('/api/auth/login', { body: { email, password: credentials[email] } })).value.token;
+  const token = await sign('teacher3@demo.kz');
+  const db = () => JSON.parse(fs.readFileSync(path.join(app.data, 'demo', 'db.json')));
+  const teacher = db().users.find(u => u.email === 'teacher3@demo.kz');
+  const student = db().users.find(u => u.email === 'student@demo.kz');
+  const own = db().schedule.find(r => r.teacherId === teacher.id);
+  assert.notEqual(own.group, student.group);
+  const sub = (await app.request('/api/teacher/subjects', { token, body: { name: 'Новый предмет' } })).value.id;
+  const lesson = group => app.request('/api/teacher/schedule', { token, body: { subjectId: sub, group, day: 6, startTime: '10:00', endTime: '11:00' } });
+  assert.equal((await lesson(student.group)).status, 403);
+  assert.equal((await app.request('/api/teacher/grades', { token, body: { studentId: student.id, subjectId: sub, score: 5 } })).status, 403);
+  assert.equal((await lesson(own.group)).status, 200); // группы из прежнего расписания перенесены при запуске
+  app.cli('groups', teacher.id, `${own.group}, ${student.group}`);
+  assert.equal((await lesson(student.group)).status, 200);
+  assert.equal((await app.request('/api/teacher/grades', { token, body: { studentId: student.id, subjectId: sub, score: 5 } })).status, 200);
+  const listed = async () => (await app.request('/api/teacher/students', { token })).value.items.map(x => x.id);
+  assert.ok((await listed()).includes(student.id));
+  app.cli('groups', teacher.id, own.group); // снятая группа пропадает и из списка студентов
+  assert.ok(!(await listed()).includes(student.id));
+  assert.equal((await app.request('/api/teacher/grades', { token, body: { studentId: student.id, subjectId: sub, score: 5 } })).status, 403);
+});
+
+test('static pages are served gzip-compressed and exam sessions survive a restart', async t => {
+  const app = installation(t, true); await app.start();
+  const page = await app.request('/exam-sync/', { headers: { 'accept-encoding': 'gzip' } });
+  assert.equal(page.headers.get('content-encoding'), 'gzip');
+  assert.match(page.value, /<!DOCTYPE html>/i);
+  const refused = await app.request('/exam-sync/', { headers: { 'accept-encoding': 'identity, gzip;q=0' } });
+  assert.equal(refused.headers.get('content-encoding'), null);
+  const call = (name, token, body) => app.request('/exam-sync/api/' + name, { token, body });
+  const teacher = (await call('login', null, { login: 'teacher', password: 'admin' })).value;
+  await app.stop(); await app.start();
+  assert.equal((await call('state', teacher.token)).status, 200);
+  assert.ok(!fs.readFileSync(path.join(app.data, 'demo', 'exam-sessions.json'), 'utf8').includes(teacher.token));
+  assert.equal((await call('logout', teacher.token, {})).status, 200);
+  await app.stop(); await app.start();
+  assert.equal((await call('state', teacher.token)).status, 401);
 });

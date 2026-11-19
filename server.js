@@ -16,8 +16,8 @@ const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
 const SCHOOL_DIR = path.join(ROOT, 'school'); // закрытый кабинет результатов учебной базы (/school/)
-const { dataDir: DATA, grantOf, demo: DEMO_ON } = require('./server/access');
-const { clientIp, readJson, HttpError } = require('./server/http');
+const { dataDir: DATA, grantOf, groupsOf, setGroups, demo: DEMO_ON } = require('./server/access');
+const { clientIp, readJson, HttpError, sendStatic } = require('./server/http');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
 const { createStore } = require('./server/store');
@@ -64,6 +64,15 @@ function saveDB() {
     throw error;
   }
 }
+/* Группы преподавателя — только назначенные оператором. При первом запуске после обновления
+   текущие группы из расписания переносятся в назначения, дальше новые добавляет только оператор. */
+function migrateTeacherGroups() {
+  for (const t of db.users.filter(x => x.role === 'teacher' && groupsOf(x) === null)) {
+    try { setGroups(t, db.schedule.filter(r => r.teacherId === t.id).map(r => r.group)); }
+    catch (error) { console.error('[access] группы не перенесены:', t.id, error.code || error.message); }
+  }
+}
+const teacherHasGroup = (u, group) => (groupsOf(u) || []).includes(String(group).trim());
 function nid(prefix) {
   db.seq = db.seq || {};
   db.seq[prefix] = (db.seq[prefix] || 0) + 1;
@@ -334,8 +343,7 @@ function serveStatic(req, res, url) {
     if (mime.startsWith('text/html')) res.setHeader('Content-Security-Policy', sec.htmlPolicy(buf));
     const noCache = /\.(html|js|css)$/i.test(file) ? { 'Cache-Control': 'no-cache' }
       : /\.woff2$/i.test(file) ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : {};
-    res.writeHead(200, Object.assign({ 'Content-Type': mime }, noCache));
-    res.end(buf);
+    sendStatic(req, res, file, buf, Object.assign({ 'Content-Type': mime }, noCache));
   });
 }
 
@@ -735,7 +743,7 @@ async function handleRequest(req, res) {
 
     if (p === '/api/teacher/students' && req.method === 'GET' && u.role === 'teacher') {
       const g = String(url.searchParams.get('group') || '').trim();
-      const groups = new Set(db.schedule.filter(r => r.teacherId === u.id).map(r => r.group));
+      const groups = new Set(db.schedule.filter(r => r.teacherId === u.id && teacherHasGroup(u, r.group)).map(r => r.group));
       const items = db.users.filter((x) => x.role === 'student' && groups.has(x.group) && (!g || x.group === g))
         .map((x) => ({ id: x.id, fio: x.fio, group: x.group, online: isOnline(x) }));
       return ok(res, { items });
@@ -748,7 +756,7 @@ async function handleRequest(req, res) {
       const sc = Number(score);
       if (!st) return bad(res, 400, 'Выберите студента');
       if (!sub) return bad(res, 400, 'Выберите свой предмет');
-      if (!db.schedule.some(r => r.teacherId === u.id && r.subjectId === sub.id && r.group === st.group)) return bad(res, 403, 'Группа не назначена на этот предмет');
+      if (!teacherHasGroup(u, st.group) || !db.schedule.some(r => r.teacherId === u.id && r.subjectId === sub.id && r.group === st.group)) return bad(res, 403, 'Группа не назначена на этот предмет');
       if (!(sc >= 0 && sc <= 100)) return bad(res, 400, 'Балл — число от 0 до 100');
       const g = { id: nid('gr'), studentId, subjectId, teacherId: u.id, score: sc, date: new Date().toISOString().slice(0, 10) };
       db.grades.push(g);
@@ -763,6 +771,7 @@ async function handleRequest(req, res) {
       const sub = db.subjects.find((s) => s.id === subjectId && s.teacherId === u.id);
       if (!sub) return bad(res, 400, 'Выберите свой предмет');
       if (typeof group !== 'string' || !group.trim() || group.length > 100) return bad(res, 400, 'Укажите группу');
+      if (!teacherHasGroup(u, group)) return bad(res, 403, 'Эта группа не закреплена за вами. Её назначает администратор портала');
       const hm = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
       if (!hm.test(startTime) || !hm.test(endTime) || startTime >= endTime) return bad(res, 400, 'Укажите время (ЧЧ:ММ)');
       if (!Number.isInteger(Number(day)) || day < 0 || day > 6 || String(room).length > 100 || String(type).length > 80) return bad(res, 400, 'Некорректные данные');
@@ -795,6 +804,7 @@ const server = http.createServer((req, res) => {
 
 try { loadDB(); } catch (e) { console.error('[DB]', e.message); process.exit(1); }
 seedDemo();
+migrateTeacherGroups();
 loadSessions();
 server.listen(PORT, HOST, () => {
   console.log(`KU Portal: http://${HOST || 'localhost'}:${server.address().port}`);

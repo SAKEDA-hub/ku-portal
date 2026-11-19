@@ -3,7 +3,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { dataDir, grantOf, approve, revoke } = require('../server/access');
+const { dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups } = require('../server/access');
 const { setPasswordSync } = require('../server/security');
 const { writeJsonAtomic } = require('../server/store');
 
@@ -28,17 +28,26 @@ function run([command, key, role, name]) {
     if (password) { console.log('Передайте новый пароль лично пользователю.'); console.log(password); }
     return;
   }
-  if (!['list', 'approve', 'revoke'].includes(command)) {
-    throw new Error('Команды: list | approve <ID> | revoke <ID> | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
+  if (!['list', 'approve', 'revoke', 'groups'].includes(command)) {
+    throw new Error('Команды: list | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
   }
   const file = path.join(dataDir, 'db.json');
   const users = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).users : [];
   if (command === 'list') {
-    console.table(users.map(u => ({ id: u.id, name: u.fio, email: u.email, role: u.role, group: u.group, access: !!grantOf(u) })));
+    console.table(users.map(u => ({ id: u.id, name: u.fio, email: u.email, role: u.role,
+      group: u.role === 'teacher' ? (groupsOf(u) || []).join(', ') : u.group, access: !!grantOf(u) })));
     return;
   }
   const user = users.find(u => u.id === key);
   if (!user) throw new Error('Пользователь не найден');
+  if (command === 'groups') {
+    if (user.role !== 'teacher') throw new Error('Группы назначаются только преподавателю');
+    const groups = normalizeGroups(String(role || '').split(','));
+    setGroups(user, groups);
+    require('../server/audit').createAudit(dataDir)('portal.groups', 'operator', user.id);
+    console.log(JSON.stringify({ action: 'groups', userId: user.id, groups }));
+    return;
+  }
   if (require('../server/access').demo) throw new Error('Подтверждение и отзыв доступны в рабочем режиме DEMO=0');
   if (command === 'approve') approve(user);
   else revoke(user);
