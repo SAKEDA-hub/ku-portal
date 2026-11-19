@@ -112,6 +112,7 @@ function roleLabel(u) {
 const seesResults = (u) => u.role === 'teacher' || permsOf(u).results;
 function serviceTiles(u) {
   const p = permsOf(u), out = [];
+  if (p.admin) out.push(['Администрирование', 'shield', '#/admin']);
   if (seesResults(u)) out.push(['Учебная база', 'chart', '#/results']);
   if (u.role === 'student' || p.clubs.length) out.push(['Клубы', 'ball', '#/clubs']);
   if (u.role === 'student' || p.dorm) out.push(['Общежитие', 'building', '#/dorm']);
@@ -1086,6 +1087,7 @@ function changePasswordDlg(done) {
       try {
         const d = await api('/auth/password', { method: 'POST', body: { current: cur, next: nx } });
         if (SRV) SRV.passChangedAt = d.passChangedAt;
+        if (S.user) S.user.mustChangePassword = false;
         close(); toast(t('Пароль изменён')); done && done();
       } catch (e) { formErr(box, e.message); }
     };
@@ -1192,6 +1194,7 @@ function viewStub(name) {
 }
 
 /* ============================ Роутер ============================ */
+let askedNewPassword = false;
 function route() {
   stopPoll();
   applyTheme(); // цвета пользователя; до входа и после выхода — KU
@@ -1199,6 +1202,15 @@ function route() {
   startNotif();
   const h = location.hash.replace(/^#\/?/, '');
   const parts = h.split('/').filter(Boolean);
+  // пароль сброшен администратором — сначала свой пароль вместо временного
+  // сервер до смены пароля отвечает только кабинету (MUST_CHANGE_ALLOWED в server.js)
+  if (S.user.mustChangePassword) {
+    if (!askedNewPassword) {
+      askedNewPassword = true;
+      setTimeout(() => { toast(t('Пароль выдан администратором — задайте свой')); changePasswordDlg(() => route()); }, 300);
+    }
+    return viewProfile('security');
+  }
   switch (parts[0]) {
     case undefined: return viewHome();
     case 'schedule': return S.user.role === 'staff' ? viewHome() : viewSchedule();
@@ -1216,6 +1228,9 @@ function route() {
       return viewHome(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
+    case 'admin': // админ-панель — отдельная страница (admin/), вход по сеансу портала
+      if (!permsOf(S.user).admin) return viewHome();
+      location.href = '/admin/'; return;
     case 'results': // учебная база — отдельная страница, вход в неё по сеансу портала
       if (!seesResults(S.user)) return viewHome();
       location.href = '/results/'; return;

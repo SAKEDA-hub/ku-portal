@@ -16,7 +16,8 @@ const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
 const RESULTS_DIR = path.join(ROOT, 'results'); // закрытый кабинет результатов учебной базы (/results/)
-const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, demo: DEMO_ON } = require('./server/access');
+const ADMIN_DIR = path.join(ROOT, 'admin'); // админ-панель (/admin/, server/admin.js)
+const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, forget, demo: DEMO_ON } = require('./server/access');
 const { clientIp, readJson, HttpError, sendStatic } = require('./server/http');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
@@ -155,6 +156,14 @@ function dropSession(token, save = true) {
   if (db.sessMeta) delete db.sessMeta[token];
   if (save) saveDB();
 }
+/* Все сеансы пользователя (кроме exceptToken): смена или сброс пароля, отзыв доступа, удаление */
+function dropUserSessions(uid, exceptToken = '') {
+  let n = 0;
+  for (const [tok, user] of sessions) if (user.id === uid && tok !== exceptToken) { dropSession(tok, false); n++; }
+  for (const [tok, id] of Object.entries(db.sessions || {})) if (id === uid && tok !== exceptToken) { delete db.sessions[tok]; if (db.sessMeta) delete db.sessMeta[tok]; n++; }
+  if (n) saveDB();
+  return n;
+}
 /* «Был в сети» обновляется в памяти, на диск — не чаще раза в 30 секунд */
 let dbDirty = false;
 setInterval(() => { if (dbDirty) { dbDirty = false; saveDB(); } }, 30000).unref();
@@ -246,7 +255,7 @@ function trackOf(u) {
 }
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u), track: trackOf(u), perms: permsOf(u) };
+  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u), track: trackOf(u), perms: permsOf(u), mustChangePassword: !!u.mustChangePassword };
 }
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -335,7 +344,10 @@ function serveStatic(req, res, url) {
   if (p === '/ku-message' || p === '/connect' || p.startsWith('/connect/')) { res.writeHead(301, { Location: '/ku-message/' }); res.end(); return; }
   if (p.startsWith('/ku-message/')) { root = MESSAGE_DIR; p = p.slice('/ku-message'.length); if (p === '/') p = '/index.html'; }
   if (p === '/school' || p.startsWith('/school/') || p === '/results') { res.writeHead(301, { Location: '/results/' }); res.end(); return; } // прежний адрес
-  if (p === '/results/') { root = RESULTS_DIR; p = '/index.html'; }
+  if (p === '/admin') { res.writeHead(301, { Location: '/admin/' }); res.end(); return; }
+  if (p === '/admin/') { root = ADMIN_DIR; p = '/index.html'; }
+  else if (p.startsWith('/admin/')) { root = ADMIN_DIR; p = p.slice('/admin'.length); }
+  else if (p === '/results/') { root = RESULTS_DIR; p = '/index.html'; }
   else if (p.startsWith('/results/')) { root = RESULTS_DIR; p = p.slice('/results'.length); }
   p = path.normalize(p).replace(/^([.][.][\/\\])+/, '');
   const file = path.join(root, p);
@@ -369,6 +381,9 @@ const results = require('./server/results').createResults({ dataDir: DATA, porta
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
 const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx)];
+/* Админ-панель (server/admin.js): пользователи, допуск, права, сброс пароля, копия базы — право admin */
+const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA });
+const MUST_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/settings', '/api/sessions', '/api/inbox']);
 const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
 const handoffCodes = new Map(); // одноразовые коды перехода в KU Message: code → { uid, exp }
 const HANDOFF_CODE_MS = 60 * 1000;
@@ -488,6 +503,7 @@ async function handleRequest(req, res) {
         return bad(res, 401, 'Неверный email или пароль');
       }
       releasePair(); releaseIp(); if (releaseEmail) releaseEmail();
+      if (user.mustChangePassword && Date.now() > (user.tempPasswordUntil || 0)) return bad(res, 401, 'Временный пароль истёк. Попросите администратора сбросить пароль ещё раз');
       const grant = grantOf(user);
       if (!grant) return bad(res, 403, 'Доступ ожидает подтверждения администратором');
       // старый хеш (sha256) — переводим на scrypt, пока пароль известен
@@ -568,9 +584,12 @@ async function handleRequest(req, res) {
     }
 
     if (!u) return bad(res, 401, 'Не авторизован');
+    // пароль выдан администратором: до смены на свой доступны только кабинет и смена пароля
+    if (u.mustChangePassword && !MUST_CHANGE_ALLOWED.has(p)) return bad(res, 403, 'Сначала задайте свой пароль: Кабинет → Безопасность');
 
     if (p === '/api/exams/open' && req.method === 'GET') return ok(res, { rooms: examSync.openRooms() });
 
+    if (await admin.handle(p, req, res, u, body) !== false) return;
     for (const handle of apiModules) if (await handle(p, req, res, u, body, url) !== false) return;
 
     if (p === '/api/message/handoff' && req.method === 'POST') {
@@ -620,9 +639,9 @@ async function handleRequest(req, res) {
       if (nx === cur) return bad(res, 400, 'Новый пароль совпадает с текущим');
       await sec.setPassword(u, nx);
       u.passChangedAt = Date.now();
+      delete u.mustChangePassword; delete u.tempPasswordUntil; // временный пароль от администратора заменён своим
       // выходим на всех остальных устройствах
-      const me = reqToken(req);
-      for (const [tok, uid] of Object.entries(db.sessions || {})) if (uid === u.id && tok !== me) dropSession(tok);
+      dropUserSessions(u.id, reqToken(req));
       saveDB();
       audit('portal.password', u.id, u.id);
       return ok(res, { passChangedAt: u.passChangedAt });
@@ -815,9 +834,23 @@ const server = http.createServer((req, res) => {
 /* -------------------------------- Старт ---------------------------------- */
 
 try { loadDB(); } catch (e) { console.error('[DB]', e.message); process.exit(1); }
+/* Рабочий режим: бета-аккаунты прежних версий и всё, что к ним привязано, убираются из базы (server/cleanup.js) */
+function purgeDemoAccounts() {
+  if (DEMO_ON) return;
+  const { users, files } = require('./server/cleanup').purgeDemo(db);
+  if (!users.length) return;
+  for (const user of users) { try { forget(user); } catch (error) { console.error('[cleanup] права не удалены:', user.id, error.code); } }
+  saveDB();
+  require('./server/admin').removeUploads(DATA, files);
+  console.log('[cleanup] удалены демо-аккаунты:', users.map(x => x.id).join(', '));
+  audit('portal.demo.purge', 'system', users.map(x => x.id).join(','));
+}
+purgeDemoAccounts();
 seedDemo();
 migrateTeacherGroups();
 loadSessions();
+admin.applyProvision();
+setInterval(admin.applyProvision, 5000).unref(); // сброс пароля командой с хоста (scripts/access.js reset-password)
 server.listen(PORT, HOST, () => {
   console.log(`KU Portal: http://${HOST || 'localhost'}:${server.address().port}`);
   console.log('[startup]', JSON.stringify({ commit: VERSION.commit, data: DATA, demo: DEMO_ON }));

@@ -10,9 +10,10 @@ const PRESETS = {
   manager: () => ({ clubs: ['*'], dorm: true, results: true }), // менеджер: все клубы, общежитие, учебная база результатов
   'club-lead': (clubs) => ({ clubs: String(clubs || '').split(',').map(s => s.trim()).filter(Boolean) }), // руководитель своих клубов
   dorm: () => ({ dorm: true }), // администрация общежития
+  admin: () => ({ clubs: ['*'], dorm: true, results: true, admin: true }), // менеджер + админ-панель (/admin/)
   none: () => ({}),
 };
-const permsText = (p) => [p.clubs.includes('*') ? 'все клубы' : p.clubs.length ? 'клубы: ' + p.clubs.join(', ') : '', p.dorm ? 'общежитие' : '', p.results ? 'учебная база' : ''].filter(Boolean).join('; ');
+const permsText = (p) => [p.clubs.includes('*') ? 'все клубы' : p.clubs.length ? 'клубы: ' + p.clubs.join(', ') : '', p.dorm ? 'общежитие' : '', p.results ? 'учебная база' : '', p.admin ? 'админ-панель' : ''].filter(Boolean).join('; ');
 const { setPasswordSync } = require('../server/security');
 const { writeJsonAtomic } = require('../server/store');
 
@@ -37,8 +38,8 @@ function run([command, key, role, name]) {
     if (password) { console.log('Передайте новый пароль лично пользователю.'); console.log(password); }
     return;
   }
-  if (!['list', 'approve', 'revoke', 'groups', 'role'].includes(command)) {
-    throw new Error('Команды: list | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | role <ID> manager|club-lead|dorm|none ["<клуб1,клуб2>"] | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
+  if (!['list', 'approve', 'revoke', 'groups', 'role', 'reset-password'].includes(command)) {
+    throw new Error('Команды: list | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | role <ID> manager|club-lead|dorm|admin|none ["<клуб1,клуб2>"] | reset-password <ID> [--2fa] | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
   }
   const file = path.join(dataDir, 'db.json');
   const users = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).users : [];
@@ -49,9 +50,25 @@ function run([command, key, role, name]) {
   }
   const user = users.find(u => u.id === key);
   if (!user) throw new Error('Пользователь не найден');
+  if (command === 'reset-password') {
+    // сервер держит базу в памяти: новый хеш передаётся поручением, сервер применяет его в течение ~5 секунд
+    if (user.demo) throw new Error('Демо-аккаунт нельзя изменить');
+    const { PROVISION_DIR, tempPassword } = require('../server/admin');
+    const password = tempPassword();
+    const record = { action: 'reset-password', userId: user.id, reset2fa: role === '--2fa' };
+    setPasswordSync(record, password);
+    const directory = path.join(dataDir, PROVISION_DIR);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    writeJsonAtomic(path.join(directory, Date.now() + '-' + crypto.randomUUID() + '.json'), record);
+    console.log(`Новый пароль для ${user.fio} (${user.email}) вступит в силу в течение 5 секунд, если сайт запущен, иначе — при запуске.`);
+    console.log('Все сеансы пользователя будут завершены; при входе портал попросит сменить пароль.' + (record.reset2fa ? ' Двухфакторная защита отключена.' : ''));
+    console.log('Передайте пароль лично пользователю.');
+    console.log(password);
+    return;
+  }
   if (command === 'role') {
     const preset = PRESETS[role];
-    if (!preset) throw new Error('role <ID> manager|club-lead|dorm|none ["<клуб1,клуб2>"]');
+    if (!preset) throw new Error('role <ID> manager|club-lead|dorm|admin|none ["<клуб1,клуб2>"]');
     const next = preset(name);
     if (role === 'club-lead' && !next.clubs.length) throw new Error('Укажите ID клубов через запятую, например "volunteer,football"');
     const perms = setPerms(user, next);

@@ -18,7 +18,7 @@ function canonicalPath(candidate) {
 }
 function assertPrivateDataRoot(candidate, projectRoot = path.resolve(__dirname, '..')) {
   const resolvedData = canonicalPath(candidate);
-  for (const folder of ['public', 'ku-message', 'exam-sync', 'results']) {
+  for (const folder of ['public', 'ku-message', 'exam-sync', 'results', 'admin']) {
     const webRoot = canonicalPath(path.join(projectRoot, folder));
     const relative = path.relative(webRoot, resolvedData);
     if (relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))) {
@@ -63,6 +63,10 @@ function approve(user) {
 function revoke(user) {
   fs.rmSync(grantFile(user), { force: true });
 }
+/* Удаление пользователя: допуск, группы и права (ID не переиспользуются, но файлы не должны оставаться) */
+function forget(user) {
+  for (const file of [grantFile(user), groupsFile(user), permsFile(user)]) fs.rmSync(file, { force: true });
+}
 
 /* Группы преподавателя назначает оператор (node scripts/access.js groups <ID> "<группы>").
    null — назначений ещё не было (сервер при запуске переносит группы из текущего расписания). */
@@ -91,12 +95,13 @@ function setGroups(user, groups) {
 }
 
 /* Служебные права сверх роли (назначает оператор): clubs — ID клубов, которыми человек руководит ('*' — все),
-   dorm — администрация общежития, results — учебная база результатов. Роль «менеджер» = всё перечисленное. */
-const NO_PERMS = Object.freeze({ clubs: Object.freeze([]), dorm: false, results: false });
+   dorm — администрация общежития, results — учебная база результатов, admin — админ-панель (/admin/: пользователи,
+   допуск, роли, сброс паролей, копия базы). Роль «менеджер» = клубы + общежитие + учебная база. */
+const NO_PERMS = Object.freeze({ clubs: Object.freeze([]), dorm: false, results: false, admin: false });
 const CLUB_ID = /^[\w-]{1,64}$/;
 function normalizePerms(p) {
   const clubs = Array.isArray(p && p.clubs) ? [...new Set(p.clubs.map(String).filter(c => c === '*' || CLUB_ID.test(c)))] : [];
-  return { clubs: clubs.includes('*') ? ['*'] : clubs, dorm: !!(p && p.dorm === true), results: !!(p && (p.results === true || p.school === true)) }; // school — прежнее имя права
+  return { clubs: clubs.includes('*') ? ['*'] : clubs, dorm: !!(p && p.dorm === true), results: !!(p && (p.results === true || p.school === true)), admin: !!(p && p.admin === true) }; // school — прежнее имя права
 }
 function permsOf(user) {
   let text;
@@ -116,4 +121,4 @@ function setPerms(user, perms) {
   return next;
 }
 
-module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms, assertPrivateDataRoot };
+module.exports = { demo, dataDir, grantOf, approve, revoke, forget, groupsOf, setGroups, normalizeGroups, permsOf, setPerms, assertPrivateDataRoot };
