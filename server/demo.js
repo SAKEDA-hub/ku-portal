@@ -2,9 +2,7 @@
  * Бета-аккаунты портала: 3 преподавателя (языки, IT, биотехнологии) и 2 студента (ИСУ — IT, БТ — биотехнологии),
  * их занятия и оценки. seedDemo() идемпотентно создаёт и дополняет их и в уже существующей базе. Отключить: DEMO=0.
  */
-const crypto = require('crypto');
-
-function createDemo({ getDB, saveDB, nid, hash, subjectForDiscipline }) {
+function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline }) {
   /*
    * Тестовые аккаунты создаются при старте, если их ещё нет (идемпотентно).
    * Отключить: DEMO=0. На бесплатном Render база сбрасывается при рестарте —
@@ -39,11 +37,12 @@ function createDemo({ getDB, saveDB, nid, hash, subjectForDiscipline }) {
   ];
   const fioOf = (a) => [a.lastName, a.firstName, a.middleName].filter(Boolean).join(' ');
   function demoUser(a) {
-    const salt = crypto.randomBytes(8).toString('hex');
-    return {
-      id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role, fio: fioOf(a), firstName: a.firstName, email: a.email, salt, passHash: hash(DEMO_PASS, salt),
+    const u = {
+      id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role, fio: fioOf(a), firstName: a.firstName, email: a.email,
       group: a.group || '', program: a.program || 'ku', dept: a.dept, createdAt: Date.now(), demo: true,
     };
+    setPasswordSync(u, DEMO_PASS);
+    return u;
   }
   /* Бета-аккаунты создаются при старте и дополняются в уже существующей базе (идемпотентно):
      недостающие пользователи, ФИО/группа/программа/кафедра, занятия и оценки. Отключить: DEMO=0. */

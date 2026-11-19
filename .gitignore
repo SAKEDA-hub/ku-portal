@@ -6,3 +6,7 @@ data/exam-sync.json
 .DS_Store
 .restart
 data/uploads/
+# резервные копии и служебные файлы базы (server/store.js) — содержат хеши паролей
+data/backups/
+data/*.corrupt-*
+data/*.tmp

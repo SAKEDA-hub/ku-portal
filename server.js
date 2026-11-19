@@ -17,6 +17,8 @@ const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
 const DATA = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA, 'db.json');
+const { createStore } = require('./server/store');
+const sec = require('./server/security');
 
 if (!fs.existsSync(DATA)) fs.mkdirSync(DATA, { recursive: true });
 
@@ -38,18 +40,16 @@ const VERSION = { commit: readCommit(), startedAt: new Date().toISOString() };
 
 /* ---------------------------------- DB ---------------------------------- */
 
+/* data/db.json — атомарная запись, ежедневные копии в data/backups/ (14 дней), восстановление из копии
+   вместо пустой базы, если файл испорчен (server/store.js) */
 let db = null;
-function loadDB() {
-  try {
-    db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch {
-    db = { users: [], subjects: [], schedule: [], grades: [], seq: {} };
-    saveDB();
-  }
-}
-function saveDB() {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 1));
-}
+const store = createStore({
+  file: DB_FILE, backupDir: path.join(DATA, 'backups'),
+  empty: () => ({ users: [], subjects: [], schedule: [], grades: [], seq: {} }),
+  valid: (d) => !!d && typeof d === 'object' && Array.isArray(d.users), // иначе файл считается испорченным
+});
+function loadDB() { db = store.load(); }
+function saveDB() { store.save(db); }
 function nid(prefix) {
   db.seq = db.seq || {};
   db.seq[prefix] = (db.seq[prefix] || 0) + 1;
@@ -59,7 +59,7 @@ function nid(prefix) {
 /* -------------------------------- helpers -------------------------------- */
 
 function send(res, code, obj) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 }
 function bad(res, code, msg) { send(res, code, { error: msg }); }
@@ -69,25 +69,56 @@ function readBody(req, limit = 1e6) {
   return new Promise((resolve) => {
     let d = '';
     req.on('data', (c) => { d += c; if (d.length > limit) req.destroy(); });
-    req.on('end', () => { try { resolve(d ? JSON.parse(d) : {}); } catch { resolve({}); } });
+    req.on('end', () => { try { const v = d ? JSON.parse(d) : {}; resolve(v && typeof v === 'object' && !Array.isArray(v) ? v : {}); } catch { resolve({}); } });
     req.on('error', () => resolve({}));
     req.on('close', () => resolve({})); // тело больше лимита: соединение закрыто, end не придёт
   });
 }
-function hash(pw, salt) { return crypto.createHash('sha256').update(salt + pw).digest('hex'); }
+/* Ограничения попыток (server/security.js):
+   вход — по паре email + IP (чужой человек не может запереть владельца аккаунта), по email в целом — выше, против
+   перебора с разных адресов (кроме бета-аккаунтов: их пароль и так публичный), по IP — общий (у кампуса общий IP — лимит выше);
+   регистрация — по IP; ввод пароля для смены пароля / отключения 2FA / удаления аккаунта — по пользователю */
+const LIMIT_MS = 15 * 60 * 1000;
+const loginByEmailIp = sec.createLimiter({ max: 8, windowMs: LIMIT_MS });
+const loginByEmail = sec.createLimiter({ max: 40, windowMs: LIMIT_MS });
+const loginByIp = sec.createLimiter({ max: 60, windowMs: LIMIT_MS });
+const registerByIp = sec.createLimiter({ max: 10, windowMs: 60 * 60 * 1000 });
+const passCheckByUser = sec.createLimiter({ max: 8, windowMs: LIMIT_MS });
+const TOO_MANY_LOGINS = 'Слишком много попыток входа. Попробуйте через 15 минут';
+const TOO_MANY_PASS = 'Слишком много попыток. Попробуйте через 15 минут';
+const PASS_SHORT = 'Пароль — минимум 8 символов';
+// неизвестный email проверяется против этого хеша — ответ занимает столько же времени, сколько для существующего
+const NO_USER = {}; sec.setPasswordSync(NO_USER, crypto.randomBytes(16).toString('hex'));
+/* Пароль для действия с аккаунтом: неверный — счётчик, исчерпан — 429 (текст ошибки или null, если верный) */
+async function passError(u, pw) {
+  if (passCheckByUser.blocked(u.id)) return [429, TOO_MANY_PASS];
+  if (await sec.checkPassword(u, pw)) { passCheckByUser.reset(u.id); return null; }
+  passCheckByUser.hit(u.id);
+  return [400, null];
+}
 
 const sessions = new Map(); // token -> user
+const SESSION_IDLE_MS = 30 * 24 * 60 * 60 * 1000; // сеанс без активности 30 дней — выход
+// сеанс без метаданных тоже считается истёкшим: все сеансы создаются через saveSession, старые получают метаданные в loadSessions
+const sessionExpired = (tok, now) => { const m = db.sessMeta && db.sessMeta[tok]; return !m || now - (m.lastSeen || m.created || 0) > SESSION_IDLE_MS; };
 function loadSessions() {
   if (!db.sessions) return;
+  const now = Date.now();
+  db.sessMeta = db.sessMeta || {};
   for (const [tok, uid] of Object.entries(db.sessions)) {
     const user = db.users.find((x) => x.id === uid);
-    if (user) sessions.set(tok, user);
+    // сеансы без метаданных (созданные раньше) получают их сейчас — и тоже истекут без активности
+    if (user && !db.sessMeta[tok]) db.sessMeta[tok] = { sid: crypto.randomBytes(6).toString('hex'), uid, created: now, lastSeen: now, ua: '', ip: '' };
+    if (!user || sessionExpired(tok, now)) { delete db.sessions[tok]; delete db.sessMeta[tok]; continue; }
+    sessions.set(tok, user);
   }
+  saveDB();
 }
 /* Метаданные сеанса (для «Активных сеансов»): db.sessMeta[token] = { sid, uid, created, lastSeen, ua, ip }.
    Наружу отдаётся только sid — сам токен никогда не показывается. */
 const reqToken = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || '';
+// адрес клиента — последняя запись X-Forwarded-For (её добавляет прокси хостинга; начало заголовка клиент может подделать)
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',').pop().trim() || (req.socket && req.socket.remoteAddress) || '';
 function saveSession(token, user, req) {
   db.sessions = db.sessions || {};
   db.sessions[token] = user.id;
@@ -98,20 +129,26 @@ function saveSession(token, user, req) {
   };
   saveDB();
 }
-function dropSession(token) {
+function dropSession(token, save = true) {
   sessions.delete(token);
   if (db.sessions) delete db.sessions[token];
   if (db.sessMeta) delete db.sessMeta[token];
-  saveDB();
+  if (save) saveDB();
 }
 /* «Был в сети» обновляется в памяти, на диск — не чаще раза в 30 секунд */
 let dbDirty = false;
 setInterval(() => { if (dbDirty) { dbDirty = false; saveDB(); } }, 30000).unref();
+setInterval(() => {
+  const now = Date.now(), old = [...sessions.keys()].filter((tok) => sessionExpired(tok, now));
+  old.forEach((tok) => dropSession(tok, false));
+  if (old.length) saveDB();
+}, 60 * 60 * 1000).unref();
 function userOf(req) {
   const t = reqToken(req);
   const u = sessions.get(t) || null;
   if (u) {
     const now = Date.now();
+    if (sessionExpired(t, now)) { dropSession(t); return null; }
     if (!u.lastSeen || now - u.lastSeen > 15000) { u.lastSeen = now; dbDirty = true; }
     const m = db.sessMeta && db.sessMeta[t];
     if (m && now - (m.lastSeen || 0) > 15000) { m.lastSeen = now; dbDirty = true; }
@@ -251,7 +288,7 @@ function subjectForDiscipline(u, disc) {
 }
 
 /* Бета-аккаунты (server/demo.js) и AI-помощник для сайта университета (server/ai.js) */
-const { seedDemo, DEMO_ON, DEMO_PASS, DEMO_ACCOUNTS } = require('./server/demo').createDemo({ getDB: () => db, saveDB, nid, hash, subjectForDiscipline });
+const { seedDemo, DEMO_ON, DEMO_PASS, DEMO_ACCOUNTS } = require('./server/demo').createDemo({ getDB: () => db, saveDB, nid, setPasswordSync: sec.setPasswordSync, subjectForDiscipline });
 const ai = require('./server/ai');
 
 /* ------------------------------- Статика --------------------------------- */
@@ -319,6 +356,7 @@ function allowPublicAI(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
+  sec.securityHeaders(req, res);
 
   // Интерфейс портала на GitHub Pages (public/config.js) обращается к этому серверу с другого адреса.
   // Разрешаем только перечисленные адреса Pages (PAGES_ORIGINS через запятую); авторизация — заголовок Authorization, без cookie.
@@ -369,25 +407,28 @@ const server = http.createServer(async (req, res) => {
     /* ---------- Аутентификация ---------- */
     if (p === '/api/auth/register' && req.method === 'POST') {
       const { lastName = '', firstName = '', middleName = '', email = '', password = '', role = 'student', group = '', program = 'ku' } = body;
-      if (!lastName.trim() || !firstName.trim()) return bad(res, 400, 'Укажите фамилию и имя');
+      if (!String(lastName).trim() || !String(firstName).trim()) return bad(res, 400, 'Укажите фамилию и имя');
       if (!/^\S+@\S+\.\S+$/.test(email)) return bad(res, 400, 'Некорректный email');
-      if (String(password).length < 4) return bad(res, 400, 'Пароль — минимум 4 символа');
+      if (registerByIp.blocked(clientIp(req))) return bad(res, 429, 'Слишком много регистраций с этого адреса. Попробуйте позже');
+      if (String(password).length < sec.PASSWORD_MIN) return bad(res, 400, PASS_SHORT);
       if (!['student', 'teacher'].includes(role)) return bad(res, 400, 'Выберите роль');
       if (!PROGRAMS.includes(program)) return bad(res, 400, 'Выберите программу');
       if (role === 'student' && !String(group).trim()) return bad(res, 400, 'Укажите группу');
       const em = String(email).trim().toLowerCase();
       if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
       const fio = [lastName, firstName, middleName].filter(Boolean).map((s) => String(s).trim()).join(' ');
-      const salt = crypto.randomBytes(8).toString('hex');
       const user = {
         id: nid(role === 'teacher' ? 'tch' : 'std'),
         role, fio, firstName: String(firstName).trim(), email: em,
-        salt, passHash: hash(String(password), salt),
         group: role === 'student' ? String(group).trim() : '',
         program,
         createdAt: Date.now(),
       };
       if (body.deviceId) user.devices = [String(body.deviceId).slice(0, 64)];
+      await sec.setPassword(user, String(password));
+      // повторная проверка после await: два одновременных запроса с одним email не создадут дубль
+      if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
+      registerByIp.hit(clientIp(req));
       db.users.push(user); saveDB();
       const token = crypto.randomBytes(24).toString('hex');
       sessions.set(token, user);
@@ -397,8 +438,17 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/auth/login' && req.method === 'POST') {
       const { email = '', password = '' } = body;
-      const user = db.users.find((x) => x.email === String(email).trim().toLowerCase());
-      if (!user || user.passHash !== hash(String(password), user.salt)) return bad(res, 401, 'Неверный email или пароль');
+      const em = String(email).trim().toLowerCase(), ip = clientIp(req), emIp = em + '|' + ip;
+      const user = db.users.find((x) => x.email === em);
+      const guardEmail = !(user && user.demo);
+      if (loginByEmailIp.blocked(emIp) || loginByIp.blocked(ip) || (guardEmail && loginByEmail.blocked(em))) return bad(res, 429, TOO_MANY_LOGINS);
+      const passOk = await sec.checkPassword(user || NO_USER, String(password));
+      if (!user || !passOk) {
+        loginByEmailIp.hit(emIp); loginByIp.hit(ip); if (guardEmail) loginByEmail.hit(em);
+        return bad(res, 401, 'Неверный email или пароль');
+      }
+      // старый хеш (sha256) — переводим на scrypt, пока пароль известен
+      if (sec.needsRehash(user)) { await sec.setPassword(user, String(password)); saveDB(); }
       // Двухфакторная аутентификация: сначала пароль, затем код из приложения
       if (user.totp && user.totp.enabled) {
         if (!body.code) return ok(res, { need2fa: true });
@@ -406,6 +456,7 @@ const server = http.createServer(async (req, res) => {
         if (!totpOk(user.totp.secret, body.code)) { codeFail(user.id); return bad(res, 401, 'Неверный код подтверждения'); }
         codeFails.delete(user.id);
       }
+      loginByEmailIp.reset(emIp);
       // Оповещение о входе с нового устройства (идентификатор устройства хранится в браузере)
       const dev = String(body.deviceId || '').slice(0, 64);
       if (dev) {
@@ -521,11 +572,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/auth/password' && req.method === 'POST') {
       const cur = String(body.current || ''), nx = String(body.next || '');
-      if (u.passHash !== hash(cur, u.salt)) return bad(res, 400, 'Неверный текущий пароль');
-      if (nx.length < 4) return bad(res, 400, 'Пароль — минимум 4 символа');
+      const pe = await passError(u, cur);
+      if (pe) return bad(res, pe[0], pe[1] || 'Неверный текущий пароль');
+      if (nx.length < sec.PASSWORD_MIN) return bad(res, 400, PASS_SHORT);
       if (nx === cur) return bad(res, 400, 'Новый пароль совпадает с текущим');
-      u.salt = crypto.randomBytes(8).toString('hex');
-      u.passHash = hash(nx, u.salt);
+      await sec.setPassword(u, nx);
       u.passChangedAt = Date.now();
       // выходим на всех остальных устройствах
       const me = reqToken(req);
@@ -549,7 +600,8 @@ const server = http.createServer(async (req, res) => {
       return ok(res, { twoFactor: true });
     }
     if (p === '/api/2fa/disable' && req.method === 'POST') {
-      if (u.passHash !== hash(String(body.password || ''), u.salt)) return bad(res, 400, 'Неверный пароль');
+      const pe = await passError(u, String(body.password || ''));
+      if (pe) return bad(res, pe[0], pe[1] || 'Неверный пароль');
       delete u.totp; saveDB();
       return ok(res, { twoFactor: false });
     }
@@ -597,7 +649,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/account/delete' && req.method === 'POST') {
       if (u.demo) return bad(res, 400, 'Тестовый аккаунт удалить нельзя');
-      if (u.passHash !== hash(String(body.password || ''), u.salt)) return bad(res, 400, 'Неверный пароль');
+      const pe = await passError(u, String(body.password || ''));
+      if (pe) return bad(res, pe[0], pe[1] || 'Неверный пароль');
       for (const [tok, uid] of Object.entries(db.sessions || {})) if (uid === u.id) dropSession(tok);
       db.users = db.users.filter((x) => x.id !== u.id);
       if (u.role === 'student') db.grades = db.grades.filter((g) => g.studentId !== u.id);
@@ -701,14 +754,14 @@ const server = http.createServer(async (req, res) => {
 
     return bad(res, 404, 'Не найдено');
   } catch (e) {
-    console.error('[API]', e);
-    return bad(res, 500, e.message || 'Внутренняя ошибка');
+    console.error('[API]', req.method, p, e);
+    return bad(res, 500, 'Внутренняя ошибка'); // подробности — только в журнале сервера
   }
 });
 
 /* -------------------------------- Старт ---------------------------------- */
 
-loadDB();
+try { loadDB(); } catch (e) { console.error('[DB]', e.message); process.exit(1); }
 seedDemo();
 loadSessions();
 server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localhost'}:${PORT}`));

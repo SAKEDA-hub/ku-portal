@@ -364,7 +364,7 @@ function renderAuthForm() {
       <input class="inp" id="rFirst" placeholder="${t('Имя')}">
       <input class="inp" id="rMid" placeholder="${t('Отчество (необязательно)')}">
       <input class="inp" id="rEmail" type="email" placeholder="Email">
-      <input class="inp" id="rPass" type="password" placeholder="${t('Пароль (мин. 4 символа)')}">
+      <input class="inp" id="rPass" type="password" placeholder="${t('Пароль (мин. 8 символов)')}">
       <label class="lbl">${t('Роль')}</label>
       <div class="chips">
         <button class="chip ${authRole === 'student' ? 'on' : ''}" id="chStud">${t('Студент')}</button>
@@ -1028,7 +1028,7 @@ const formErr = (box, m) => { const e = box.querySelector('.err'); if (e) e.text
 function changePasswordDlg(done) {
   modal(t('Сменить пароль'), `
     <input class="inp" id="pwCur" type="password" autocomplete="current-password" placeholder="${t('Текущий пароль')}">
-    <input class="inp" id="pwNew" type="password" autocomplete="new-password" placeholder="${t('Новый пароль (мин. 4 символа)')}">
+    <input class="inp" id="pwNew" type="password" autocomplete="new-password" placeholder="${t('Новый пароль (мин. 8 символов)')}">
     <input class="inp" id="pwNew2" type="password" autocomplete="new-password" placeholder="${t('Повторите новый пароль')}">
     <div class="tx">${t('После смены пароля вход на других устройствах будет завершён.')}</div>
     <div class="err"></div>

@@ -4,7 +4,8 @@
   "private": true,
   "description": "Kozybayev University portal — студенческий/преподавательский портал с локальным AI-помощником",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/"
   },
   "engines": {
     "node": ">=18"
