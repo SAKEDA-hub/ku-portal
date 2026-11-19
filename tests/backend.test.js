@@ -3,53 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { spawn, execFileSync } = require('node:child_process');
-const { once } = require('node:events');
-const { createInterface } = require('node:readline');
 const { studentQuestion, scoreQuestion } = require('../exam-sync/grading');
 const { applyChanges } = require('../exam-sync/model');
 const { parseTrusted } = require('../server/http');
 const crypto = require('node:crypto');
 const root = path.join(__dirname, '..');
 
-function installation(t, demo = false, extraEnv = {}) {
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'ku-integration-'));
-  const env = { ...process.env, PORT: '0', IP: '127.0.0.1', KU_DATA_DIR: data, DEMO: demo ? '1' : '0', KU_TRUSTED_PROXIES: '', ...extraEnv };
-  let proc, base, output = '';
-  async function stop() {
-    if (proc && proc.exitCode === null && proc.signalCode === null) {
-      const exited = once(proc, 'exit'); proc.kill(); await exited;
-    }
-  }
-  t.after(async () => { await stop(); fs.rmSync(data, { recursive: true, force: true, maxRetries: 3 }); });
-  return {
-    data, stop, output: () => output,
-    cli: (...args) => execFileSync(process.execPath, ['scripts/access.js', ...args], { cwd: root, env, encoding: 'utf8' }).trim().split(/\r?\n/).pop(),
-    async start() {
-      proc = spawn(process.execPath, ['server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
-      let errors = ''; proc.stderr.on('data', line => { errors += line; });
-      output = ''; proc.stdout.on('data', chunk => { output += chunk; });
-      await new Promise((resolve, reject) => {
-        const lines = createInterface({ input: proc.stdout });
-        const timeout = setTimeout(() => reject(new Error('startup timed out: ' + errors)), 10_000);
-        proc.once('exit', () => { clearTimeout(timeout); reject(new Error('server exited: ' + errors)); });
-        lines.on('line', line => {
-          const match = /^KU Portal: (http:\/\/127\.0\.0\.1:\d+)$/.exec(line);
-          if (match) { base = match[1]; clearTimeout(timeout); resolve(); }
-        });
-      });
-    },
-    async request(route, { body, token, headers = {}, method } = {}) {
-      const response = await fetch(base + route, { method: method || (body === undefined ? 'GET' : 'POST'),
-        headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: 'Bearer ' + token } : {}), ...headers },
-        body: body === undefined ? undefined : JSON.stringify(body) });
-      const type = response.headers.get('content-type') || '';
-      return { status: response.status, headers: response.headers, value: type.includes('json') ? await response.json() : await response.text() };
-    },
-  };
-}
+const { installation } = require('./harness');
 
 const portalUser = { lastName: 'Example', firstName: 'Tester', email: 'person@example.test', group: 'G1', password: 'local-test-password' };
 
@@ -328,7 +289,7 @@ test('roles: teachers teach, club leads run only their clubs, managers run all c
   const day = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 10);
   const event = (token, clubId) => app.request('/api/clubs/event', { token, body: { clubId, title: 'Встреча', date: day, time: '10:00', endTime: '11:00' } });
   const teacher = await sign('teacher2@demo.kz');
-  assert.deepEqual(teacher.user.perms, { clubs: [], dorm: false, results: false });
+  assert.deepEqual(teacher.user.perms, { clubs: [], dorm: false, results: false, admin: false });
   assert.equal((await event(teacher.token, 'chess')).status, 403);
   assert.equal((await app.request('/api/clubs', { token: teacher.token })).value.canCreate, false);
   assert.equal((await app.request('/api/dorm', { token: teacher.token })).value.staff, false);
@@ -372,7 +333,7 @@ test('staff members can register and wait for operator approval', async t => {
   assert.match(user.id, /^stf_/);
   app.cli('approve', user.id); app.cli('role', user.id, 'manager');
   const login = await app.request('/api/auth/login', { body: staffUser });
-  assert.deepEqual(login.value.user.perms, { clubs: ['*'], dorm: true, results: true });
+  assert.deepEqual(login.value.user.perms, { clubs: ['*'], dorm: true, results: true, admin: false });
   assert.equal((await app.request('/api/auth/register', { body: { ...staffUser, email: 'x@example.test', role: 'admin' } })).status, 400);
 });
 
