@@ -5,16 +5,16 @@
  *   в браузере (kum_prefs:<id>): оформление («как в KU Portal» или своя тема и цвет), отправка по Enter,
  *   предпросмотр сообщений, звук, уведомления браузера; шаблоны быстрых ответов (kum_quick:<id>).
  */
-/* [id, значок, название, оттенок значка, подпись] */
+/* [id, значок, название, оттенок значка] */
 const SET_SECTIONS = [
-  ['profile', 'user', 'Профиль', 210, 'Имя, группа, часы консультаций'],
-  ['look', 'palette', 'Оформление', 280, 'Тема, цвет и предпросмотр'],
-  ['chats', 'chat', 'Чаты', 150, 'Отправка и список чатов'],
-  ['notif', 'bell', 'Уведомления', 0, 'Звук и уведомления браузера'],
-  ['privacy', 'shield', 'Конфиденциальность', 120, '«В сети» и отметки о прочтении'],
-  ['quick', 'quote', 'Быстрые ответы', 35, 'Шаблоны для чата со студентами'],
-  ['lang', 'globe', 'Язык', 190, ''],
-  ['account', 'logout', 'Аккаунт', 345, 'KU Portal и выход'],
+  ['profile', 'user', 'Профиль', 210],
+  ['look', 'palette', 'Оформление', 280],
+  ['chats', 'chat', 'Чаты', 150],
+  ['notif', 'bell', 'Уведомления', 0],
+  ['privacy', 'shield', 'Конфиденциальность', 120],
+  ['quick', 'quote', 'Быстрые ответы', 35],
+  ['lang', 'globe', 'Язык', 190],
+  ['account', 'logout', 'Аккаунт', 345],
 ];
 const SET_GROUPS = [['profile', 'look', 'chats'], ['notif', 'privacy', 'quick'], ['lang', 'account']];
 const MODES = [['light', 'Светлая', 'sun'], ['dark', 'Тёмная', 'moon'], ['system', 'Как в системе', 'device']];
@@ -48,9 +48,9 @@ function settingsMenuHTML() {
       <span class="me-t"><b>${esc(u.fio)}</b><small>${t(teacher() ? 'Преподаватель' : 'Студент')}${u.group ? ' · ' + esc(u.group) : ''}</small><small>${esc(u.email)}</small></span>
     </a>
     ${SET_GROUPS.map((g) => `<div class="set-grp">${g.filter((id) => ids.includes(id)).map((id) => {
-    const [, ic, l, h, sub] = SET_SECTIONS.find((x) => x[0] === id);
+    const [, ic, l, h] = SET_SECTIONS.find((x) => x[0] === id);
     return `<a class="set-item ${cur === id ? 'on' : ''}" href="#/settings/${id}"><span class="si-ic" style="--h:${h}">${svg(ic)}</span>
-        <span class="si-t"><b>${t(l)}</b>${sub ? `<small>${t(sub)}</small>` : ''}</span>${right(id)}<span class="si-chev">${svg('chev')}</span></a>`;
+        <span class="si-t"><b>${t(l)}</b></span>${right(id)}<span class="si-chev">${svg('chev')}</span></a>`;
   }).join('')}</div>`).join('')}
     <p class="set-foot">KU Message · Kozybayev University</p>`;
 }
@@ -60,7 +60,7 @@ function sectionBody(id) {
   const u = M.user, p = getPrefs(), s = M.srv.settings;
   const follow = p.followPortal && !!portalLook;
   const program = u.program === 'arizona' ? 'arizona' : 'ku';
-  const card = (body, title) => `<div class="set-card">${title ? `<div class="set-lbl">${t(title)}</div>` : ''}${body}</div>`;
+  const card = (body, title) => `${title ? `<div class="set-lbl">${t(title)}</div>` : ''}<div class="set-card">${body}</div>`; // заголовок секции — над карточкой, как в Telegram
   if (id === 'profile') return `
     <div class="prof-hero" style="--h:${hue(u.id)}"><span class="ava xxl" style="--h:${hue(u.id)}">${initials(u.fio)}</span>
       <b>${esc(u.fio)}</b><span>${t(teacher() ? 'Преподаватель' : 'Студент')}${u.group ? ' · ' + esc(u.group) : ''}</span></div>
@@ -99,7 +99,7 @@ function viewSettings(sec) {
   const main = document.getElementById('main');
   const old = main.querySelector('.set-page');
   const y = old && old.dataset.sec === id ? old.scrollTop : 0;
-  main.innerHTML = `<div class="pane"><header class="pane-h"><a class="ib only-m" href="#/settings">${svg('back')}</a><span class="si-ic lg" style="--h:${x[3]}">${svg(x[1])}</span>
+  main.innerHTML = `<div class="pane"><header class="pane-h"><a class="ib only-m" href="#/settings">${svg('back')}</a>
     <div class="pane-t"><b>${t(x[2])}</b><small>${t(id === 'privacy' ? 'Для всего KU Portal' : id === 'profile' ? 'Аккаунт KU Portal' : 'На этом устройстве')}</small></div></header>
     <div class="pane-b set-page" data-sec="${id}"><div class="set-col">${sectionBody(id)}</div></div></div>`;
   main.querySelector('.set-page').scrollTop = y;
