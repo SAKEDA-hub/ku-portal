@@ -21,31 +21,39 @@ const COLS = ['users', 'tests', 'rooms', 'attempts', 'writings', 'queue', 'grade
 const MAX_BODY = 5 * 1024 * 1024;
 const keyOf = (x) => x.id || [x.roomId, x.userId, x.testId || x.part || ''].join('|');
 
-function createExamSync({ base = '/exam-sync', dataFile, seedFile = path.join(__dirname, 'seed.json') } = {}) {
+/* Своё файловое хранилище (когда экзамен запущен без портала): испорченный файл без копий откладывается, старт с демо-данными */
+function fileStore(dataFile) {
+  const store = createStore({ file: dataFile, backupDir: path.join(path.dirname(dataFile), 'backups'), empty: () => null, space: 0 });
+  return {
+    load() {
+      try { return store.load(); } catch (e) {
+        console.error('[exam-sync]', e.message);
+        try { fs.renameSync(dataFile, `${dataFile}.corrupt-${Date.now()}`); } catch { }
+        return null;
+      }
+    },
+    save(data) { fs.mkdirSync(path.dirname(dataFile), { recursive: true }); store.save(data); },
+  };
+}
+
+/* store — { load() → данные | null, save(данные) }: от портала (server/storage.js — MySQL и файл) или свой файл */
+function createExamSync({ base = '/exam-sync', dataFile, seedFile = path.join(__dirname, 'seed.json'), store = fileStore(dataFile) } = {}) {
   const INDEX = path.join(__dirname, 'index.html');
   let rev = 0;
   const db = Object.fromEntries(COLS.map((c) => [c, new Map()]));
 
-  const store = createStore({ file: dataFile, backupDir: path.join(path.dirname(dataFile), 'backups'), empty: () => null, space: 0 });
   function apply(s) {
     rev = s.rev || 0;
     COLS.forEach((c) => (s.db && s.db[c] || []).forEach(([k, r]) => db[c].set(k, r)));
   }
   const seed = () => { try { apply(JSON.parse(fs.readFileSync(seedFile, 'utf8'))); } catch { /* пустая база — клиент создаст демо-данные сам */ } };
-  try { const s = store.load(); if (s) apply(s); else seed(); }
-  catch (e) {
-    // файл испорчен и копий нет: откладываем его (не затираем) и стартуем с демо-данными
-    console.error('[exam-sync]', e.message);
-    try { fs.renameSync(dataFile, `${dataFile}.corrupt-${Date.now()}`); } catch { }
-    seed();
-  }
+  const saved = store.load();
+  if (saved) apply(saved); else seed();
 
   const state = () => ({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].values()]])) });
   const save = () => {
-    try {
-      fs.mkdirSync(path.dirname(dataFile), { recursive: true });
-      store.save({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].entries()]])) });
-    } catch (e) { console.error('[exam-sync] save:', e.message); }
+    try { store.save({ rev, db: Object.fromEntries(COLS.map((c) => [c, [...db[c].entries()]])) }); }
+    catch (e) { console.error('[exam-sync] save:', e.message); }
   };
 
   const clients = new Set();

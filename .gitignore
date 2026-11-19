@@ -10,3 +10,6 @@ data/uploads/
 data/backups/
 data/*.corrupt-*
 data/*.tmp
+# доступ к MySQL и прочие секреты сервера (server.js читает .env) — не в git
+.env
+.deps-hash

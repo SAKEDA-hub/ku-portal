@@ -16,8 +16,14 @@ const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
 const DATA = path.join(ROOT, 'data');
-const DB_FILE = path.join(DATA, 'db.json');
-const { createStore } = require('./server/store');
+/* Настройки из .env рядом с server.js (не в git; переменные окружения сайта важнее) — например, доступ к MySQL */
+try {
+  for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
+    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+} catch { /* .env нет — только переменные окружения */ }
+const { openStorage } = require('./server/storage');
 const sec = require('./server/security');
 
 if (!fs.existsSync(DATA)) fs.mkdirSync(DATA, { recursive: true });
@@ -40,16 +46,12 @@ const VERSION = { commit: readCommit(), startedAt: new Date().toISOString() };
 
 /* ---------------------------------- DB ---------------------------------- */
 
-/* data/db.json — атомарная запись, ежедневные копии в data/backups/ (14 дней), восстановление из копии
-   вместо пустой базы, если файл испорчен (server/store.js) */
+/* База — server/storage.js: MySQL (если заданы MYSQL_URL или MYSQL_HOST/USER/PASSWORD/DATABASE) + data/db.json как
+   живая копия; без MySQL — только data/db.json (атомарная запись, ежедневные копии data/backups/, восстановление из копии) */
 let db = null;
-const store = createStore({
-  file: DB_FILE, backupDir: path.join(DATA, 'backups'),
-  empty: () => ({ users: [], subjects: [], schedule: [], grades: [], seq: {} }),
-  valid: (d) => !!d && typeof d === 'object' && Array.isArray(d.users), // иначе файл считается испорченным
-});
-function loadDB() { db = store.load(); }
-function saveDB() { store.save(db); }
+let storage = null;
+const emptyDB = () => ({ users: [], subjects: [], schedule: [], grades: [], seq: {} });
+function saveDB() { storage.portal.save(db); }
 function nid(prefix) {
   db.seq = db.seq || {};
   db.seq[prefix] = (db.seq[prefix] || 0) + 1;
@@ -327,7 +329,7 @@ function serveStatic(req, res, url) {
 
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
-const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json') });
+let examSync = null; // создаётся при старте, когда хранилище открыто (см. main)
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
@@ -390,7 +392,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // «Онлайн-экзамен» (exam-sync), встроенный в портал: /exam-sync/...
-  if (await examSync(req, res)) return;
+  if (examSync && await examSync(req, res)) return;
 
   if (!p.startsWith('/api/')) return serveStatic(req, res, url);
 
@@ -498,7 +500,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/version' && req.method === 'GET') {
-      return ok(res, VERSION);
+      return ok(res, Object.assign({ storage: storage.info() }, VERSION)); // storage.mode: mysql | json
     }
 
     if (p === '/api/demo' && req.method === 'GET') {
@@ -761,10 +763,33 @@ const server = http.createServer(async (req, res) => {
 
 /* -------------------------------- Старт ---------------------------------- */
 
-try { loadDB(); } catch (e) { console.error('[DB]', e.message); process.exit(1); }
-seedDemo();
-loadSessions();
-server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localhost'}:${PORT}`));
+async function main() {
+  try { storage = await openStorage({ dataDir: DATA, emptyPortal: emptyDB }); } catch (e) { console.error('[DB]', e.message); process.exit(1); }
+  db = storage.portal.load();
+  examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), store: storage.exam });
+  seedDemo();
+  loadSessions();
+  server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localhost'}:${PORT} · база: ${storage.mode}`));
+}
+main();
+
+/* Завершение: сохранить базу и дождаться записи в MySQL (не дольше SHUTDOWN_MS), затем выйти — хостинг запустит заново */
+const SHUTDOWN_MS = 8000;
+let stopping = false;
+async function shutdown(code, why) {
+  if (stopping) return;
+  stopping = true;
+  console.log('[server] завершение:', why);
+  try {
+    if (storage && db) saveDB();
+    if (storage) await Promise.race([storage.close(), new Promise((r) => setTimeout(r, SHUTDOWN_MS))]);
+  } catch (e) { console.error('[server] сохранение при завершении:', e.message); }
+  process.exit(code);
+}
+process.on('SIGTERM', () => shutdown(0, 'SIGTERM'));
+process.on('SIGINT', () => shutdown(0, 'SIGINT'));
+process.on('unhandledRejection', (e) => console.error('[server] необработанная ошибка (promise):', e));
+process.on('uncaughtException', (e) => { console.error('[server] критическая ошибка:', e); shutdown(1, 'uncaughtException'); });
 
 /* Перезапуск после обновления кода: deploy/alwaysdata-update.sh обновляет файл .restart рядом с server.js.
    Сервер сохраняет базу и завершается, хостинг (alwaysdata) запускает его заново уже с новым кодом.
@@ -772,7 +797,5 @@ server.listen(PORT, HOST, () => console.log(`KU Portal: http://${HOST || 'localh
 const RESTART_FILE = path.join(ROOT, '.restart');
 fs.watchFile(RESTART_FILE, { interval: 5000 }, (cur, prev) => {
   if (!cur.mtimeMs || cur.mtimeMs === prev.mtimeMs) return;
-  console.log('[deploy] найден .restart — перезапуск');
-  try { saveDB(); } catch (e) { console.error('[deploy] saveDB:', e.message); }
-  process.exit(0);
+  shutdown(0, 'найден .restart — перезапуск после обновления');
 }).unref();
