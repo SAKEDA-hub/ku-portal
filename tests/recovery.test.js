@@ -58,6 +58,9 @@ test('forgotten password: email with a one-time link, new password works, old se
   // не больше 3 писем в час на адрес
   for (let i = 0; i < 3; i++) await call('/api/auth/forgot', { body: { email: STUDENT.email } });
   assert.equal((await call('/api/auth/forgot', { body: { email: STUDENT.email } })).status, 429);
+  // повторные запросы в течение 10 минут не шлют новых писем и не отменяют свежую ссылку
+  await sleep(300);
+  assert.equal(mail.letters().length, 2);
   const auditDir = path.join(app.data, 'audit');
   const journal = fs.readFileSync(path.join(auditDir, fs.readdirSync(auditDir)[0]), 'utf8');
   assert.match(journal, /portal\.password\.recovered/);

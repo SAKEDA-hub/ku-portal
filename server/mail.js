@@ -45,6 +45,7 @@ function sendMail({ to, subject, text }) {
       clearTimeout(timer);
       if (code === 0) resolve(); else reject(new Error(`sendmail exit ${code}: ${stderr.trim().slice(0, 200)}`));
     });
+    child.stdin.on('error', () => {}); // sendmail завершился раньше — ошибку сообщит 'close'/'error', процесс не падает
     child.stdin.end(buildMessage({ to, subject, text }));
   });
 }

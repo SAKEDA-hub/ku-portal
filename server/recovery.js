@@ -4,11 +4,13 @@
  * <KU_PUBLIC_URL>/#/reset/<код> (действует 1 час, одноразовая); POST /api/auth/reset { token, password } — новый пароль.
  *   В базе хранится только sha256 кода (user.passReset = { hash, exp }); ответ на forgot одинаков для любого email,
  *   чтобы нельзя было узнать, кто зарегистрирован. Письма — только подтверждённым пользователям (с допуском).
- *   Ограничения: 3 письма в час на адрес, 10 запросов в час с IP, 20 попыток ввода кода в час с IP.
+ *   Ограничения: 3 запроса в час на адрес, 10 запросов в час с IP, 20 попыток ввода кода в час с IP; повторный запрос
+ *   в течение 10 минут не шлёт новое письмо (чужие запросы не «сбивают» только что полученную ссылку).
  */
 const crypto = require('crypto');
 
 const RESET_MS = 60 * 60 * 1000;
+const RESEND_MS = 10 * 60 * 1000; // повторный запрос в течение 10 минут не отменяет уже отправленную ссылку и не шлёт новое письмо
 const HOUR = 60 * 60 * 1000;
 const PUBLIC_URL = String(process.env.KU_PUBLIC_URL || 'https://ku-portal.alwaysdata.net').replace(/\/+$/, '');
 const digest = token => crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -35,16 +37,21 @@ function createRecovery({ getDB, saveDB, ok, bad, sec, audit, grantOf, clientIp,
     if (!mail.mailReady()) return bad(res, 503, 'Отправка писем на сервере не настроена. Обратитесь к администратору портала');
     if (perIp.blocked(ip) || perEmail.blocked(email)) return bad(res, 429, 'Слишком много запросов. Попробуйте через час');
     perIp.hit(ip); perEmail.hit(email);
+    // ответ — сразу и одинаковый; работа с базой и почтой — после ответа, чтобы по времени не узнать, есть ли такой email
+    ok(res, { sent: true });
+    setImmediate(() => issue(email));
+  }
+  function issue(email) {
     const user = getDB().users.find(x => x.email === email);
-    if (user && !user.demo && grantOf(user)) {
-      const token = crypto.randomBytes(24).toString('hex');
-      user.passReset = { hash: digest(token), exp: Date.now() + RESET_MS };
-      saveDB();
-      mail.sendMail({ to: user.email, subject: 'KU Portal: восстановление пароля', text: letter(user, `${PUBLIC_URL}/#/reset/${token}`) })
-        .then(() => audit('portal.password.forgot', user.id, user.id))
-        .catch(error => console.error('[mail] письмо восстановления не отправлено:', user.id, error.message));
-    }
-    return ok(res, { sent: true }); // одинаковый ответ — по нему не узнать, есть ли такой email
+    if (!user || user.demo || !grantOf(user)) return;
+    const now = Date.now();
+    if (user.passReset && user.passReset.exp > now && now - (user.passReset.at || 0) < RESEND_MS) return; // не сбиваем свежую ссылку
+    const token = crypto.randomBytes(24).toString('hex');
+    user.passReset = { hash: digest(token), exp: now + RESET_MS, at: now };
+    try { saveDB(); } catch { return; }
+    mail.sendMail({ to: user.email, subject: 'KU Portal: восстановление пароля', text: letter(user, `${PUBLIC_URL}/#/reset/${token}`) })
+      .then(() => audit('portal.password.forgot', user.id, user.id))
+      .catch(error => console.error('[mail] письмо восстановления не отправлено:', user.id, error.message));
   }
 
   async function reset(req, res, body) {
@@ -58,8 +65,9 @@ function createRecovery({ getDB, saveDB, ok, bad, sec, audit, grantOf, clientIp,
     const user = hash && getDB().users.find(x => x.passReset && x.passReset.exp > now && x.passReset.hash.length === hash.length &&
       crypto.timingSafeEqual(Buffer.from(x.passReset.hash), Buffer.from(hash)));
     if (!user || !grantOf(user)) { resetPerIp.hit(ip); return bad(res, 400, 'Ссылка недействительна или устарела. Запросите восстановление ещё раз'); }
+    delete user.passReset; // одноразовая: второй запрос с тем же кодом во время хеширования не пройдёт
     await sec.setPassword(user, password);
-    delete user.passReset; delete user.mustChangePassword; delete user.tempPasswordUntil;
+    delete user.mustChangePassword; delete user.tempPasswordUntil;
     user.passChangedAt = Date.now();
     dropUserSessions(user.id);
     saveDB();

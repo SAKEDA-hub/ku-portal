@@ -2,7 +2,9 @@
 /*
  * Голосование (/api/polls*): опросы создаёт администратор портала (право admin), голосуют подтверждённые пользователи.
  * Анонимно: в опросе хранятся только счётчики по вариантам и отпечатки sha256(соль опроса + ID) проголосовавших —
- * по базе нельзя узнать, кто за что голосовал, но второй голос не пройдёт. Изменить голос нельзя.
+ * по одной базе нельзя узнать, кто за что голосовал, но второй голос не пройдёт. Изменить голос нельзя.
+ * Ограничение: тот, у кого есть доступ к файлам базы, может проверить, голосовал ли конкретный человек, а сравнив
+ * две копии базы — сопоставить новый голос с вариантом в маленьком опросе. Тайного голосования это не заменяет.
  * Данные — db.polls: [{ id, q, opts, audience: 'all'|'students', groups, endsAt, closedAt, salt, counts, voters, createdBy, createdAt }].
  */
 const crypto = require('crypto');
@@ -43,8 +45,8 @@ function createPolls({ getDB, saveDB, nid, ok, bad, permsOf, audit }) {
       const poll = polls.find(x => x.id === body.id);
       if (!poll || !visible(poll, u)) return bad(res, 404, 'Опрос не найден');
       if (isClosed(poll)) return bad(res, 400, 'Голосование завершено');
-      const opt = Number(body.opt);
-      if (!Number.isInteger(opt) || opt < 0 || opt >= poll.opts.length) return bad(res, 400, 'Выберите вариант');
+      const opt = body.opt;
+      if (typeof opt !== 'number' || !Number.isInteger(opt) || opt < 0 || opt >= poll.opts.length) return bad(res, 400, 'Выберите вариант');
       const key = voterKey(poll, u.id);
       if (poll.voters[key]) return bad(res, 400, 'Вы уже проголосовали');
       poll.voters[key] = 1; poll.counts[opt] += 1;
