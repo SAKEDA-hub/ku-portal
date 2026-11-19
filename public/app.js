@@ -98,6 +98,22 @@ const PROGRAMS = {
   arizona: { id: 'arizona', name: 'University of Arizona', short: 'University of Arizona · международная программа' /* t() при выводе */, icon: 'cap', palette: 'arizona', examTheme: 'intl' },
 };
 const programOf = (u) => PROGRAMS[(u && u.program) || 'ku'] || PROGRAMS.ku;
+/* Роль и служебные права (назначает администратор): руководство клубами ('*' — все), общежитие */
+const permsOf = (u) => (u && u.perms) || { clubs: [], dorm: false };
+const leadsClubs = (u) => permsOf(u).clubs.length > 0;
+function roleLabel(u) {
+  if (u.role === 'teacher') return t('Преподаватель');
+  if (u.role === 'student') return t('Студент');
+  const p = permsOf(u);
+  return t(p.clubs.includes('*') ? 'Менеджер' : p.clubs.length ? 'Руководитель клуба' : p.dorm ? 'Администрация общежития' : 'Сотрудник');
+}
+/* Служебные плитки на главной: клубы — руководителям, общежитие — администрации (студентам — всегда) */
+function serviceTiles(u) {
+  const p = permsOf(u), out = [];
+  if (u.role === 'student' || p.clubs.length) out.push(['Клубы', 'ball', '#/clubs']);
+  if (u.role === 'student' || p.dorm) out.push(['Общежитие', 'building', '#/dorm']);
+  return out;
+}
 const PALETTES = {
   ku: { name: 'Kozybayev', color: '#05a4ba' },
   arizona: { name: 'Arizona', color: '#0C234B' },
@@ -292,7 +308,7 @@ function navHTML(active) {
     <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
     ${it('#/', 'home', 'home', 'Главная')}
     ${it('#/chats', 'message', 'kumsg', 'KU Message')}
-    ${it('#/exam', 'exam', 'clipboard', 'Экзамен')}
+    ${S.user.role === 'staff' ? '' : it('#/exam', 'exam', 'clipboard', 'Экзамен')}
     ${it('#/profile', 'profile', 'user', 'Кабинет')}
   </nav>`;
 }
@@ -367,7 +383,9 @@ function renderAuthForm() {
       <div class="chips">
         <button class="chip ${authRole === 'student' ? 'on' : ''}" id="chStud">${t('Студент')}</button>
         <button class="chip ${authRole === 'teacher' ? 'on' : ''}" id="chTeach">${t('Преподаватель')}</button>
+        <button class="chip ${authRole === 'staff' ? 'on' : ''}" id="chStaff">${t('Сотрудник')}</button>
       </div>
+      ${authRole === 'staff' ? `<label class="lbl">${t('Для менеджеров и руководителей клубов. Обязанности назначит администратор портала')}</label>` : ''}
       <label class="lbl">${t('Программа')}</label>
       <div class="chips">
         <button class="chip ${authProgram === 'ku' ? 'on' : ''}" id="chKU">Kozybayev University</button>
@@ -377,6 +395,7 @@ function renderAuthForm() {
       <button class="btn pri" id="rBtn">${t('Создать аккаунт')}</button>`;
     document.getElementById('chStud').onclick = () => { authRole = 'student'; renderAuthForm(); };
     document.getElementById('chTeach').onclick = () => { authRole = 'teacher'; renderAuthForm(); };
+    document.getElementById('chStaff').onclick = () => { authRole = 'staff'; renderAuthForm(); };
     // Выбор программы — без перерисовки формы, чтобы не стереть введённые поля
     const pickProgram = (pr) => {
       authProgram = pr;
@@ -473,6 +492,7 @@ const KU_SITE_URL = 'https://stikech.github.io/ku-frontend/ku.edu.kz/ru/'; // н
 async function viewHome() {
   stopPoll();
   if (S.user.role === 'teacher') return viewHomeT();
+  if (S.user.role === 'staff') return viewHomeS();
   app.innerHTML = `${headHTML()}<div id="pagebody" class="dash"><div class="load">${t('Загрузка…')}</div></div>${navHTML('home')}`;
   bindHead();
   try {
@@ -484,7 +504,7 @@ async function viewHome() {
     const srvs = [
       // «Экзамен» здесь не дублируем — он есть в главном меню
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
-      ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'],
+      ...serviceTiles(S.user),
       ['Голосование', 'mic', '#/voting'], // демо-сервис (public/services.js); «Сообщения» — в верхнем меню
     ];
 
@@ -552,7 +572,7 @@ async function viewHomeT() {
     const srvs = [
       // «Экзамен» — в главном меню и в карточке выше; «Мои предметы» вели туда же, что и «Оценки»
       ['Добавить занятие', 'plus', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'], ['Расписание', 'calendar', '#/schedule'],
-      ['Клубы', 'ball', '#/clubs'], ['Общежитие', 'building', '#/dorm'], // «Сообщения» — в верхнем меню
+      ...serviceTiles(S.user), // клубы и общежитие — только если администратор назначил; «Сообщения» — в верхнем меню
     ];
     document.getElementById('pagebody').innerHTML = `
       <div class="section-label">${t('Виджеты')}</div>
@@ -575,6 +595,26 @@ async function viewHomeT() {
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
   }
+}
+
+/* ============================ Главная (сотрудник: менеджер, руководитель клуба) ============================ */
+function viewHomeS() {
+  const tiles = serviceTiles(S.user);
+  app.innerHTML = `${headHTML()}<div id="pagebody" class="dash">
+      <div class="section-label">${t('Виджеты')}</div>
+      <div class="card scorecard wide">
+        <div>
+          <div class="stud-fio">${esc(S.user.fio)}</div>
+          <div class="stud-group">${esc(roleLabel(S.user))}</div>
+          <span class="pill">${t('Кабинет сотрудника')}</span>
+        </div>
+      </div>
+      <div class="section-label">${t('Сервисы')}</div>
+      ${tiles.length ? `<div class="srv-grid">${tiles.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}</div>`
+        : `<div class="card next-empty">${t('Администратор портала ещё не назначил вам обязанности. Когда назначит — здесь появятся клубы или общежитие.')}</div>`}
+    </div>${navHTML('home')}`;
+  bindHead();
+  document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
 }
 
 /* ============================ Расписание ============================ */
@@ -911,7 +951,7 @@ function paintProfile(section) {
           <div class="avatar">${esc(u.firstName.charAt(0).toUpperCase())}</div>
           <div class="pf-main">
             <div class="pf-fio">${esc(u.fio)}</div>
-            <div class="pf-sub">${u.role === 'teacher' ? t('Преподаватель') : t('Студент')}${u.group ? ' · ' + esc(u.group) : ''}</div>
+            <div class="pf-sub">${esc(roleLabel(u))}${u.group ? ' · ' + esc(u.group) : ''}</div>
             <div class="pf-sub pf-mail">${esc(u.email)}</div>
             <span class="pill pf-uni">${svg(pr.icon)}${esc(pr.name)}</span>
           </div>
@@ -1158,12 +1198,14 @@ function route() {
   const parts = h.split('/').filter(Boolean);
   switch (parts[0]) {
     case undefined: return viewHome();
-    case 'schedule': return viewSchedule();
-    case 'grades': return S.user.role === 'teacher' ? viewTGrades() : viewGrades();
-    case 'rating': return viewRating();
-    case 'exam': return viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
+    case 'schedule': return S.user.role === 'staff' ? viewHome() : viewSchedule();
+    case 'grades': return S.user.role === 'teacher' ? viewTGrades() : S.user.role === 'student' ? viewGrades() : viewHome();
+    case 'rating': return S.user.role === 'student' ? viewRating() : viewHome();
+    case 'exam': return S.user.role === 'staff' ? viewHome() : viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
     case 'chats': case 'chat': return viewMessage(); // KU Message — отдельное приложение (public/message-launch.js, ku-message/)
-    case 'clubs': return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
+    case 'clubs': // клубы — студентам и руководителям клубов
+      if (S.user.role !== 'student' && !leadsClubs(S.user)) return viewHome();
+      return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
       if (parts[1] === 'schedule') return viewTSchedule();
@@ -1171,7 +1213,7 @@ function route() {
       return viewHome(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
-    case 'dorm': return viewDorm(); // public/campus.js
+    case 'dorm': return S.user.role === 'student' || permsOf(S.user).dorm ? viewDorm() : viewHome(); // public/campus.js
     case 'voting': return viewVoting(); // демо-сервис (public/services.js)
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();

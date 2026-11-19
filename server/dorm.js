@@ -1,6 +1,6 @@
 /*
  * Общежитие (API под /api/dorm*): новости общежития и обращения студентов (ремонт, жалоба — можно анонимно, запрос)
- * со статусами и ответом администрации. Роль администрации пока выполняет преподаватель. Данные — db.dorm.
+ * со статусами и ответом администрации. Администрация — пользователи с правом dorm (назначает оператор). Данные — db.dorm.
  * Интерфейс — public/campus.js.
  */
 const DORM_STATUSES = ['new', 'work', 'done', 'rejected'];
@@ -18,7 +18,8 @@ function dormNewsSeed(now) {
   ];
 }
 
-function createDorm({ getDB, saveDB, nid, ok, bad, pushInbox }) {
+function createDorm({ getDB, saveDB, nid, ok, bad, pushInbox, permsOf }) {
+  const isStaff = (u) => permsOf(u).dorm;
   const userById = (id) => getDB().users.find((x) => x.id === id);
   function store() {
     const db = getDB();
@@ -27,17 +28,18 @@ function createDorm({ getDB, saveDB, nid, ok, bad, pushInbox }) {
   }
   function pubRequest(r, u) {
     const out = { id: r.id, kind: r.kind, category: r.category, room: r.room, text: r.text, status: r.status, reply: r.reply || '', at: r.at, updated: r.updated || null, anon: !!r.anon, mine: r.by === u.id };
-    if (u.role === 'teacher') out.author = r.anon ? null : (userById(r.by) || {}).fio || '—';
+    if (isStaff(u)) out.author = r.anon ? null : (userById(r.by) || {}).fio || '—';
     return out;
   }
   async function dorm(p, req, res, u, body) {
     const db = store();
-    const staff = u.role === 'teacher';
+    const staff = isStaff(u);
     if (p === '/api/dorm' && req.method === 'GET') {
       const reqs = (staff ? db.dorm.requests : db.dorm.requests.filter((r) => r.by === u.id)).slice().sort((a, b) => b.at - a.at);
       return ok(res, { news: db.dorm.news.slice().sort((a, b) => b.at - a.at), requests: reqs.map((r) => pubRequest(r, u)), staff });
     }
     if (p === '/api/dorm/request' && req.method === 'POST') {
+      if (u.role !== 'student') return bad(res, 403, 'Обращения подают студенты');
       if (!DORM_KINDS.includes(body.kind)) return bad(res, 400, 'Выберите тип обращения');
       const text = clip(body.text, 1000);
       if (text.length < 5) return bad(res, 400, 'Опишите проблему подробнее');

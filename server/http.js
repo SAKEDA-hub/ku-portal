@@ -24,7 +24,9 @@ const fromProxy = req => trusted(normalize(req.socket.remoteAddress));
 function clientIp(req) {
   const peer = normalize(req.socket.remoteAddress);
   if (!fromProxy(req)) return peer;
-  const addr = normalize(String(req.headers['x-forwarded-for'] || '').split(',').pop().trim());
+  // alwaysdata передаёт адрес посетителя в X-Real-IP, другие прокси — в X-Forwarded-For (берётся крайний справа)
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').pop().trim();
+  const addr = normalize(forwarded || String(req.headers['x-real-ip'] || '').trim());
   return isIP(addr) ? addr : peer;
 }
 /* Диагностика для настройки KU_TRUSTED_PROXIES: один раз за запуск пишет в журнал адрес соединения

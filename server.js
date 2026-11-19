@@ -16,7 +16,7 @@ const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
 const SCHOOL_DIR = path.join(ROOT, 'school'); // закрытый кабинет результатов учебной базы (/school/)
-const { dataDir: DATA, grantOf, groupsOf, setGroups, demo: DEMO_ON } = require('./server/access');
+const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, demo: DEMO_ON } = require('./server/access');
 const { clientIp, readJson, HttpError, sendStatic } = require('./server/http');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
@@ -231,6 +231,9 @@ function deviceLabel(ua) {
 }
 /* Программа (университет) пользователя — от неё зависят цвета портала и онлайн-экзамена */
 const PROGRAMS = ['ku', 'arizona'];
+/* Роли при регистрации: студент, преподаватель, сотрудник (менеджер, руководитель клуба — права назначает оператор) */
+const ROLES = ['student', 'teacher', 'staff'];
+const ROLE_PREFIX = { student: 'std', teacher: 'tch', staff: 'stf' };
 const programOf = (u) => (u && PROGRAMS.includes(u.program) ? u.program : 'ku');
 /* Направление пользователя (показывается в профиле и на экране входа):
    студент — по префиксу группы (ИСУ → it, БТ → bio), преподаватель — по кафедре (dept). */
@@ -243,7 +246,7 @@ function trackOf(u) {
 }
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u), track: trackOf(u) };
+  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u), track: trackOf(u), perms: permsOf(u) };
 }
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -354,7 +357,7 @@ function serveStatic(req, res, url) {
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON });
 const school = require('./server/school').createSchool({ dataDir: DATA });
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
-const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, markDirty: () => { dbDirty = true; } };
+const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
 const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx)];
 const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
@@ -432,7 +435,7 @@ async function handleRequest(req, res) {
       if (!/^\S+@\S+\.\S+$/.test(email)) return bad(res, 400, 'Некорректный email');
       if (registerByIp.blocked(clientIp(req))) return bad(res, 429, 'Слишком много регистраций с этого адреса. Попробуйте позже');
       if (String(password).length < sec.PASSWORD_MIN) return bad(res, 400, PASS_SHORT);
-      if (!['student', 'teacher'].includes(role)) return bad(res, 400, 'Выберите роль');
+      if (!ROLES.includes(role)) return bad(res, 400, 'Выберите роль');
       if (!PROGRAMS.includes(program)) return bad(res, 400, 'Выберите программу');
       if (role === 'student' && !String(group).trim()) return bad(res, 400, 'Укажите группу');
       const em = String(email).trim().toLowerCase();
@@ -440,7 +443,7 @@ async function handleRequest(req, res) {
       registerByIp.hit(clientIp(req));
       const fio = [lastName, firstName, middleName].filter(Boolean).map((s) => String(s).trim()).join(' ');
       const user = {
-        id: nid(role === 'teacher' ? 'tch' : 'std'),
+        id: nid(ROLE_PREFIX[role]),
         role, fio, firstName: String(firstName).trim(), email: em,
         group: role === 'student' ? String(group).trim() : '',
         program,
