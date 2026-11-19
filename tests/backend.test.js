@@ -17,7 +17,7 @@ const root = path.join(__dirname, '..');
 function installation(t, demo = false, extraEnv = {}) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'ku-integration-'));
   const env = { ...process.env, PORT: '0', IP: '127.0.0.1', KU_DATA_DIR: data, DEMO: demo ? '1' : '0', KU_TRUSTED_PROXIES: '', ...extraEnv };
-  let proc, base;
+  let proc, base, output = '';
   async function stop() {
     if (proc && proc.exitCode === null && proc.signalCode === null) {
       const exited = once(proc, 'exit'); proc.kill(); await exited;
@@ -25,11 +25,12 @@ function installation(t, demo = false, extraEnv = {}) {
   }
   t.after(async () => { await stop(); fs.rmSync(data, { recursive: true, force: true, maxRetries: 3 }); });
   return {
-    data, stop,
+    data, stop, output: () => output,
     cli: (...args) => execFileSync(process.execPath, ['scripts/access.js', ...args], { cwd: root, env, encoding: 'utf8' }).trim().split(/\r?\n/).pop(),
     async start() {
       proc = spawn(process.execPath, ['server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
       let errors = ''; proc.stderr.on('data', line => { errors += line; });
+      output = ''; proc.stdout.on('data', chunk => { output += chunk; });
       await new Promise((resolve, reject) => {
         const lines = createInterface({ input: proc.stdout });
         const timeout = setTimeout(() => reject(new Error('startup timed out: ' + errors)), 10_000);
@@ -229,6 +230,12 @@ test('trusted proxies accept single addresses and CIDR ranges and reject malform
 test('behind a trusted proxy limits and sessions use the visitor address and HSTS is sent', async t => {
   const app = installation(t, false, { KU_TRUSTED_PROXIES: '127.0.0.0/8' }); await app.start();
   const call = app.request;
+  await call('/api/version', { headers: { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-proto': 'https' } });
+  await call('/api/version', { headers: { 'x-forwarded-for': '203.0.113.10' } });
+  const report = app.output().split('\n').filter(line => line.startsWith('[proxy] '));
+  assert.equal(report.length, 1); // один раз за запуск
+  assert.deepEqual(JSON.parse(report[0].slice(8)), { peer: '127.0.0.1', trusted: true, forwardedProto: 'https', forwarded: false, realIp: false });
+  assert.ok(!report[0].includes('203.0.113'));
   assert.equal((await call('/api/auth/register', { body: { ...portalUser, role: 'student' } })).status, 202);
   app.cli('approve', JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0].id);
   const headers = { 'x-forwarded-for': '198.51.100.1, 192.0.2.3', 'x-forwarded-proto': 'https' };
