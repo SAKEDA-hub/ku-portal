@@ -3,8 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { createStore } = require('../server/store');
-const { readJson, clientIp, HttpError } = require('../server/http');
+const { createStore, writeJsonAtomic } = require('../server/store');
+const { readJson, clientIp, HttpError, sendStatic } = require('../server/http');
 const { createLimiter, checkPassword, setPassword, setPasswordSync, PASSWORD_MIN, htmlPolicy } = require('../server/security');
 const { collections, view, publicUser, startTest, submitTest, submitWriting, applyChanges, validId } = require('./model');
 
@@ -27,7 +27,23 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
   const snapshot = store.load();
   let rev = snapshot.rev;
   let db = Object.fromEntries(collections.map(c => [c, new Map(snapshot.db[c])]));
-  const sessions = new Map();
+  /* Сеансы переживают перезапуск сервера (обновление во время экзамена не выкидывает студентов):
+     в exam-sessions.json лежат только sha256 токена и отпечаток хеша пароля, сами токены не сохраняются */
+  const sessionsFile = path.join(directory, 'exam-sessions.json');
+  const digest = raw => crypto.createHash('sha256').update(raw).digest('hex');
+  const fingerprint = passHash => passHash ? digest('pass:' + passHash).slice(0, 32) : '';
+  const sessions = new Map(); // sha256(токен) → { uid, hash, gradingUntil, expires }
+  try {
+    for (const [key, s] of Object.entries(JSON.parse(fs.readFileSync(sessionsFile, 'utf8')))) {
+      if (/^[a-f0-9]{64}$/.test(key) && s && typeof s.uid === 'string' && typeof s.hash === 'string' &&
+          Number.isFinite(s.expires) && s.expires > Date.now()) sessions.set(key, { uid: s.uid, hash: s.hash, gradingUntil: 0, expires: s.expires });
+    }
+  } catch (error) { if (error.code !== 'ENOENT') console.error('[exam-sync] сеансы не загружены:', error.message); }
+  function saveSessions() {
+    try {
+      writeJsonAtomic(sessionsFile, Object.fromEntries([...sessions].map(([key, s]) => [key, { uid: s.uid, hash: s.hash, expires: s.expires }])));
+    } catch (error) { console.error('[exam-sync] сеансы не сохранены:', error.code || error.message); }
+  }
   const streams = new Map();
   const loginLimit = createLimiter({ max: 50, windowMs: 15 * 60_000 });
   const accountLimit = createLimiter({ max: 10, windowMs: 15 * 60_000 });
@@ -80,13 +96,14 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
   function sessionFor(token) {
     const s = sessions.get(token);
     if (!s) return null;
-    if (s.expires <= Date.now() || db.users.get(s.uid)?.passHash !== s.hash) {
-      sessions.delete(token); return null;
+    if (s.expires <= Date.now() || fingerprint(db.users.get(s.uid)?.passHash) !== s.hash) {
+      sessions.delete(token); saveSessions(); return null;
     }
     return s;
   }
   function invalidate(uid, except) {
     for (const [token, session] of sessions) if (session.uid === uid && token !== except) sessions.delete(token);
+    saveSessions();
   }
   setInterval(() => {
     for (const token of sessions.keys()) sessionFor(token);
@@ -126,12 +143,11 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
       res.writeHead(301, { Location: base + '/' + url.search }); res.end(); return true;
     }
     if (['GET', 'HEAD'].includes(req.method) && ['/', '/index.html'].includes(route)) {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Content-Security-Policy', policy);
-      res.end(req.method === 'HEAD' ? undefined : index); return true;
+      sendStatic(req, res, 'exam-sync/index.html', index, { 'Content-Type': 'text/html; charset=utf-8' }); return true;
     }
     if (route === '/client.js' && req.method === 'GET') {
-      res.setHeader('Content-Type', 'text/javascript; charset=utf-8'); res.end(fs.readFileSync(path.join(__dirname, 'client.js'))); return true;
+      sendStatic(req, res, 'exam-sync/client.js', fs.readFileSync(path.join(__dirname, 'client.js')), { 'Content-Type': 'text/javascript; charset=utf-8' }); return true;
     }
     if (route === '/api/info' && req.method === 'GET') return json(res, { demo });
     if (route === '/api/login' && req.method === 'POST') {
@@ -145,11 +161,12 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
       if (!ok || !hash || db.users.get(user.id)?.passHash !== hash) throw new HttpError(401, 'Неверный логин или пароль');
       releaseIp(); releaseAccount();
       const token = crypto.randomBytes(32).toString('hex');
-      const session = { uid: user.id, hash, gradingUntil: 0, expires: Date.now() + 12 * 3600_000 };
-      sessions.set(token, session);
+      const session = { uid: user.id, hash: fingerprint(hash), gradingUntil: 0, expires: Date.now() + 12 * 3600_000 };
+      sessions.set(digest(token), session); saveSessions();
       return json(res, { token, ...current(session) });
     }
-    const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
+    const raw = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
+    const token = raw && digest(raw); // дальше сеанс ищется по отпечатку токена
     const s = requireSession(token);
     const user = db.users.get(s.uid);
     if (route === '/api/state' && req.method === 'GET') {
@@ -166,7 +183,7 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
     const limit = { '/api/sync': 5 * 1024 * 1024, '/api/attempt': 1_000_000, '/api/writing': 500_000 };
     const body = await readJson(req, limit[route] || 8192);
     requireSession(token);
-    if (route === '/api/logout') { sessions.delete(token); return json(res, { ok: true }); }
+    if (route === '/api/logout') { sessions.delete(token); saveSessions(); return json(res, { ok: true }); }
     if (route === '/api/grade-lock') { s.gradingUntil = 0; return json(res, { gradingUntil: 0 }); }
     if (route === '/api/password' || route === '/api/grade-unlock') {
       await requirePassword(user, body.password); requireSession(token);
@@ -177,8 +194,8 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
       if (typeof body.next !== 'string' || body.next.length < PASSWORD_MIN || body.next.length > 256) throw new HttpError(400, 'Пароль должен содержать от 8 до 256 символов');
       const changed = { ...user }; await setPassword(changed, body.next); requireSession(token);
       const next = nextDb(); next.users.set(user.id, changed); persist(next);
-      s.hash = changed.passHash; s.gradingUntil = 0; invalidate(user.id, token);
-      sessions.set(token, s);
+      s.hash = fingerprint(changed.passHash); s.gradingUntil = 0;
+      sessions.set(token, s); invalidate(user.id, token);
       audit('exam.password', user.id, user.id);
       return json(res, { ok: true });
     }

@@ -4,7 +4,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { promisify } = require('util');
 const { createStore } = require('./store');
+const { clientIp, readJson, HttpError } = require('./http');
+const { createLimiter } = require('./security');
+
+const scrypt = promisify(crypto.scrypt);
 
 const SCRYPT = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const TOKEN_TTL = 8 * 60 * 60 * 1000;
@@ -22,7 +27,12 @@ function createSchool({ dataDir }) {
   });
   let db = store.load();
   const sessions = new Map();
-  const loginTries = new Map();
+  // Ограничения входа: пара логин + IP (чужой человек не запирает владельца), общий по IP и по логину — выше
+  const LIMIT_MS = 15 * 60 * 1000;
+  const loginByUserIp = createLimiter({ max: 5, windowMs: LIMIT_MS });
+  const loginByUser = createLimiter({ max: 40, windowMs: LIMIT_MS });
+  const loginByIp = createLimiter({ max: 50, windowMs: LIMIT_MS });
+  const dummy = { salt: crypto.randomBytes(16).toString('hex'), passHash: '00'.repeat(64) };
   const json = (res, body, status = 200) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(body));
@@ -36,44 +46,37 @@ function createSchool({ dataDir }) {
     s.exp = Date.now() + TOKEN_TTL;
     return db.users.find(u => u.id === s.uid) || null;
   };
-  const readBody = async req => {
-    let s = '';
-    for await (const chunk of req) {
-      s += chunk;
-      if (s.length > MAX_DOCX * 1.5 + 100_000) throw new Error('too_large');
-    }
-    try { return s ? JSON.parse(s) : {}; } catch { throw new Error('bad_json'); }
-  };
+  const BODY_LIMIT = { '/api/school/test-file': Math.ceil(MAX_DOCX * 1.5) + 100_000 };
   const reject = (res, status, error) => { json(res, { error }, status); return true; };
   const teacher = (u, res) => u.role === 'teacher' ? false : reject(res, 403, 'Только преподаватель может выполнять это действие');
-  function failKey(req, username) { return `${req.socket.remoteAddress || ''}|${String(username).toLowerCase().slice(0, 100)}`; }
+  async function passwordOk(user, password) {
+    const target = user && user.passAlgo === 'scrypt' && user.salt && user.passHash ? user : dummy;
+    const got = await scrypt(String(password).slice(0, 256), target.salt, 64, SCRYPT);
+    const want = Buffer.from(target.passHash, 'hex');
+    return target === user && got.length === want.length && crypto.timingSafeEqual(got, want);
+  }
 
   async function handle(req, res, url) {
     const p = url.pathname;
     if (!p.startsWith('/api/school/')) return false;
     let body = {};
     if (req.method === 'POST') {
-      try { body = await readBody(req); } catch (e) { return reject(res, e.message === 'too_large' ? 413 : 400, e.message === 'too_large' ? 'Слишком большой запрос' : 'Некорректный JSON'); }
+      try { body = await readJson(req, BODY_LIMIT[p] || 1e6); } catch (e) {
+        if (!(e instanceof HttpError)) throw e;
+        if (e.status === 413) res.setHeader('Connection', 'close');
+        return reject(res, e.status, e.status === 413 ? 'Слишком большой запрос' : 'Некорректный JSON');
+      }
     }
     if (p === '/api/school/login' && req.method === 'POST') {
-      const username = String(body.username || '').trim();
-      const key = failKey(req, username), attempt = loginTries.get(key) || { n: 0, until: 0 };
-      if (attempt.until > Date.now()) return reject(res, 429, 'Слишком много попыток. Попробуйте через 15 минут.');
+      const username = String(body.username || '').trim().slice(0, 100);
+      const ip = clientIp(req), name = username.toLowerCase(), pair = name + '|' + ip;
+      const tooMany = () => reject(res, 429, 'Слишком много попыток. Попробуйте через 15 минут.');
+      if (loginByUserIp.blocked(pair) || loginByUser.blocked(name) || loginByIp.blocked(ip)) return tooMany();
+      const releasePair = loginByUserIp.reserve(pair), releaseUser = loginByUser.reserve(name), releaseIp = loginByIp.reserve(ip);
+      if (!releasePair || !releaseUser || !releaseIp) return tooMany();
       const user = db.users.find(u => u.username === username);
-      let ok = false;
-      if (user && user.passAlgo === 'scrypt' && user.salt && user.passHash) {
-        const got = crypto.scryptSync(String(body.password || ''), user.salt, 64, SCRYPT).toString('hex');
-        const a = Buffer.from(got, 'hex'), b = Buffer.from(user.passHash, 'hex');
-        ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-      }
-      if (!ok) {
-        attempt.n++;
-        if (attempt.n >= 5) { attempt.n = 0; attempt.until = Date.now() + 15 * 60 * 1000; }
-        loginTries.set(key, attempt);
-        if (loginTries.size > 5000) loginTries.delete(loginTries.keys().next().value);
-        return reject(res, 401, 'Неверный логин или пароль');
-      }
-      loginTries.delete(key);
+      if (!await passwordOk(user, body.password || '')) return reject(res, 401, 'Неверный логин или пароль');
+      releasePair(); releaseUser(); releaseIp();
       const token = crypto.randomBytes(32).toString('hex');
       sessions.set(token, { uid: user.id, exp: Date.now() + TOKEN_TTL });
       return json(res, { token, user: safeUser(user) });

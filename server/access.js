@@ -16,12 +16,14 @@ for (const folder of ['public', 'ku-message', 'exam-sync']) {
 const dataDir = demo ? path.join(dataRoot, 'demo') : dataRoot;
 const accessDir = path.join(dataDir, 'access');
 
-function grantFile(user) {
-  const digest = crypto.createHash('sha256').update(JSON.stringify([
+function userDigest(user) {
+  return crypto.createHash('sha256').update(JSON.stringify([
     user.id, user.email, user.role, user.group || '', user.createdAt || 0,
   ])).digest('hex');
-  return path.join(accessDir, digest + '.json');
 }
+const grantFile = user => path.join(accessDir, userDigest(user) + '.json');
+// ключ — только ID (ID не переиспользуются), чтобы закрепления не терялись при изменении профиля
+const groupsFile = user => path.join(accessDir, 'groups-' + crypto.createHash('sha256').update(String(user.id)).digest('hex') + '.json');
 
 function grantOf(user) {
   if (demo) return 'demo';
@@ -45,4 +47,30 @@ function revoke(user) {
   fs.rmSync(grantFile(user), { force: true });
 }
 
-module.exports = { demo, dataDir, grantOf, approve, revoke };
+/* Группы преподавателя назначает оператор (node scripts/access.js groups <ID> "<группы>").
+   null — назначений ещё не было (сервер при запуске переносит группы из текущего расписания). */
+const GROUP_MAX = 100;
+function normalizeGroups(list) {
+  return [...new Set(list.map(g => String(g).trim()).filter(g => g && g.length <= GROUP_MAX))];
+}
+function groupsOf(user) {
+  let text;
+  try { text = fs.readFileSync(groupsFile(user), 'utf8'); } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    console.error('[access] группы преподавателя не прочитаны:', user.id, error.code);
+    return [];
+  }
+  try {
+    const groups = JSON.parse(text).groups;
+    return Array.isArray(groups) ? normalizeGroups(groups) : [];
+  } catch {
+    console.error('[access] файл групп повреждён, доступ к группам закрыт:', user.id);
+    return [];
+  }
+}
+function setGroups(user, groups) {
+  fs.mkdirSync(accessDir, { recursive: true, mode: 0o700 });
+  writeJsonAtomic(groupsFile(user), { groups: normalizeGroups(groups) });
+}
+
+module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups };
