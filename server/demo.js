@@ -3,8 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 /*
- * Бета-аккаунты портала: 3 преподавателя (языки, IT, биотехнологии) и 2 студента (ИСУ — IT, БТ — биотехнологии),
- * их занятия и оценки. seedDemo() идемпотентно создаёт и дополняет их и в уже существующей базе. Включить в отдельном каталоге: DEMO=1.
+ * Бета-аккаунты портала: 3 преподавателя (языки, IT, биотехнологии), 2 студента (ИСУ — IT, БТ — биотехнологии),
+ * менеджер (все клубы и общежитие) и руководитель клубов, их занятия и оценки. seedDemo() идемпотентно создаёт и дополняет их и в уже существующей базе. Включить в отдельном каталоге: DEMO=1.
  */
 function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline, dataDir }) {
   const DEMO_ON = require('./access').demo;
@@ -18,6 +18,8 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline,
     { role: 'teacher', email: 'teacher3@demo.kz', lastName: 'Жумабекова', firstName: 'Динара', middleName: 'Ерлановна', dept: 'bio' },
     { role: 'student', email: 'student@demo.kz', lastName: 'Иванов', firstName: 'Данияр', middleName: '', group: DEMO_GROUP },
     { role: 'student', email: 'student2@demo.kz', lastName: 'Каримов', firstName: 'Алихан', middleName: '', group: BT_GROUP },
+    { role: 'staff', email: 'manager@demo.kz', lastName: 'Омарова', firstName: 'Сауле', middleName: 'Кайратовна', perms: { clubs: ['*'], dorm: true } },
+    { role: 'staff', email: 'clubs@demo.kz', lastName: 'Нурланов', firstName: 'Арман', middleName: 'Бекович', perms: { clubs: ['volunteer', 'football'] } },
   ];
   /* Занятия бета-преподавателей: [email, дисциплина, тип, группа, день, начало, конец, аудитория] */
   const DEMO_LESSONS = [
@@ -37,7 +39,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline,
   const fioOf = (a) => [a.lastName, a.firstName, a.middleName].filter(Boolean).join(' ');
   function demoUser(a) {
     const u = {
-      id: nid(a.role === 'teacher' ? 'tch' : 'std'), role: a.role, fio: fioOf(a), firstName: a.firstName, email: a.email,
+      id: nid({ teacher: 'tch', staff: 'stf' }[a.role] || 'std'), role: a.role, fio: fioOf(a), firstName: a.firstName, email: a.email,
       group: a.group || '', program: a.program || 'ku', dept: a.dept, createdAt: Date.now(), demo: true,
     };
     return u;
@@ -75,6 +77,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline,
         changed = true;
       }
       users[a.email] = u;
+      if (u.demo) require('./access').setPerms(u, a.perms || {});
     }
     credentialsWrite(credentials);
     const subOf = (email, disc) => subjectForDiscipline(users[email], disc);

@@ -34,6 +34,7 @@ function permText() {
   if (Notification.permission === 'denied') return 'Запрещено в настройках браузера';
   return 'Когда вкладка свёрнута · нужно разрешение браузера';
 }
+const roleName = () => t(teacher() ? 'Преподаватель' : staff() ? 'Сотрудник' : 'Студент');
 const setSections = () => SET_SECTIONS.filter(([id]) => id !== 'quick' || teacher());
 const curSection = () => { const m = /^#\/settings\/(\w+)$/.exec(location.hash); return m ? m[1] : ''; };
 
@@ -45,7 +46,7 @@ function settingsMenuHTML() {
   const right = (id) => (id === 'lang' ? `<small>${esc(LANGS[getLang()])}</small>` : id === 'look' ? `<small>${t(lookNow)}</small>` : '');
   return `<a class="me-card" href="#/settings/profile" style="--h:${hue(u.id)}">
       <span class="ava xl" style="--h:${hue(u.id)}">${initials(u.fio)}</span>
-      <span class="me-t"><b>${esc(u.fio)}</b><small>${t(teacher() ? 'Преподаватель' : 'Студент')}${u.group ? ' · ' + esc(u.group) : ''}</small><small>${esc(u.email)}</small></span>
+      <span class="me-t"><b>${esc(u.fio)}</b><small>${roleName()}${u.group ? ' · ' + esc(u.group) : ''}</small><small>${esc(u.email)}</small></span>
     </a>
     ${SET_GROUPS.map((g) => `<div class="set-grp">${g.filter((id) => ids.includes(id)).map((id) => {
     const [, ic, l, h] = SET_SECTIONS.find((x) => x[0] === id);
@@ -63,8 +64,8 @@ function sectionBody(id) {
   const card = (body, title) => `${title ? `<div class="set-lbl">${t(title)}</div>` : ''}<div class="set-card">${body}</div>`; // заголовок секции — над карточкой, как в Telegram
   if (id === 'profile') return `
     <div class="prof-hero" style="--h:${hue(u.id)}"><span class="ava xxl" style="--h:${hue(u.id)}">${initials(u.fio)}</span>
-      <b>${esc(u.fio)}</b><span>${t(teacher() ? 'Преподаватель' : 'Студент')}${u.group ? ' · ' + esc(u.group) : ''}</span></div>
-    ${card(`<div class="kv"><span>Email</span><b>${esc(u.email)}</b></div><div class="kv"><span>${t('Роль')}</span><b>${t(teacher() ? 'Преподаватель' : 'Студент')}</b></div>${u.group ? `<div class="kv"><span>${t('Группа')}</span><b>${esc(u.group)}</b></div>` : ''}`)}
+      <b>${esc(u.fio)}</b><span>${roleName()}${u.group ? ' · ' + esc(u.group) : ''}</span></div>
+    ${card(`<div class="kv"><span>Email</span><b>${esc(u.email)}</b></div><div class="kv"><span>${t('Роль')}</span><b>${roleName()}</b></div>${u.group ? `<div class="kv"><span>${t('Группа')}</span><b>${esc(u.group)}</b></div>` : ''}`)}
     ${teacher() ? card(`<div class="set-inline"><input class="inp" id="sOffice" maxlength="80" placeholder="${t('Например: Пн, Ср 14:00–15:00, ауд. 214')}" value="${esc(s.officeHours || '')}"><button class="btn pri" id="sOfficeSave">${t('Сохранить')}</button></div><p class="hint">${t('Студенты видят их в чате с вами и на странице предмета.')}</p>`, 'Часы консультаций') : ''}
     <p class="hint center">${t('Имя и группа меняются в KU Portal.')}</p>`;
   if (id === 'look') return `

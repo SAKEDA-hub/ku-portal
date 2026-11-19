@@ -67,14 +67,14 @@ function bindClubActions(root, repaint, done) {
 }
 /* Карточка клуба: описание, встречи и одно действие — по состоянию участия */
 function clubDlg(c, repaint) {
-  const teacher = CLUBS.data.canCreate;
+  const teacher = c.manage; // руководитель этого клуба
   const facts = [[svg('users'), t('участников: {n}', { n: c.members })], c.meet ? [svg('clock'), meetText(c.meet)] : null, c.since ? [svg('star'), t('Вы в клубе с {d}', { d: fmtDay(isoOf(c.since)) })] : null].filter(Boolean);
   const note = teacher ? 'Публикации и мероприятия — в канале клуба в KU Message.' : c.joined ? 'Канал и чат клуба — в KU Message.' : c.pending ? 'Глава клуба скоро рассмотрит вашу заявку. Когда её примут, в KU Message появится чат клуба.' : 'Когда глава клуба примет заявку, в KU Message появятся канал и чат клуба.';
   modal(tv(c.name), `<div class="cl-dlg" style="--h:${clubHue(c.id)}">${clubAva(c, 'xl')}
       <p class="tx">${esc(tv(c.desc))}</p>
       <div class="cl-facts">${facts.map(([ic, v]) => `<span>${ic}${esc(v)}</span>`).join('')}</div>
       <div class="cl-note ${c.pending ? 'wait' : ''}">${svg(c.pending ? 'clock' : 'kumsg')}<span>${t(note)}</span></div>
-      ${teacher || c.joined ? chatBtn(c, 'wide') : ''}${teacher ? '' : joinBtn(c, 'wide')}</div>`, (box, close) => bindClubActions(box, repaint, close));
+      ${teacher || c.joined ? chatBtn(c, 'wide') : ''}${teacher || !CLUBS.data.canJoin ? '' : joinBtn(c, 'wide')}</div>`, (box, close) => bindClubActions(box, repaint, close));
 }
 
 /* ---------- студент: профиль активности и клубы ---------- */
@@ -191,7 +191,7 @@ function paintLead(pb, repaint) {
     ${d.recent && d.recent.length ? `<div class="section-label">${t('Отметьте, кто не пришёл')}</div><div class="tx cl-hint">${t('Отметка попадёт в профиль активности студента.')}</div>${d.recent.map(attendanceHTML).join('')}` : ''}
     <div class="section-label">${t('Клубы')}</div>
     <div class="tx cl-hint">${t('Публикации и мероприятия — в канале клуба в KU Message.')}</div>
-    ${d.items.map((c) => `<div class="card cl-my" data-club="${esc(c.id)}">${clubAva(c)}
+    ${d.items.filter((c) => c.manage).map((c) => `<div class="card cl-my" data-club="${esc(c.id)}">${clubAva(c)}
       <div class="club-t"><b>${esc(tv(c.name))}</b><span class="tx">${esc(t('участников: {n}', { n: c.members }))}${c.meet ? ' · ' + esc(meetText(c.meet)) : ''}</span>
         ${c.requests && c.requests.length ? `<span class="badge bad">${esc(t('заявок: {n}', { n: c.requests.length }))}</span>` : ''}</div>
       ${chatBtn(c, 'sm')}</div>`).join('')}`;

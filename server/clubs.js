@@ -5,9 +5,10 @@
  *   публикация канала: { id, by, text, at }; сообщение чата участников: { id, from, text, at }. Прочитанное — db.clubReads{uid: {'ch:<id>'|'chat:<id>': ts}}.
  *
  * Правила:
- *   - список клубов видят все; студент подаёт заявку (requests), глава клуба (преподаватель-организатор) принимает или отклоняет;
- *   - объявления, канал клуба (публикует только глава) и чат участников — только участникам и главам;
- *   - преподаватель — организатор: видит все объявления, создаёт их, отмечает, кто не пришёл;
+ *   - руководит клубом тот, кому оператор назначил его (права clubs: ID клубов, '*' — менеджер, все клубы); роль не важна;
+ *   - список клубов видят все; студент подаёт заявку (requests), руководитель клуба принимает или отклоняет;
+ *   - объявления, канал клуба (публикует только руководитель) и чат участников — только участникам и руководителям;
+ *   - руководитель видит объявления своих клубов, создаёт их, отмечает, кто не пришёл;
  *   - профиль активности студента: где был (прошедшие события, на которые записался и не отмечен «не пришёл»),
  *     часы по клубам и отдельно часы волонтёрства, клубы с датой вступления, предстоящие записи.
  */
@@ -62,7 +63,7 @@ const MAX_TEXT = 2000;
 const HOUR_MS = 3600000;
 
 function createClubs(ctx) {
-  const { getDB, saveDB, nid, ok, bad, pushInbox } = ctx;
+  const { getDB, saveDB, nid, ok, bad, pushInbox, permsOf } = ctx;
   const markDirty = ctx.markDirty || (() => {});
   const userById = (id) => getDB().users.find((x) => x.id === id);
 
@@ -122,7 +123,7 @@ function createClubs(ctx) {
   }
   function seedDemoFeed(db) {
     const byEmail = (em) => db.users.find((x) => x.email === em && x.demo);
-    const head = db.users.find((x) => x.email === 'teacher@demo.kz' && x.demo);
+    const head = db.users.find((x) => x.email === 'clubs@demo.kz' && x.demo);
     const now = Date.now();
     for (const [cid, hrs, text] of DEMO_POSTS) {
       const c = db.clubs.find((x) => x.id === cid);
@@ -148,7 +149,10 @@ function createClubs(ctx) {
     return true;
   }
   const isMember = (c, u) => c.members.includes(u.id);
-  const canSee = (c, u) => u.role === 'teacher' || isMember(c, u); // глава клуба (организатор) видит всё
+  const clubsOf = (u) => permsOf(u).clubs;
+  const isLead = (u) => clubsOf(u).length > 0;
+  const canManage = (c, u) => !!c && (clubsOf(u).includes('*') || clubsOf(u).includes(c.id));
+  const canSee = (c, u) => canManage(c, u) || isMember(c, u); // руководитель клуба видит всё
   const readAt = (db, u, key) => (db.clubReads[u.id] || {})[key] || 0;
   function markRead(db, u, key) { db.clubReads[u.id] = db.clubReads[u.id] || {}; db.clubReads[u.id][key] = Date.now(); }
   /* Новое в канале (публикации и объявления глав) и в чате (сообщения других участников) */
@@ -162,13 +166,13 @@ function createClubs(ctx) {
     const x = p && (!e || p.at >= e.at) ? { at: p.at, text: p.text } : e ? { at: e.at, text: '📅 ' + e.title } : null;
     return x ? { at: x.at, text: x.text.slice(0, 120) } : null;
   }
-  const person = (id) => { const x = userById(id) || {}; return { id, fio: x.fio || '—', role: x.role || 'student', group: x.group || '' }; };
+  const person = (id, c) => { const x = userById(id) || {}; return { id, fio: x.fio || '—', role: x.role || 'student', group: x.group || '', lead: !!(c && x.id && canManage(c, x)) }; };
   function pubEvent(e, c, u) {
     const out = {
       id: e.id, clubId: c.id, club: c.name, icon: c.icon, title: e.title, text: e.text || '', date: e.date, time: e.time, endTime: e.endTime || endOf(e.time, e.hours), place: e.place,
       limit: e.limit || 0, hours: e.hours || 0, count: e.people.length, going: e.people.includes(u.id), mine: e.by === u.id, weekly: !!e.weekly,
     };
-    if (u.role === 'teacher') out.people = e.people.map((id) => ({ id, fio: (userById(id) || {}).fio || '—', present: !e.absent.includes(id) }));
+    if (canManage(c, u)) out.people = e.people.map((id) => ({ id, fio: (userById(id) || {}).fio || '—', present: !e.absent.includes(id) }));
     return out;
   }
   function activityOf(db, u, today) {
@@ -200,37 +204,38 @@ function createClubs(ctx) {
     return {};
   }
   function listView(db, u, today) {
-    const teacher = u.role === 'teacher';
+    const lead = isLead(u);
     const items = db.clubs.map((c) => {
       const x = {
         id: c.id, name: c.name, icon: c.icon, desc: c.desc, members: c.members.length, joined: isMember(c, u), since: c.since[u.id] || null,
-        pending: !!c.requests[u.id],
+        pending: !!c.requests[u.id], manage: canManage(c, u),
         meet: c.weekly ? { day: c.weekly.day, time: c.weekly.time, endTime: endOf(c.weekly.time, c.weekly.hours), place: c.weekly.place } : null,
       };
       if (canSee(c, u)) Object.assign(x, { unread: unreadOf(db, c, u), last: lastOf(c) });
-      if (teacher) x.requests = Object.entries(c.requests).sort((a, b) => a[1] - b[1]).map(([id, at]) => Object.assign(person(id), { at }));
+      if (x.manage) x.requests = Object.entries(c.requests).sort((a, b) => a[1] - b[1]).map(([id, at]) => Object.assign(person(id), { at }));
       return x;
     });
-    const visible = db.clubs.filter((c) => teacher || isMember(c, u));
+    const visible = db.clubs.filter((c) => canSee(c, u));
     const events = visible.flatMap((c) => c.events.filter((e) => e.date >= today).map((e) => pubEvent(e, c, u)))
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    const out = { items, events, canCreate: teacher };
-    if (teacher) {
+    const out = { items, events, canCreate: lead, canJoin: u.role === 'student' };
+    if (lead) {
       const from = ymd(new Date(Date.now() - RECENT_DAYS * DAY_MS));
-      out.recent = db.clubs.flatMap((c) => c.events.filter((e) => e.date < today && e.date >= from && e.people.length).map((e) => pubEvent(e, c, u)))
+      out.recent = db.clubs.filter((c) => canManage(c, u)).flatMap((c) => c.events.filter((e) => e.date < today && e.date >= from && e.people.length).map((e) => pubEvent(e, c, u)))
         .sort((a, b) => b.date.localeCompare(a.date));
-    } else out.activity = activityOf(db, u, today);
+    }
+    if (u.role === 'student') out.activity = activityOf(db, u, today);
     return out;
   }
 
   /* ---------- Заявки, канал и чат клуба (KU Message, раздел «Клубы») ---------- */
   function feedApi(db, p, req, res, u, body, url, today) {
-    const teacher = u.role === 'teacher';
     const club = (id) => db.clubs.find((x) => x.id === id);
+    const own = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
     if (p === '/api/clubs/request' && req.method === 'POST') {
-      if (!teacher) return bad(res, 403, 'Заявки рассматривает глава клуба');
       const c = club(body.id);
-      if (!c || !c.requests[body.uid]) return bad(res, 404, 'Заявка не найдена');
+      if (!canManage(c, u)) return bad(res, 403, 'Заявки рассматривает руководитель клуба');
+      if (!own(c.requests, body.uid)) return bad(res, 404, 'Заявка не найдена');
       delete c.requests[body.uid];
       const st = userById(body.uid);
       if (body.accept && st && !isMember(c, st)) { c.members.push(st.id); c.since[st.id] = Date.now(); }
@@ -243,15 +248,15 @@ function createClubs(ctx) {
       if (!c) return bad(res, 404, 'Клуб не найден');
       if (!canSee(c, u)) return bad(res, 403, 'Канал клуба — только для участников');
       markRead(db, u, 'ch:' + c.id); markDirty();
-      const posts = c.posts.map((x) => ({ id: x.id, type: 'post', text: x.text, at: x.at, by: person(x.by), mine: x.by === u.id }))
-        .concat(c.events.filter((e) => e.at && !e.weekly).map((e) => Object.assign(pubEvent(e, c, u), { type: 'event', at: e.at, by: person(e.by), past: e.date < today })))
+      const posts = c.posts.map((x) => ({ id: x.id, type: 'post', text: x.text, at: x.at, by: person(x.by, c), mine: x.by === u.id }))
+        .concat(c.events.filter((e) => e.at && !e.weekly).map((e) => Object.assign(pubEvent(e, c, u), { type: 'event', at: e.at, by: person(e.by, c), past: e.date < today })))
         .sort((a, b) => a.at - b.at).slice(-200);
       const upcoming = c.events.filter((e) => e.date >= today).map((e) => pubEvent(e, c, u)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-      return ok(res, { id: c.id, name: c.name, icon: c.icon, desc: c.desc, members: c.members.length, manage: teacher, posts, upcoming, unread: unreadOf(db, c, u) });
+      return ok(res, { id: c.id, name: c.name, icon: c.icon, desc: c.desc, members: c.members.length, manage: canManage(c, u), posts, upcoming, unread: unreadOf(db, c, u) });
     }
     if (p === '/api/clubs/post' && req.method === 'POST') {
       const c = club(body.id);
-      if (!c || !teacher) return bad(res, 403, 'Публикует глава клуба');
+      if (!canManage(c, u)) return bad(res, 403, 'Публикует руководитель клуба');
       const text = clip(body.text, MAX_TEXT);
       if (!text) return bad(res, 400, 'Пустое сообщение');
       c.posts.push({ id: nid('cp'), by: u.id, text, at: Date.now() });
@@ -262,7 +267,7 @@ function createClubs(ctx) {
     if (p === '/api/clubs/post/delete' && req.method === 'POST') {
       const c = db.clubs.find((x) => x.posts.some((y) => y.id === body.id));
       const x = c && c.posts.find((y) => y.id === body.id);
-      if (!x || x.by !== u.id) return bad(res, 403, 'Удалить можно только свою публикацию');
+      if (!x || (x.by !== u.id && !canManage(c, u))) return bad(res, 403, 'Удалить можно только свою публикацию');
       c.posts = c.posts.filter((y) => y !== x); saveDB();
       return ok(res);
     }
@@ -274,8 +279,8 @@ function createClubs(ctx) {
       const ids = new Set(c.chat.slice(-300).map((m) => m.from));
       return ok(res, {
         id: c.id, name: c.name, icon: c.icon, members: c.members.length,
-        people: [...ids].map(person), items: c.chat.slice(-300).map((m) => ({ id: m.id, from: m.from, text: m.text, at: m.at })),
-        roster: c.members.map(person),
+        people: [...ids].map((id) => person(id, c)), items: c.chat.slice(-300).map((m) => ({ id: m.id, from: m.from, text: m.text, at: m.at })),
+        roster: c.members.map((id) => person(id, c)), manage: canManage(c, u),
       });
     }
     if (p === '/api/clubs/chat/send' && req.method === 'POST') {
@@ -292,7 +297,7 @@ function createClubs(ctx) {
     if (p === '/api/clubs/chat/delete' && req.method === 'POST') {
       const c = db.clubs.find((x) => x.chat.some((y) => y.id === body.id));
       const m = c && c.chat.find((y) => y.id === body.id);
-      if (!m || m.from !== u.id) return bad(res, 403, 'Удалить можно только своё сообщение');
+      if (!m || (m.from !== u.id && !canManage(c, u))) return bad(res, 403, 'Удалить можно только своё сообщение');
       c.chat = c.chat.filter((y) => y !== m); saveDB();
       return ok(res);
     }
@@ -302,7 +307,6 @@ function createClubs(ctx) {
   return async function clubs(p, req, res, u, body, url) {
     const db = store();
     const today = ymd(new Date());
-    const teacher = u.role === 'teacher';
     if (p === '/api/clubs' && req.method === 'GET') {
       if (db.clubs.map(ensureWeekly).some(Boolean)) saveDB();
       return ok(res, listView(db, u, today));
@@ -310,7 +314,8 @@ function createClubs(ctx) {
     if (p === '/api/clubs/join' && req.method === 'POST') {
       const c = db.clubs.find((x) => x.id === body.id);
       if (!c) return bad(res, 404, 'Клуб не найден');
-      if (teacher) return bad(res, 400, 'Преподаватель — организатор, вступать не нужно');
+      if (u.role !== 'student') return bad(res, 400, 'Вступать в клубы могут студенты');
+      if (canManage(c, u)) return bad(res, 400, 'Вы руководите этим клубом — вступать не нужно');
       if (body.on) { // заявка — в клуб принимает глава
         if (!isMember(c, u) && !c.requests[u.id]) { c.requests[u.id] = Date.now(); saveDB(); }
         return ok(res, { members: c.members.length, pending: !isMember(c, u) });
@@ -336,9 +341,9 @@ function createClubs(ctx) {
       return ok(res, { count: e.people.length });
     }
     if (p === '/api/clubs/event' && req.method === 'POST') {
-      if (!teacher) return bad(res, 403, 'Мероприятия создаёт преподаватель-организатор');
       const c = db.clubs.find((x) => x.id === body.clubId);
       if (!c) return bad(res, 400, 'Выберите клуб');
+      if (!canManage(c, u)) return bad(res, 403, 'Мероприятия создаёт руководитель клуба');
       const title = clip(body.title, 120);
       if (title.length < 3) return bad(res, 400, 'Укажите название мероприятия');
       if (!isDate(body.date) || body.date < today) return bad(res, 400, 'Укажите дату (не раньше сегодняшней)');
@@ -354,13 +359,13 @@ function createClubs(ctx) {
     }
     if (p === '/api/clubs/event/delete' && req.method === 'POST') {
       const { c, e } = findEvent(db, body.id);
-      if (!e || e.by !== u.id) return bad(res, 403, 'Удалить можно только своё мероприятие');
+      if (!e || (e.by !== u.id && !canManage(c, u))) return bad(res, 403, 'Удалить можно только своё мероприятие');
       c.events = c.events.filter((x) => x !== e); saveDB();
       return ok(res);
     }
     if (p === '/api/clubs/event/attendance' && req.method === 'POST') {
-      if (!teacher) return bad(res, 403, 'Присутствие отмечает организатор');
-      const { e } = findEvent(db, body.id);
+      const { c, e } = findEvent(db, body.id);
+      if (!canManage(c, u)) return bad(res, 403, 'Присутствие отмечает руководитель клуба');
       if (!e || e.date > today || !e.people.includes(body.uid)) return bad(res, 404, 'Мероприятие не найдено');
       e.absent = e.absent.filter((x) => x !== body.uid);
       if (!body.present) e.absent.push(body.uid);

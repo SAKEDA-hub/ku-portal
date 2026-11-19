@@ -308,3 +308,70 @@ test('static pages are served gzip-compressed and exam sessions survive a restar
   await app.stop(); await app.start();
   assert.equal((await call('state', teacher.token)).status, 401);
 });
+
+test('alwaysdata proxies pass the visitor address in X-Real-IP', async t => {
+  const app = installation(t, false, { KU_TRUSTED_PROXIES: '127.0.0.1' }); await app.start();
+  assert.equal((await app.request('/api/auth/register', { body: { ...portalUser, role: 'student' } })).status, 202);
+  app.cli('approve', JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0].id);
+  const login = await app.request('/api/auth/login', { body: portalUser, headers: { 'x-real-ip': '192.0.2.77', 'x-forwarded-proto': 'https' } });
+  assert.equal((await app.request('/api/sessions', { token: login.value.token })).value.items[0].ip, '192.0.2.77');
+  assert.match(login.headers.get('strict-transport-security') || '', /max-age=/);
+});
+
+test('roles: teachers teach, club leads run only their clubs, managers run all clubs and the dormitory', async t => {
+  const app = installation(t, true); await app.start();
+  const credentials = JSON.parse(fs.readFileSync(path.join(app.data, 'demo', 'demo-credentials.json')));
+  const sign = async email => {
+    const r = await app.request('/api/auth/login', { body: { email, password: credentials[email] } });
+    assert.equal(r.status, 200, email); return r.value;
+  };
+  const day = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 10);
+  const event = (token, clubId) => app.request('/api/clubs/event', { token, body: { clubId, title: 'Встреча', date: day, time: '10:00', endTime: '11:00' } });
+  const teacher = await sign('teacher2@demo.kz');
+  assert.deepEqual(teacher.user.perms, { clubs: [], dorm: false });
+  assert.equal((await event(teacher.token, 'chess')).status, 403);
+  assert.equal((await app.request('/api/clubs', { token: teacher.token })).value.canCreate, false);
+  assert.equal((await app.request('/api/dorm', { token: teacher.token })).value.staff, false);
+  assert.equal((await app.request('/api/dorm/status', { token: teacher.token, body: { id: 'x', status: 'done' } })).status, 403);
+
+  const lead = await sign('clubs@demo.kz');
+  assert.equal(lead.user.role, 'staff');
+  assert.equal((await event(lead.token, 'volunteer')).status, 200);
+  assert.equal((await event(lead.token, 'chess')).status, 403);
+  const leadView = (await app.request('/api/clubs', { token: lead.token })).value;
+  assert.equal(leadView.canCreate, true);
+  assert.deepEqual(leadView.items.filter(c => c.manage).map(c => c.id).sort(), ['football', 'volunteer']);
+  assert.equal((await app.request('/api/dorm', { token: lead.token })).value.staff, false);
+
+  const manager = await sign('manager@demo.kz');
+  assert.equal((await event(manager.token, 'chess')).status, 200);
+  assert.equal((await app.request('/api/dorm', { token: manager.token })).value.staff, true);
+  assert.equal((await app.request('/api/dorm/news', { token: manager.token, body: { title: 'Новость общежития' } })).status, 200);
+
+  const student = await sign('student@demo.kz');
+  assert.equal((await app.request('/api/clubs/join', { token: student.token, body: { id: 'debate', on: true } })).status, 200);
+  assert.equal((await app.request('/api/clubs/join', { token: lead.token, body: { id: 'chess', on: true } })).status, 400);
+  const sid = student.user.id;
+  assert.equal((await app.request('/api/clubs/request', { token: lead.token, body: { id: 'debate', uid: sid, accept: true } })).status, 403);
+  assert.equal((await app.request('/api/clubs/request', { token: manager.token, body: { id: 'debate', uid: sid, accept: true } })).status, 200);
+  assert.equal((await app.request('/api/dorm/request', { token: student.token, body: { kind: 'repair', text: 'Не работает кран' } })).status, 200);
+
+  // оператор назначает и снимает роль без перезапуска
+  const db = JSON.parse(fs.readFileSync(path.join(app.data, 'demo', 'db.json')));
+  app.cli('role', db.users.find(u => u.email === 'teacher2@demo.kz').id, 'club-lead', 'chess');
+  assert.equal((await event(teacher.token, 'chess')).status, 200);
+  app.cli('role', db.users.find(u => u.email === 'teacher2@demo.kz').id, 'none');
+  assert.equal((await event(teacher.token, 'chess')).status, 403);
+});
+
+test('staff members can register and wait for operator approval', async t => {
+  const app = installation(t); await app.start();
+  const staffUser = { ...portalUser, email: 'staff@example.test', group: '', role: 'staff' };
+  assert.equal((await app.request('/api/auth/register', { body: staffUser })).status, 202);
+  const user = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0];
+  assert.match(user.id, /^stf_/);
+  app.cli('approve', user.id); app.cli('role', user.id, 'manager');
+  const login = await app.request('/api/auth/login', { body: staffUser });
+  assert.deepEqual(login.value.user.perms, { clubs: ['*'], dorm: true });
+  assert.equal((await app.request('/api/auth/register', { body: { ...staffUser, email: 'x@example.test', role: 'admin' } })).status, 400);
+});

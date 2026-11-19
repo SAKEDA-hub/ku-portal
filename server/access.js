@@ -23,7 +23,9 @@ function userDigest(user) {
 }
 const grantFile = user => path.join(accessDir, userDigest(user) + '.json');
 // ключ — только ID (ID не переиспользуются), чтобы закрепления не терялись при изменении профиля
-const groupsFile = user => path.join(accessDir, 'groups-' + crypto.createHash('sha256').update(String(user.id)).digest('hex') + '.json');
+const idFile = (kind, user) => path.join(accessDir, kind + '-' + crypto.createHash('sha256').update(String(user.id)).digest('hex') + '.json');
+const groupsFile = user => idFile('groups', user);
+const permsFile = user => idFile('perms', user);
 
 function grantOf(user) {
   if (demo) return 'demo';
@@ -73,4 +75,30 @@ function setGroups(user, groups) {
   writeJsonAtomic(groupsFile(user), { groups: normalizeGroups(groups) });
 }
 
-module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups };
+/* Служебные права сверх роли (назначает оператор): clubs — ID клубов, которыми человек руководит ('*' — все),
+   dorm — администрация общежития. Роль «менеджер» = все клубы + общежитие. */
+const NO_PERMS = Object.freeze({ clubs: Object.freeze([]), dorm: false });
+const CLUB_ID = /^[\w-]{1,64}$/;
+function normalizePerms(p) {
+  const clubs = Array.isArray(p && p.clubs) ? [...new Set(p.clubs.map(String).filter(c => c === '*' || CLUB_ID.test(c)))] : [];
+  return { clubs: clubs.includes('*') ? ['*'] : clubs, dorm: !!(p && p.dorm === true) };
+}
+function permsOf(user) {
+  let text;
+  try { text = fs.readFileSync(permsFile(user), 'utf8'); } catch (error) {
+    if (error.code !== 'ENOENT') console.error('[access] права не прочитаны:', user.id, error.code);
+    return NO_PERMS;
+  }
+  try { return normalizePerms(JSON.parse(text)); } catch {
+    console.error('[access] файл прав повреждён, права сняты:', user.id);
+    return NO_PERMS;
+  }
+}
+function setPerms(user, perms) {
+  fs.mkdirSync(accessDir, { recursive: true, mode: 0o700 });
+  const next = normalizePerms(perms);
+  writeJsonAtomic(permsFile(user), next);
+  return next;
+}
+
+module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms };

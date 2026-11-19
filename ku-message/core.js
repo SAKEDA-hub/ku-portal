@@ -233,7 +233,7 @@ async function enter(token) {
   M.token = token; localStorage.setItem('kum_token', token);
   M.user = (await api('/me')).user;
   M.srv = await api('/settings');
-  M.tab = 'chats';
+  M.tab = homeTab();
   applyTheme();
   pollInbox(); NOTIF.timer = setInterval(pollInbox, 20000);
   startApp();
