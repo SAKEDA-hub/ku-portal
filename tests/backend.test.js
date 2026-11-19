@@ -328,7 +328,7 @@ test('roles: teachers teach, club leads run only their clubs, managers run all c
   const day = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 10);
   const event = (token, clubId) => app.request('/api/clubs/event', { token, body: { clubId, title: 'Встреча', date: day, time: '10:00', endTime: '11:00' } });
   const teacher = await sign('teacher2@demo.kz');
-  assert.deepEqual(teacher.user.perms, { clubs: [], dorm: false });
+  assert.deepEqual(teacher.user.perms, { clubs: [], dorm: false, school: false });
   assert.equal((await event(teacher.token, 'chess')).status, 403);
   assert.equal((await app.request('/api/clubs', { token: teacher.token })).value.canCreate, false);
   assert.equal((await app.request('/api/dorm', { token: teacher.token })).value.staff, false);
@@ -372,6 +372,61 @@ test('staff members can register and wait for operator approval', async t => {
   assert.match(user.id, /^stf_/);
   app.cli('approve', user.id); app.cli('role', user.id, 'manager');
   const login = await app.request('/api/auth/login', { body: staffUser });
-  assert.deepEqual(login.value.user.perms, { clubs: ['*'], dorm: true });
+  assert.deepEqual(login.value.user.perms, { clubs: ['*'], dorm: true, school: true });
   assert.equal((await app.request('/api/auth/register', { body: { ...staffUser, email: 'x@example.test', role: 'admin' } })).status, 400);
+});
+
+test('results database: portal sign-in for students (after a one-time link), teachers and managers, never for club leads', async t => {
+  const app = installation(t);
+  const hash = pw => { const salt = crypto.randomBytes(16).toString('hex'); return { salt, passAlgo: 'scrypt', passHash: crypto.scryptSync(pw, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }).toString('hex') }; };
+  fs.writeFileSync(path.join(app.data, 'school.json'), JSON.stringify({ version: 1,
+    users: [{ id: 'u1', username: 'pupil1', role: 'student', group: '1g', ...hash('pupil-one-pass') }, { id: 'u2', username: 'pupil2', role: 'student', group: '2g', ...hash('pupil-two-pass') }],
+    tests: [{ id: 't1', title: 'Тест', ownerId: 'x' }], components: [{ id: 'c1', testId: 't1', skill: 'тесты', maxPoints: 20, docxFilename: null }],
+    results: [{ id: 'r1', userId: 'u1', testId: 't1', totalScore: 15 }, { id: 'r2', userId: 'u2', testId: 't1', totalScore: 7 }], scores: [] }));
+  await app.start();
+  const call = app.request;
+  const people = {};
+  for (const [key, role] of [['student', 'student'], ['teacher', 'teacher'], ['lead', 'staff'], ['manager', 'staff']]) {
+    const person = { ...portalUser, email: key + '@example.test', role, group: role === 'student' ? '1g' : '' };
+    assert.equal((await call('/api/auth/register', { body: person })).status, 202);
+    const id = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users.find(u => u.email === person.email).id;
+    app.cli('approve', id);
+    people[key] = { id, token: (await call('/api/auth/login', { body: person })).value.token };
+  }
+  app.cli('role', people.lead.id, 'club-lead', 'volunteer');
+  app.cli('role', people.manager.id, 'manager');
+  const portalLogin = who => call('/api/school/portal-login', { token: people[who].token, body: {} });
+
+  assert.equal((await call('/api/school/portal-login', { body: {} })).status, 401);
+  assert.equal((await portalLogin('lead')).status, 403); // руководителю клуба оценки не нужны
+  const first = await portalLogin('student');
+  assert.equal(first.status, 409); assert.equal(first.value.needLink, true);
+  const link = body => call('/api/school/portal-link', { token: people.student.token, body });
+  assert.equal((await link({ username: 'pupil1', password: 'wrong' })).status, 401);
+  const linked = await link({ username: 'pupil1', password: 'pupil-one-pass' });
+  assert.equal(linked.status, 200);
+  const again = await portalLogin('student'); // дальше — без пароля
+  assert.equal(again.status, 200);
+  const own = (await call('/api/school/results', { token: again.value.token })).value;
+  assert.deepEqual(own.results.map(r => r.id), ['r1']); // только свои оценки
+  assert.deepEqual(own.users.map(u => u.username), ['pupil1']);
+  assert.equal((await call('/api/school/tests', { token: again.value.token, body: { title: 'x', components: [{ skill: 'тесты', maxPoints: 5 }] } })).status, 403);
+
+  const teacher = await portalLogin('teacher');
+  assert.equal(teacher.value.user.role, 'teacher');
+  assert.equal((await call('/api/school/results', { token: teacher.value.token })).value.results.length, 2);
+  assert.equal((await call('/api/school/scores', { token: teacher.value.token, body: { resultId: 'r2', componentId: 'c1', points: 9 } })).status, 200);
+
+  const manager = await portalLogin('manager');
+  assert.equal(manager.value.user.role, 'viewer');
+  assert.equal((await call('/api/school/results', { token: manager.value.token })).value.results.length, 2);
+  assert.equal((await call('/api/school/scores', { token: manager.value.token, body: { resultId: 'r2', componentId: 'c1', points: 1 } })).status, 403);
+
+  // один логин учебной базы — один студент портала; отзыв допуска в портале закрывает и учебную базу
+  assert.throws(() => app.cli('school-link', people.teacher.id, 'pupil2')); // привязывается только студент
+  assert.throws(() => app.cli('school-link', people.student.id, 'nobody')); // логина нет в базе
+  app.cli('revoke', people.student.id);
+  assert.equal((await call('/api/school/results', { token: again.value.token })).status, 401);
+  app.cli('role', people.manager.id, 'none');
+  assert.equal((await call('/api/school/results', { token: manager.value.token })).status, 401);
 });

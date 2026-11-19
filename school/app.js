@@ -1,8 +1,14 @@
 'use strict';
 const app = document.getElementById('app');
 const TOKEN_KEY = 'ku-school-token';
+const MANUAL_KEY = 'ku-school-manual'; // вышел вручную — в этой вкладке не входить через портал автоматически
 let token = sessionStorage.getItem(TOKEN_KEY) || '';
 let data = null;
+let groupFilter = '', studentFilter = '';
+const portalToken = () => { try { return localStorage.getItem('ku_token') || ''; } catch { return ''; } };
+const staffView = u => u.role === 'teacher' || u.role === 'viewer'; // вся база: преподаватель и администрация
+const roleName = u => u.role === 'teacher' ? 'Преподаватель' : u.role === 'viewer' ? 'Администрация · только просмотр' : 'Студент';
+const groupOf = u => [u.direction, u.year, u.group].filter(Boolean).join(' · ');
 const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path, options = {}) {
   const headers = Object.assign({}, options.headers || {});
@@ -12,6 +18,33 @@ async function api(path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || 'Ошибка сервера');
   return body;
+}
+/* Вход через KU Portal: тот же браузер уже знает сеанс портала */
+async function portalLogin() {
+  const response = await fetch('/api/school/portal-login', { method: 'POST', headers: { Authorization: 'Bearer ' + portalToken() }, cache: 'no-store' });
+  const body = await response.json().catch(() => ({}));
+  if (response.ok) { token = body.token; sessionStorage.setItem(TOKEN_KEY, token); return load(); }
+  if (response.status === 409 && body.needLink) return linkView();
+  if (response.status === 403) return noAccessView(body.error);
+  loginView();
+}
+function noAccessView(message) {
+  app.innerHTML = `<section class="card" style="max-width:520px;margin:6vh auto"><h1>Учебная база</h1><div class="notice">${esc(message || 'Доступ закрыт')}</div><p><a href="/">← Вернуться в KU Portal</a></p></section>`;
+}
+/* Студент из портала один раз вводит логин учебной базы — дальше вход автоматический */
+function linkView(message = '') {
+  app.innerHTML = `<section class="card" style="max-width:480px;margin:6vh auto"><h1>Подключите учебную базу</h1><p class="muted">Один раз введите логин и пароль учебной базы, которые выдал преподаватель. Потом она будет открываться из KU Portal автоматически.</p><form id="link" class="form"><input id="username" autocomplete="username" placeholder="Логин учебной базы" required><input id="password" type="password" autocomplete="current-password" placeholder="Пароль" required><button>Подключить</button></form><div class="error">${esc(message)}</div></section>`;
+  document.getElementById('link').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      const response = await fetch('/api/school/portal-link', { method: 'POST', cache: 'no-store',
+        headers: { Authorization: 'Bearer ' + portalToken(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: document.getElementById('username').value.trim(), password: document.getElementById('password').value }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Ошибка сервера');
+      token = body.token; sessionStorage.setItem(TOKEN_KEY, token); await load();
+    } catch (err) { linkView(err.message); }
+  };
 }
 function loginView(message = '') {
   app.innerHTML = `<section class="card" style="max-width:480px;margin:6vh auto"><h1>Вход в учебную базу</h1><p class="muted">Введите логин и личный пароль.</p><form id="login" class="form"><input id="username" autocomplete="username" placeholder="Логин" required><input id="password" type="password" autocomplete="current-password" placeholder="Пароль" required><button>Войти</button></form><div class="error">${esc(message)}</div></section>`;
@@ -26,10 +59,14 @@ function render() {
   const u = data.user;
   const results = data.results || [];
   if (!results.length) {
-    app.innerHTML = `<section class="card"><h1>${u.role === 'teacher' ? 'Управление учебной базой' : 'Мои результаты'}</h1><div class="notice">База подключена, но в ней пока нет результатов.</div><button class="secondary" id="logout">Выйти</button></section>${u.role === 'teacher' ? teacherForms() : ''}`;
+    app.innerHTML = `<section class="card"><h1>${staffView(u) ? 'Учебная база' : 'Мои результаты'}</h1><div class="notice">База подключена, но в ней пока нет результатов.</div><button class="secondary" id="logout">Выйти</button></section>${u.role === 'teacher' ? teacherForms() : ''}`;
     bindTeacher(); bindLogout(); return;
   }
-  const rows = results.map(r => {
+  const groups = [...new Set((data.users || []).filter(x => x.role === 'student').map(groupOf).filter(Boolean))].sort();
+  const students = (data.users || []).filter(x => x.role === 'student' && (!groupFilter || groupOf(x) === groupFilter));
+  const shown = results.filter(r => !staffView(u) || ((!groupFilter || groupOf(r.user || {}) === groupFilter) && (!studentFilter || (r.user || {}).id === studentFilter)));
+  const filters = staffView(u) ? `<div class="form filters"><select id="f-group"><option value="">Все группы (${groups.length})</option>${groups.map(g => `<option ${g === groupFilter ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select><select id="f-student"><option value="">Все студенты (${students.length})</option>${students.map(x => `<option value="${esc(x.id)}" ${x.id === studentFilter ? 'selected' : ''}>${esc(x.username)}</option>`).join('')}</select><span class="muted">Показано: ${shown.length}</span></div>` : '';
+  const rows = shown.map(r => {
     const user = r.user || {};
     const test = r.test || {};
     const cells = (r.scores || []).map(s => {
@@ -38,8 +75,11 @@ function render() {
     }).join('');
     return `<tr><td>${esc(user.username || '')}<br><span class="pill">${esc([user.direction,user.year,user.group].filter(Boolean).join(' · '))}</span></td><td>${esc(test.title || '')}<br><span class="muted">${totalMax(test)} максимум</span></td><td><b>${r.totalScore}/100</b></td><td>${cells}</td></tr>`;
   }).join('');
-  app.innerHTML = `<section class="card"><div class="form" style="align-items:center"><div><h1>${u.role === 'teacher' ? 'Учебная база' : 'Мои результаты'}</h1><span class="muted">${esc(u.username)} · ${u.role === 'teacher' ? 'Преподаватель' : 'Студент'}</span></div><button class="secondary" id="logout">Выйти</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Тест</th><th>Итог</th><th>Баллы по навыкам</th></tr></thead><tbody>${rows}</tbody></table></div></section>${u.role === 'teacher' ? teacherForms() : ''}`;
-  bindLogout(); bindTeacher();
+  app.innerHTML = `<section class="card"><div class="form" style="align-items:center"><div><h1>${staffView(u) ? 'Учебная база' : 'Мои результаты'}</h1><span class="muted">${esc(u.username)} · ${roleName(u)}${u.portal ? ' · вход через KU Portal' : ''}</span></div><button class="secondary" id="logout">Выйти</button></div>${filters}<div class="table-wrap"><table><thead><tr><th>Студент</th><th>Тест</th><th>Итог</th><th>Баллы по навыкам</th></tr></thead><tbody>${rows}</tbody></table></div></section>${u.role === 'teacher' ? teacherForms() : ''}`;
+  bindLogout(); bindTeacher(); bindFiles();
+  const fg = document.getElementById('f-group'), fs = document.getElementById('f-student');
+  if (fg) fg.onchange = () => { groupFilter = fg.value; studentFilter = ''; render(); };
+  if (fs) fs.onchange = () => { studentFilter = fs.value; render(); };
 }
 function teacherForms() {
   return `<section class="card"><h2>Добавить тест</h2><form id="new-test"><div class="form"><input id="test-title" placeholder="Название теста" required><button>Создать тест</button></div><div class="parts">${[['тесты',20],['письмо',40],['говорение',40]].map(([skill,max]) => `<label><input type="checkbox" data-skill="${skill}"> ${skill} максимум <input type="number" data-max="${skill}" min="1" max="100" value="${max}"></label>`).join('')}</div></form><div class="error" id="teacher-error"></div></section><section class="card"><h2>Прикрепить Word-файл</h2><div class="form"><select id="file-component"><option value="">Выберите тест и навык</option>${data.components.map(c => `<option value="${esc(c.id)}">${esc((data.tests.find(t=>t.id===c.testId)||{}).title)} · ${esc(c.skill)}</option>`).join('')}</select><input id="docx" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><button id="upload-docx" type="button">Загрузить</button></div><div class="muted">DOCX, до 5 МБ. Файл доступен только после входа.</div></section>`;
@@ -53,11 +93,14 @@ function bindTeacher() {
     try { await api('tests', { method:'POST', body:{ title:document.getElementById('test-title').value, components } }); await load(); }
     catch (err) { document.getElementById('teacher-error').textContent = err.message; }
   };
+  bindUpload();
   app.querySelectorAll('[data-save-score]').forEach(b => b.onclick = async () => {
     const input = app.querySelector(`[data-score="${b.dataset.saveScore}"][data-component="${b.dataset.component}"]`);
     try { await api('scores', { method:'POST', body:{ resultId:b.dataset.saveScore, componentId:b.dataset.component, points:Number(input.value) } }); await load(); }
     catch (err) { alert(err.message); }
   });
+}
+function bindFiles() {
   app.querySelectorAll('[data-file]').forEach(a => a.onclick = async e => {
     e.preventDefault();
     try {
@@ -66,6 +109,8 @@ function bindTeacher() {
       const blob = await r.blob(), link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = a.dataset.filename || 'test.docx'; link.click(); URL.revokeObjectURL(link.href);
     } catch (err) { alert(err.message); }
   });
+}
+function bindUpload() {
   const upload = document.getElementById('upload-docx');
   if (upload) upload.onclick = async () => {
     const file = document.getElementById('docx').files[0], componentId = document.getElementById('file-component').value;
@@ -76,9 +121,11 @@ function bindTeacher() {
     catch (err) { alert(err.message); }
   };
 }
-function bindLogout() { const b = document.getElementById('logout'); if (b) b.onclick = async () => { try { await api('logout', {method:'POST'}); } catch {} token=''; sessionStorage.removeItem(TOKEN_KEY); loginView(); }; }
+function bindLogout() { const b = document.getElementById('logout'); if (b) b.onclick = async () => { try { await api('logout', {method:'POST'}); } catch {} token=''; sessionStorage.removeItem(TOKEN_KEY); sessionStorage.setItem(MANUAL_KEY, '1'); loginView(); }; }
 async function load() {
   try { const r = await api('results'); data = Object.assign({user:(await api('me')).user}, r); render(); }
   catch (e) { token=''; sessionStorage.removeItem(TOKEN_KEY); loginView(e.message === 'Войдите в систему' ? '' : e.message); }
 }
-if (token) load(); else loginView();
+if (token) load();
+else if (portalToken() && !sessionStorage.getItem(MANUAL_KEY)) portalLogin().catch(() => loginView());
+else loginView();
