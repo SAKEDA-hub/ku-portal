@@ -326,6 +326,13 @@ textarea.inp { resize: vertical; line-height: 1.5; }
 .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
 .login-card { width: 100%; max-width: 380px; padding: 30px; border-radius: 24px; background: var(--panel); box-shadow: 0 16px 50px rgba(0, 0, 0, .1); display: flex; flex-direction: column; gap: 10px; }
 .or { text-align: center; color: var(--muted); font-size: 13px; }
+.demo-box { margin-top: 8px; padding: 14px; border: 1px dashed var(--accent); border-radius: 16px; background: var(--accent-soft); display: flex; flex-direction: column; gap: 6px; }
+.demo-box > b { color: var(--accent); font-size: 14px; } .demo-box > small { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.demo-lbl { margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--accent); }
+.demo-grid { display: grid; gap: 6px; }
+.demo-acc { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.demo-acc:hover { border-color: var(--accent); }
+.demo-t { display: flex; flex-direction: column; min-width: 0; } .demo-t b { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .demo-t small { font-size: 11px; color: var(--muted); }
 
 /* ---------- узкий ноутбук: список чуть уже ---------- */
 @media (max-width: 1100px) and (min-width: 861px) { .km { grid-template-columns: 72px 290px 1fr; } }
