@@ -5,8 +5,9 @@
  *   #/s/<s:id>      — страница предмета: вкладки «Лекции», «Практики», «Задания» (+ «Материалы», если есть);
  *                     публикует преподаватель предмета, студенты читают и скачивают файлы.
  *   #/d/<d:…>       — личная переписка. Студент сам пишет преподавателю; преподаватель открывает чат из вкладки «Ученики».
- *   #/c/<club>      — клуб: «Канал» (публикации и мероприятия — только от глав клуба), «Чат» участников (#/c/<club>/chat),
- *                     у главы — «Заявки» (#/c/<club>/req). Не участнику — карточка клуба с кнопкой «Подать заявку».
+ *   #/c/<club>      — клуб: «Канал» (публикации и мероприятия — только от глав клуба) и «Чат» участников (#/c/<club>/chat).
+ *                     Студент видит только клубы, где он участник: заявки подаются и рассматриваются в KU Portal («Клубы»),
+ *                     клуб появляется здесь, когда глава примет заявку. Без клубов раздел «Клубы» у студента скрыт.
  *   #/settings[/…]  — настройки (settings.js).
  * На телефоне панель разделов — внизу, список и открытый экран сменяют друг друга.
  */
@@ -107,12 +108,17 @@ const sumUnread = (list) => (list || []).reduce((n, x) => n + (x.unread || 0), 0
 const clubUnread = (c) => (c.unread ? c.unread.channel + c.unread.chat : 0);
 function badges() {
   const d = M.list, c = M.clubs;
-  const clubs = c ? c.items.reduce((n, x) => n + clubUnread(x) + (x.requests ? x.requests.length : 0), 0) : 0;
+  const clubs = c ? myClubs().reduce((n, x) => n + clubUnread(x), 0) : 0;
   return { chats: d ? sumUnread(d.contacts) : 0, subjects: d ? sumUnread(d.spaces) : 0, clubs, students: 0, settings: 0 };
 }
+/* Клубы, которые видны в мессенджере: у преподавателя (главы) — все, у студента — только те, где он участник */
+const myClubs = () => (M.clubs ? M.clubs.items.filter((c) => teacher() || c.joined) : []);
 function paintRail() {
   const n = badges();
+  const noClubs = !teacher() && M.clubs && !myClubs().length;
+  if (noClubs && M.tab === 'clubs') M.tab = 'chats';
   document.querySelectorAll('#rail [data-t]').forEach((b) => {
+    if (b.dataset.t === 'clubs') b.hidden = !!noClubs;
     b.classList.toggle('on', b.dataset.t === M.tab);
     const em = b.querySelector('em'); if (!em) return;
     em.hidden = !n[b.dataset.t]; em.textContent = n[b.dataset.t] > 99 ? '99+' : n[b.dataset.t];
@@ -127,7 +133,7 @@ function route() {
   const h = location.hash, km = document.getElementById('km');
   const st = /^#\/settings(?:\/(\w+))?$/.exec(h);
   if (st) { M.tab = 'settings'; M.ch = null; km.classList.toggle('open', !!st[1]); paintRail(); paintList(); return viewSettings(st[1] || ''); }
-  const c = /^#\/c\/([\w-]+)(?:\/(chat|req))?$/.exec(h);
+  const c = /^#\/c\/([\w-]+)(?:\/(chat))?$/.exec(h);
   if (c) { M.tab = 'clubs'; M.ch = 'club:' + c[1]; km.classList.add('open'); paintRail(); paintList(); return openClub(c[1], c[2] || 'channel'); }
   const m = /^#\/(s|d)\/(.+)$/.exec(h);
   M.ch = m ? decodeURIComponent(m[2]) : null;
@@ -194,18 +200,10 @@ function paintList() {
 }
 function clubRow(c) {
   const sub = c.last ? esc(c.last.text) : esc(t('участников: {n}', { n: c.members }));
-  const req = c.requests && c.requests.length ? `<span class="req-chip">${esc(t('заявок: {n}', { n: c.requests.length }))}</span>` : '';
-  return rowHTML(`#/c/${c.id}`, clubIco(c), tv(c.name), sub, c.last ? esc(whenShort(c.last.at)) : '', req + pill(clubUnread(c)), M.ch === 'club:' + c.id, clubUnread(c));
+  return rowHTML(`#/c/${c.id}`, clubIco(c), tv(c.name), sub, c.last ? esc(whenShort(c.last.at)) : '', pill(clubUnread(c)), M.ch === 'club:' + c.id, clubUnread(c));
 }
 function clubsListHTML(q) {
-  const items = M.clubs.items.filter((c) => q(tv(c.name)));
-  if (teacher()) return items.map(clubRow).join('') || `<div class="empty-s">${t('Ничего не найдено.')}</div>`;
-  const mine = items.filter((c) => c.joined), pending = items.filter((c) => !c.joined && c.pending), other = items.filter((c) => !c.joined && !c.pending);
-  const plain = (c, right) => rowHTML(`#/c/${c.id}`, clubIco(c), tv(c.name), esc(tv(c.desc)), '', right, M.ch === 'club:' + c.id);
-  let html = mine.length ? `<div class="sep">${t('Мои клубы')}</div>` + mine.map(clubRow).join('') : '';
-  if (pending.length) html += `<div class="sep">${t('Заявки на рассмотрении')}</div>` + pending.map((c) => plain(c, `<span class="wait-chip">${t('ждёт ответа')}</span>`)).join('');
-  if (other.length) html += `<div class="sep">${t('Можно подать заявку')}</div>` + other.map((c) => plain(c, `<span class="link">${t('Подать заявку')}</span>`)).join('');
-  return html || `<div class="empty-s">${t('Ничего не найдено.')}</div>`;
+  return myClubs().filter((c) => q(tv(c.name))).map(clubRow).join('') || `<div class="empty-s">${t('Ничего не найдено.')}</div>`;
 }
 function paintWelcome() {
   const d = M.list;
@@ -447,22 +445,19 @@ async function openClub(id, tab) {
   main.innerHTML = `<div class="pane"><header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a><div class="pane-t"><b>${t('Загрузка…')}</b></div></header><div class="pane-b"><div class="skel big"></div></div></div>`;
   if (!M.clubs) { try { await refreshClubs(); } catch (e) { return noAccess(e); } }
   const c = clubById(id);
-  if (!c) return noAccess(new Error(t('Клуб не найден')));
-  if (!teacher() && !c.joined) return paintClubAbout(c);
-  if (tab === 'req' && !teacher()) tab = 'channel';
+  if (!c || (!teacher() && !c.joined)) { main.querySelector('.pane-t b').textContent = t('Клубы'); return noAccess(new Error(t('Клуб появится здесь, когда глава примет вашу заявку в KU Portal.'))); }
   const un = c.unread || { channel: 0, chat: 0 };
-  const tabs = [['channel', '', 'Канал', un.channel], ['chat', '/chat', 'Чат', un.chat]].concat(teacher() ? [['req', '/req', 'Заявки', (c.requests || []).length]] : []);
+  const tabs = [['channel', '', 'Канал', un.channel], ['chat', '/chat', 'Чат', un.chat]];
   main.querySelector('.pane').innerHTML = `
     <header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a>${clubIco(c)}
-      <div class="pane-t"><b>${esc(tv(c.name))}</b><small>${esc(t('участников: {n}', { n: c.members }))} · ${t(tab === 'chat' ? 'чат участников' : tab === 'req' ? 'заявки на вступление' : 'канал')}</small></div>
+      <div class="pane-t"><b>${esc(tv(c.name))}</b><small>${esc(t('участников: {n}', { n: c.members }))} · ${t(tab === 'chat' ? 'чат участников' : 'канал')}</small></div>
       <button class="ib" id="clInfo" title="${t('О клубе')}">${svg('info')}</button></header>
     <nav class="tabs">${tabs.map(([k, suf, l, n]) => `<a href="#/c/${c.id}${suf}" class="tab ${tab === k ? 'on' : ''}">${t(l)}${n && tab !== k ? `<em class="pill">${n}</em>` : ''}</a>`).join('')}</nav>
     <div class="pinned" id="pinned" hidden></div>
     <div class="pane-b chat wall" id="chatBody"><div class="col" id="chatList"><div class="skel big"></div></div></div>
-    ${tab === 'req' ? '' : tab === 'chat' || teacher() ? composerHTML({ placeholder: t(tab === 'chat' ? 'Сообщение участникам…' : 'Публикация в канале…'), extra: tab === 'channel' ? `<button class="ib" id="evNew" title="${t('Мероприятие')}">${svg('calendar')}</button>` : '' })
+    ${tab === 'chat' || teacher() ? composerHTML({ placeholder: t(tab === 'chat' ? 'Сообщение участникам…' : 'Публикация в канале…'), extra: tab === 'channel' ? `<button class="ib" id="evNew" title="${t('Мероприятие')}">${svg('calendar')}</button>` : '' })
       : `<footer class="ch-foot"><span>${svg('megaphone')}${t('В канале публикуют только главы клуба')}</span><a class="btn sm" href="#/c/${c.id}/chat">${svg('chat')}${t('Обсудить в чате')}</a></footer>`}`;
   document.getElementById('clInfo').onclick = () => clubInfoDlg(c);
-  if (tab === 'req') return paintRequests(c);
   if (main.querySelector('.composer')) {
     V.send = tab === 'chat' ? (text) => api('/clubs/chat/send', { method: 'POST', body: { id: c.id, text } }) : (text) => api('/clubs/post', { method: 'POST', body: { id: c.id, text } });
     bindComposer();
@@ -530,53 +525,11 @@ function paintClubChat(d, list) {
     : `<div class="empty chip-empty">${svg('users')}<span>${t('Здесь участники клуба обмениваются новостями. Напишите первым!')}</span></div>`;
   list.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить сообщение?'), t('Сообщение исчезнет у всех участников.'), () => act('/clubs/chat/delete', { id: b.dataset.del }))));
 }
-function paintRequests(c) {
-  const list = document.getElementById('chatList');
-  document.getElementById('chatBody').classList.remove('chat');
-  const rows = c.requests || [];
-  list.innerHTML = rows.length ? `<div class="req-list">${rows.map((r) => `<div class="req">${personIco(r)}
-      <div class="req-t"><b>${esc(r.fio)}</b><small>${esc(r.group || t('Студент'))} · ${esc(t('заявка от {d}', { d: fmtDay(isoOf(r.at)) }))}</small></div>
-      <div class="req-b"><button class="btn pri sm" data-acc="${esc(r.id)}">${svg('check')}${t('Принять')}</button><button class="btn sm" data-rej="${esc(r.id)}">${t('Отклонить')}</button></div></div>`).join('')}</div>`
-    : `<div class="empty chip-empty">${svg('check')}<span>${t('Новых заявок нет.')}</span></div>`;
-  const decide = async (uid, accept) => {
-    try { await api('/clubs/request', { method: 'POST', body: { id: c.id, uid, accept } }); toast(t(accept ? 'Студент принят в клуб' : 'Заявка отклонена')); await refreshClubs(); openClub(c.id, 'req'); }
-    catch (e) { toast(e.message, true); }
-  };
-  list.querySelectorAll('[data-acc]').forEach((b) => (b.onclick = () => decide(b.dataset.acc, true)));
-  list.querySelectorAll('[data-rej]').forEach((b) => (b.onclick = () => decide(b.dataset.rej, false)));
-}
-/* Не участник: карточка клуба и заявка на вступление */
-function paintClubAbout(c) {
-  const pane = document.querySelector('.pane');
-  pane.innerHTML = `
-    <header class="pane-h"><a class="ib only-m" href="#/">${svg('back')}</a>${clubIco(c)}
-      <div class="pane-t"><b>${esc(tv(c.name))}</b><small>${esc(t('участников: {n}', { n: c.members }))}</small></div></header>
-    <div class="pane-b wall"><div class="about">
-      ${clubIco(c, 'xl')}
-      <h2>${esc(tv(c.name))}</h2>
-      <p>${esc(tv(c.desc))}</p>
-      <div class="facts"><span>${svg('users')}${esc(t('участников: {n}', { n: c.members }))}</span>${c.meet ? `<span>${svg('clock')}${esc(meetText(c.meet))}</span>` : ''}</div>
-      <div class="about-lock">${svg('lock')}<span>${t('Канал с публикациями глав клуба и чат участников откроются, когда глава примет вашу заявку.')}</span></div>
-      ${c.pending ? `<div class="about-wait">${svg('clock')}<span><b>${t('Заявка отправлена')}</b><small>${t('Глава клуба скоро её рассмотрит')}</small></span></div><button class="btn wide" id="clCancel">${t('Отозвать заявку')}</button>`
-        : `<button class="btn pri wide" id="clApply">${svg('flag')}${t('Подать заявку')}</button>`}
-    </div></div>`;
-  const send = async (on) => {
-    try { await api('/clubs/join', { method: 'POST', body: { id: c.id, on } }); toast(t(on ? 'Заявка отправлена — глава клуба её рассмотрит' : 'Заявка отозвана')); await refreshClubs(); paintClubAbout(clubById(c.id)); }
-    catch (e) { toast(e.message, true); }
-  };
-  const a = document.getElementById('clApply'); if (a) a.onclick = () => send(true);
-  const x = document.getElementById('clCancel'); if (x) x.onclick = () => send(false);
-}
 function clubInfoDlg(c) {
   modal(tv(c.name), `<div class="about in-dlg">${clubIco(c, 'xl')}<p>${esc(tv(c.desc))}</p>
-      <div class="facts"><span>${svg('users')}${esc(t('участников: {n}', { n: c.members }))}</span>${c.meet ? `<span>${svg('clock')}${esc(meetText(c.meet))}</span>` : ''}${c.since ? `<span>${svg('flag')}${esc(t('Вы в клубе с {d}', { d: fmtDay(isoOf(c.since)) }))}</span>` : ''}</div></div>
-    ${!teacher() && c.joined ? `<button class="btn danger wide" id="clLeave">${svg('logout')}${t('Выйти из клуба')}</button>` : ''}`, (box, close) => {
-    const b = box.querySelector('#clLeave');
-    if (b) b.onclick = () => { close(); confirmDlg(t('Выйти из клуба?'), t('Канал и чат клуба перестанут быть видны, записи на будущие встречи снимутся. История участия останется в профиле активности.'), async () => {
-      try { await api('/clubs/join', { method: 'POST', body: { id: c.id, on: false } }); toast(t('Вы вышли из клуба')); await refreshClubs(); location.hash = '#/'; }
-      catch (e) { toast(e.message, true); }
-    }, t('Выйти')); };
-  });
+      <div class="facts"><span>${svg('users')}${esc(t('участников: {n}', { n: c.members }))}</span>${c.meet ? `<span>${svg('clock')}${esc(meetText(c.meet))}</span>` : ''}${c.since ? `<span>${svg('flag')}${esc(t('Вы в клубе с {d}', { d: fmtDay(isoOf(c.since)) }))}</span>` : ''}</div>
+      <p class="hint">${t(teacher() ? 'Заявки на вступление и отметки присутствия — в KU Portal, раздел «Клубы».' : 'Участие в клубе и профиль активности — в KU Portal, раздел «Клубы».')}</p></div>
+    <a class="btn wide" href="${esc(backUrl().split('#')[0] + '#/clubs')}">${svg('home')}${t('Открыть «Клубы» в KU Portal')}</a>`);
 }
 function clubEventDlg(c) {
   const iso = isoOf(Date.now() + 864e5 * 3);
