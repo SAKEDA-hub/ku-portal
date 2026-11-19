@@ -1,6 +1,11 @@
 'use strict';
 
-/* Закрытый API учебной базы. Все проверки прав выполняются здесь, на сервере. */
+/* Закрытый API учебной базы. Все проверки прав выполняются здесь, на сервере.
+ * Вход: свой логин и пароль либо сеанс KU Portal (portal-login). Через портал:
+ *   преподаватель — вся база с правом выставлять баллы; менеджер (право school) — вся база только для просмотра;
+ *   студент — только свои результаты, после однократной привязки логина учебной базы (portal-link);
+ *   остальные (руководитель клуба, сотрудник без права school) — доступа нет.
+ * Права портала перепроверяются при каждом запросе: отзыв допуска или роли действует сразу. */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -16,9 +21,9 @@ const TOKEN_TTL = 8 * 60 * 60 * 1000;
 const MAX_DOCX = 5 * 1024 * 1024;
 const SKILLS = new Set(['тесты', 'письмо', 'говорение']);
 const newId = prefix => `${prefix}_${crypto.randomBytes(12).toString('hex')}`;
-const safeUser = u => ({ id: u.id, username: u.username, role: u.role, direction: u.direction, year: u.year, group: u.group, number: u.number });
+const safeUser = u => ({ id: u.id, username: u.username, role: u.role, direction: u.direction, year: u.year, group: u.group, number: u.number, portal: !!u.portal });
 
-function createSchool({ dataDir }) {
+function createSchool({ dataDir, portal = null }) {
   const file = path.join(dataDir, 'school.json');
   const store = createStore({
     file, backupDir: path.join(dataDir, 'school-backups'),
@@ -39,12 +44,32 @@ function createSchool({ dataDir }) {
     return true;
   };
   const save = () => store.save(db);
+  /* Кем человек из портала входит в учебную базу: преподаватель / просмотр / свой студенческий логин / никем */
+  function portalIdentity(access) {
+    if (!access) return null;
+    if (access.role === 'teacher' || access.role === 'viewer') {
+      return { id: 'portal:' + access.id, username: access.fio, role: access.role, portal: true };
+    }
+    if (access.role === 'student' && access.link) {
+      const user = db.users.find(u => u.username === access.link && u.role === 'student');
+      return user ? Object.assign({}, user, { portal: true }) : null;
+    }
+    return null;
+  }
   const userOf = req => {
     const raw = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const s = sessions.get(raw);
     if (!s || s.exp < Date.now()) { sessions.delete(raw); return null; }
+    const user = s.portalId ? portalIdentity(portal && portal.byId(s.portalId)) : db.users.find(u => u.id === s.uid);
+    if (!user) { sessions.delete(raw); return null; }
     s.exp = Date.now() + TOKEN_TTL;
-    return db.users.find(u => u.id === s.uid) || null;
+    return user;
+  };
+  const canViewAll = u => u.role === 'teacher' || u.role === 'viewer';
+  const startSession = (res, session, user) => {
+    const token = crypto.randomBytes(32).toString('hex');
+    sessions.set(token, Object.assign({ exp: Date.now() + TOKEN_TTL }, session));
+    return json(res, { token, user: safeUser(user) });
   };
   const BODY_LIMIT = { '/api/school/test-file': Math.ceil(MAX_DOCX * 1.5) + 100_000 };
   const reject = (res, status, error) => { json(res, { error }, status); return true; };
@@ -67,7 +92,19 @@ function createSchool({ dataDir }) {
         return reject(res, e.status, e.status === 413 ? 'Слишком большой запрос' : 'Некорректный JSON');
       }
     }
-    if (p === '/api/school/login' && req.method === 'POST') {
+    let access = null;
+    if (p === '/api/school/portal-login' || p === '/api/school/portal-link') {
+      access = portal && portal.fromRequest(req);
+      if (!access) return reject(res, 401, 'Войдите в KU Portal');
+      if (!access.role) return reject(res, 403, 'Учебная база доступна студентам, преподавателям и администрации. Для вашей роли она закрыта');
+      if (access.role !== 'student' && p === '/api/school/portal-link') return reject(res, 400, 'Вход выполняется автоматически');
+    }
+    if (p === '/api/school/portal-login' && req.method === 'POST') {
+      const user = portalIdentity(access);
+      if (!user) return json(res, { needLink: true, error: 'Привяжите логин учебной базы' }, 409);
+      return startSession(res, { portalId: access.id }, user);
+    }
+    if ((p === '/api/school/login' || p === '/api/school/portal-link') && req.method === 'POST') {
       const username = String(body.username || '').trim().slice(0, 100);
       const ip = clientIp(req), name = username.toLowerCase(), pair = name + '|' + ip;
       const tooMany = () => reject(res, 429, 'Слишком много попыток. Попробуйте через 15 минут.');
@@ -77,9 +114,14 @@ function createSchool({ dataDir }) {
       const user = db.users.find(u => u.username === username);
       if (!await passwordOk(user, body.password || '')) return reject(res, 401, 'Неверный логин или пароль');
       releasePair(); releaseUser(); releaseIp();
-      const token = crypto.randomBytes(32).toString('hex');
-      sessions.set(token, { uid: user.id, exp: Date.now() + TOKEN_TTL });
-      return json(res, { token, user: safeUser(user) });
+      // студент, вошедший в портал, привязывает свой логин — дальше вход автоматический
+      if (p === '/api/school/portal-link') {
+        if (user.role !== 'student') return reject(res, 403, 'Привязать можно только логин студента');
+        if (portal.linkTaken(user.username, access.id)) return reject(res, 409, 'Этот логин уже привязан к другому аккаунту портала');
+        portal.link(access.id, user.username);
+        return startSession(res, { portalId: access.id }, portalIdentity(portal.byId(access.id)));
+      }
+      return startSession(res, { uid: user.id }, user);
     }
     if (p === '/api/school/health' && req.method === 'GET') return json(res, { ready: db.users.length > 0, users: db.users.length, tests: db.tests.length });
     const u = userOf(req);
@@ -90,7 +132,7 @@ function createSchool({ dataDir }) {
     }
     if (p === '/api/school/me' && req.method === 'GET') return json(res, { user: safeUser(u) });
     if (p === '/api/school/results' && req.method === 'GET') {
-      const visibleUsers = u.role === 'teacher' ? db.users : db.users.filter(x => x.id === u.id);
+      const visibleUsers = canViewAll(u) ? db.users : db.users.filter(x => x.id === u.id);
       const ids = new Set(visibleUsers.map(x => x.id));
       const results = db.results.filter(r => ids.has(r.userId)).map(r => ({
         ...r, test: db.tests.find(t => t.id === r.testId), user: visibleUsers.find(x => x.id === r.userId),

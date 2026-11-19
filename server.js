@@ -16,7 +16,7 @@ const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
 const SCHOOL_DIR = path.join(ROOT, 'school'); // закрытый кабинет результатов учебной базы (/school/)
-const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, demo: DEMO_ON } = require('./server/access');
+const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, schoolLinkOf, schoolLinkTaken, setSchoolLink, demo: DEMO_ON } = require('./server/access');
 const { clientIp, readJson, HttpError, sendStatic } = require('./server/http');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
@@ -355,7 +355,18 @@ function serveStatic(req, res, url) {
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON });
-const school = require('./server/school').createSchool({ dataDir: DATA });
+/* Вход в учебную базу через сеанс портала: преподаватель, менеджер (право school, только просмотр), студент (по привязке) */
+function schoolAccess(u) {
+  if (!u || !grantOf(u)) return null;
+  const role = u.role === 'teacher' ? 'teacher' : permsOf(u).school ? 'viewer' : u.role === 'student' ? 'student' : null;
+  return { id: u.id, fio: u.fio, role, link: role === 'student' ? schoolLinkOf(u) : null };
+}
+const school = require('./server/school').createSchool({ dataDir: DATA, portal: {
+  fromRequest: req => schoolAccess(userOf(req)),
+  byId: id => schoolAccess(db.users.find(x => x.id === id)),
+  link: (id, username) => setSchoolLink(db.users.find(x => x.id === id), username),
+  linkTaken: (username, id) => schoolLinkTaken(username, db.users.find(x => x.id === id)),
+} });
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');

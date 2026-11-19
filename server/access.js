@@ -26,6 +26,7 @@ const grantFile = user => path.join(accessDir, userDigest(user) + '.json');
 const idFile = (kind, user) => path.join(accessDir, kind + '-' + crypto.createHash('sha256').update(String(user.id)).digest('hex') + '.json');
 const groupsFile = user => idFile('groups', user);
 const permsFile = user => idFile('perms', user);
+const schoolFile = user => idFile('school', user);
 
 function grantOf(user) {
   if (demo) return 'demo';
@@ -76,12 +77,12 @@ function setGroups(user, groups) {
 }
 
 /* Служебные права сверх роли (назначает оператор): clubs — ID клубов, которыми человек руководит ('*' — все),
-   dorm — администрация общежития. Роль «менеджер» = все клубы + общежитие. */
-const NO_PERMS = Object.freeze({ clubs: Object.freeze([]), dorm: false });
+   dorm — администрация общежития, school — просмотр всей учебной базы. Роль «менеджер» = всё перечисленное. */
+const NO_PERMS = Object.freeze({ clubs: Object.freeze([]), dorm: false, school: false });
 const CLUB_ID = /^[\w-]{1,64}$/;
 function normalizePerms(p) {
   const clubs = Array.isArray(p && p.clubs) ? [...new Set(p.clubs.map(String).filter(c => c === '*' || CLUB_ID.test(c)))] : [];
-  return { clubs: clubs.includes('*') ? ['*'] : clubs, dorm: !!(p && p.dorm === true) };
+  return { clubs: clubs.includes('*') ? ['*'] : clubs, dorm: !!(p && p.dorm === true), school: !!(p && p.school === true) };
 }
 function permsOf(user) {
   let text;
@@ -101,4 +102,28 @@ function setPerms(user, perms) {
   return next;
 }
 
-module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms };
+/* Привязка студента портала к его логину учебной базы (/school/): после неё вход туда — без пароля */
+function schoolLinkOf(user) {
+  try {
+    const username = JSON.parse(fs.readFileSync(schoolFile(user), 'utf8')).username;
+    return typeof username === 'string' && username ? username : null;
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.error('[access] привязка учебной базы не прочитана:', user.id, error.code || 'parse');
+    return null;
+  }
+}
+/* Логин учебной базы уже привязан к другому студенту портала (файлов немного — по одному на студента) */
+function schoolLinkTaken(username, exceptUser) {
+  const except = exceptUser && path.basename(schoolFile(exceptUser));
+  let names;
+  try { names = fs.readdirSync(accessDir).filter(n => n.startsWith('school-') && n.endsWith('.json') && n !== except); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  return names.some(n => { try { return JSON.parse(fs.readFileSync(path.join(accessDir, n), 'utf8')).username === username; } catch { return false; } });
+}
+function setSchoolLink(user, username) {
+  fs.mkdirSync(accessDir, { recursive: true, mode: 0o700 });
+  if (username) writeJsonAtomic(schoolFile(user), { username });
+  else fs.rmSync(schoolFile(user), { force: true });
+}
+
+module.exports = { demo, dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms, schoolLinkOf, schoolLinkTaken, setSchoolLink };

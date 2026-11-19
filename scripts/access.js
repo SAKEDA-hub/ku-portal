@@ -3,16 +3,16 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms } = require('../server/access');
+const { dataDir, grantOf, approve, revoke, groupsOf, setGroups, normalizeGroups, permsOf, setPerms, schoolLinkOf, schoolLinkTaken, setSchoolLink } = require('../server/access');
 
 /* Служебные роли поверх основной: что именно человек может делать в портале */
 const PRESETS = {
-  manager: () => ({ clubs: ['*'], dorm: true }), // менеджер: все клубы и общежитие
+  manager: () => ({ clubs: ['*'], dorm: true, school: true }), // менеджер: все клубы, общежитие, просмотр учебной базы
   'club-lead': (clubs) => ({ clubs: String(clubs || '').split(',').map(s => s.trim()).filter(Boolean) }), // руководитель своих клубов
   dorm: () => ({ dorm: true }), // администрация общежития
   none: () => ({}),
 };
-const permsText = (p) => [p.clubs.includes('*') ? 'все клубы' : p.clubs.length ? 'клубы: ' + p.clubs.join(', ') : '', p.dorm ? 'общежитие' : ''].filter(Boolean).join('; ');
+const permsText = (p) => [p.clubs.includes('*') ? 'все клубы' : p.clubs.length ? 'клубы: ' + p.clubs.join(', ') : '', p.dorm ? 'общежитие' : '', p.school ? 'учебная база' : ''].filter(Boolean).join('; ');
 const { setPasswordSync } = require('../server/security');
 const { writeJsonAtomic } = require('../server/store');
 
@@ -37,18 +37,34 @@ function run([command, key, role, name]) {
     if (password) { console.log('Передайте новый пароль лично пользователю.'); console.log(password); }
     return;
   }
-  if (!['list', 'approve', 'revoke', 'groups', 'role'].includes(command)) {
-    throw new Error('Команды: list | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | role <ID> manager|club-lead|dorm|none ["<клуб1,клуб2>"] | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
+  if (!['list', 'approve', 'revoke', 'groups', 'role', 'school-link'].includes(command)) {
+    throw new Error('Команды: list | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | role <ID> manager|club-lead|dorm|none ["<клуб1,клуб2>"] | school-link <ID> <логин учебной базы>|none | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
   }
   const file = path.join(dataDir, 'db.json');
   const users = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).users : [];
   if (command === 'list') {
     console.table(users.map(u => ({ id: u.id, name: u.fio, email: u.email, role: u.role,
-      group: u.role === 'teacher' ? (groupsOf(u) || []).join(', ') : u.group, access: !!grantOf(u), perms: permsText(permsOf(u)) })));
+      group: u.role === 'teacher' ? (groupsOf(u) || []).join(', ') : u.group, access: !!grantOf(u), perms: permsText(permsOf(u)),
+      school: u.role === 'student' ? schoolLinkOf(u) || '' : '' })));
     return;
   }
   const user = users.find(u => u.id === key);
   if (!user) throw new Error('Пользователь не найден');
+  if (command === 'school-link') {
+    if (user.role !== 'student') throw new Error('Привязывается только студент портала');
+    const username = role === 'none' ? null : String(role || '').trim();
+    if (username === '') throw new Error('school-link <ID> <логин учебной базы>|none');
+    if (username) {
+      const schoolFile = path.join(dataDir, 'school.json');
+      const schoolUsers = fs.existsSync(schoolFile) ? JSON.parse(fs.readFileSync(schoolFile, 'utf8')).users : [];
+      if (!schoolUsers.some(u => u.username === username && u.role === 'student')) throw new Error('В учебной базе нет студента с таким логином');
+      if (schoolLinkTaken(username, user)) throw new Error('Этот логин уже привязан к другому аккаунту портала');
+    }
+    setSchoolLink(user, username);
+    require('../server/audit').createAudit(dataDir)('portal.school-link', 'operator', user.id);
+    console.log(JSON.stringify({ action: 'school-link', userId: user.id, username }));
+    return;
+  }
   if (command === 'role') {
     const preset = PRESETS[role];
     if (!preset) throw new Error('role <ID> manager|club-lead|dorm|none ["<клуб1,клуб2>"]');
