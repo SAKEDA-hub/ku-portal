@@ -43,6 +43,7 @@ function applyNewPassword(user, hash, { reset2fa, dropUserSessions }) {
   user.passChangedAt = Date.now();
   user.mustChangePassword = true;
   user.tempPasswordUntil = Date.now() + TEMP_PASSWORD_MS;
+  delete user.passReset; // ссылка из письма восстановления больше не действует
   if (reset2fa) delete user.totp;
   dropUserSessions(user.id);
 }

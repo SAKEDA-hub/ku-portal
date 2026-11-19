@@ -382,6 +382,8 @@ const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf,
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
 const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx)];
 /* Админ-панель (server/admin.js): пользователи, допуск, права, сброс пароля, копия базы — право admin */
+/* Восстановление пароля по почте (server/recovery.js, письма — server/mail.js) */
+const recovery = require('./server/recovery').createRecovery({ getDB: () => db, saveDB, ok, bad, sec, audit, grantOf, clientIp, dropUserSessions });
 const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA });
 const MUST_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/settings', '/api/sessions', '/api/inbox']);
 const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
@@ -451,6 +453,7 @@ async function handleRequest(req, res) {
   const u = userOf(req);
 
     /* ---------- Аутентификация ---------- */
+    if (await recovery(p, req, res, body)) return;
     if (p === '/api/auth/register' && req.method === 'POST') {
       const { lastName = '', firstName = '', middleName = '', email = '', password = '', role = 'student', group = '', program = 'ku' } = body;
       if (![lastName, firstName, middleName, group].every(v => typeof v === 'string' && v.length <= 100) ||
@@ -639,7 +642,7 @@ async function handleRequest(req, res) {
       if (nx === cur) return bad(res, 400, 'Новый пароль совпадает с текущим');
       await sec.setPassword(u, nx);
       u.passChangedAt = Date.now();
-      delete u.mustChangePassword; delete u.tempPasswordUntil; // временный пароль от администратора заменён своим
+      delete u.mustChangePassword; delete u.tempPasswordUntil; delete u.passReset; // временный пароль от администратора заменён своим
       // выходим на всех остальных устройствах
       dropUserSessions(u.id, reqToken(req));
       saveDB();

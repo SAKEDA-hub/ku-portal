@@ -373,8 +373,10 @@ function renderAuthForm() {
     box.innerHTML = `
       <input class="inp" id="liEmail" type="email" placeholder="Email">
       <input class="inp" id="liPass" type="password" placeholder="${t('Пароль')}">
-      <button class="btn pri" id="liBtn">${t('Войти')}</button>`;
+      <button class="btn pri" id="liBtn">${t('Войти')}</button>
+      <div style="text-align:center;margin-top:10px"><a href="#/forgot" id="liForgot" class="muted">${t('Забыли пароль?')}</a></div>`;
     document.getElementById('liBtn').onclick = doLogin;
+    document.getElementById('liForgot').onclick = (e) => { e.preventDefault(); viewForgot(document.getElementById('liEmail').value.trim()); }; // public/recover.js
     document.getElementById('liPass').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
   } else {
     box.innerHTML = `
@@ -1198,7 +1200,9 @@ let askedNewPassword = false;
 function route() {
   stopPoll();
   applyTheme(); // цвета пользователя; до входа и после выхода — KU
-  if (!S.user) { stopNotif(); return viewAuth(); }
+  const resetMatch = /^#\/reset\/([0-9a-f]{48})$/.exec(location.hash); // ссылка из письма восстановления (public/recover.js)
+  if (resetMatch && !S.user) { stopNotif(); return viewReset(resetMatch[1]); }
+  if (!S.user) { stopNotif(); return location.hash === '#/forgot' ? viewForgot() : viewAuth(); }
   startNotif();
   const h = location.hash.replace(/^#\/?/, '');
   const parts = h.split('/').filter(Boolean);
