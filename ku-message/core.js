@@ -8,7 +8,9 @@
  */
 const app = document.getElementById('app');
 const M = { token: null, user: null, srv: null, tab: 'chats', ch: null, list: null, clubs: null, q: '' };
-const PORTAL_URL = 'https://sakeda-hub.github.io/ku-portal/'; // если портал не передал адрес возврата
+const PORTAL_URL = /\.github\.io$/i.test(location.hostname)
+  ? location.origin + '/ku-portal/'
+  : location.origin + '/'; // если портал не передал адрес возврата — на основной адрес текущего хоста
 
 /* ------------------------------ Иконки ------------------------------ */
 const I = {

@@ -4,7 +4,7 @@
 
 Работает на чистом Node.js, внешние зависимости не нужны.
 
-**Сайт: https://sakeda-hub.github.io/ku-portal/** (тестовый вход — на экране входа, пароль `1234`). Сервер — alwaysdata, см. «Публикация».
+**Основной адрес сайта: https://ku-portal.alwaysdata.net/** (тестовый вход — на экране входа, пароль `1234`). Портал, API, онлайн-экзамен и KU Message обслуживаются одним Node.js-сервером на alwaysdata.
 
 | Вход | Раздел «Экзамен» | Онлайн-экзамен |
 |:---:|:---:|:---:|
@@ -94,11 +94,11 @@ node server.js
 
 ## Публикация для других людей
 
-Схема: **сервер (API, вход, оценки, онлайн-экзамен) — [alwaysdata](https://www.alwaysdata.com)** (бесплатно, без карты, файлы базы сохраняются между перезапусками); **интерфейс — GitHub Pages**: https://sakeda-hub.github.io/ku-portal/. Портал целиком открывается и с самого сервера: `https://<аккаунт>.alwaysdata.net`.
+Схема: **весь проект — [alwaysdata](https://www.alwaysdata.com)**: портал, API, онлайн-экзамен и KU Message работают с одного адреса `https://<аккаунт>.alwaysdata.net`. Для этого же адреса уже настроена точка входа `/` в `public/`, а сервисы открываются по `/exam-sync/` и `/ku-message/`. `https://sakeda-hub.github.io/ku-portal/` можно оставить как прежний запасной адрес на время перехода; основной адрес — alwaysdata.
 
 Обновление:
-- **сервер** — скрипт `deploy/alwaysdata-update.sh` по расписанию (alwaysdata → Advanced → Scheduled tasks, каждые 5 минут) забирает `main` из GitHub и, если код изменился, обновляет файл `.restart` — сервер замечает это за ~5 с, сохраняет базу и завершается, alwaysdata запускает его заново (веб и SSH у alwaysdata — разные машины, поэтому так, а не через `pkill`). Паролей и токенов в GitHub не нужно. Вручную — в терминале alwaysdata: `sh ~/ku-portal/deploy/alwaysdata-update.sh`;
-- **интерфейс** — workflow `.github/workflows/deploy.yml` при каждом push в `main` (вкладка **Actions**).
+- **весь проект** — workflow `.github/workflows/deploy.yml` загружает код (включая `public/`, `exam-sync/` и `ku-message/`) на alwaysdata при push в `main`, если заданы секреты `ALWAYSDATA_*`. Без этих секретов код можно обновлять существующим скриптом `deploy/alwaysdata-update.sh` по расписанию или вручную.
+- **данные** — хранятся на диске alwaysdata в `data/`; код и публикация сайта их не заменяют.
 
 ### Первый запуск на alwaysdata (один раз)
 
@@ -106,17 +106,16 @@ node server.js
 2. **Web → Sites** → сайт → тип **Node.js**, Command: `node /home/<аккаунт>/ku-portal/server.js`, Working directory: `ku-portal`.
 3. **Remote access → SSH → on the Web** (терминал в браузере): `git clone https://github.com/SAKEDA-hub/ku-portal.git ~/ku-portal`, затем перезапустить сайт (Web → Sites → ↻).
 4. **Advanced → Scheduled tasks** → команда `sh ~/ku-portal/deploy/alwaysdata-update.sh`, каждые 5 минут.
-5. Адрес сервера для Pages — `KU_BACKEND_URL` в `public/config.js` (сейчас `https://ku-portal.alwaysdata.net`).
-6. Альтернатива п. 3–4 — деплой из GitHub Actions по SSH (job `backend` в `deploy.yml`, секреты `ALWAYSDATA_*`); без секретов он пропускается.
+5. Откройте `https://<имя-аккаунта>.alwaysdata.net/`: на этом адресе должны открываться портал, `/exam-sync/` и `/ku-message/`. В `public/config.js` для same-origin режима ничего менять не нужно.
+6. Для обновления через GitHub Actions добавьте секреты `ALWAYSDATA_ACCOUNT` и `ALWAYSDATA_SSH_PASSWORD`; чтобы workflow мог перезапустить сайт автоматически, добавьте также `ALWAYSDATA_API_TOKEN` и `ALWAYSDATA_SITE_ID`. Без секретов можно продолжить использовать запланированное обновление из шага 4.
 
 Заметки:
 - Сервер слушает IP и порт, которые задаёт alwaysdata (`IP`/`PORT` или `ALWAYSDATA_HTTPD_IP`/`ALWAYSDATA_HTTPD_PORT`).
 - `data/db.json` и `data/exam-sync.json` деплой не трогает — данные сохраняются.
-- Какой код сейчас запущен на сервере: `https://<аккаунт>.alwaysdata.net/api/version` (`commit` — коммит из `main`, `startedAt` — время последнего запуска). После push в `main` коммит сменится в течение ~5 минут.
+- Какой код сейчас запущен на сервере: `https://<аккаунт>.alwaysdata.net/api/version` (`commit` — коммит из `main`, `startedAt` — время последнего запуска).
 - Бесплатный тариф alwaysdata — только некоммерческое использование, один бесплатный аккаунт на человека.
 - AI-помощник с LM Studio по частному адресу (Tailscale/LAN) с хостинга недоступен — помощник отвечает выдержками с сайта ku.edu.kz. Для модели укажите публичный `https://` адрес туннеля в `LM_STUDIO_URL` (переменные окружения сайта в alwaysdata).
-- Другой адрес сервера для Pages — переменная репозитория `KU_BACKEND_URL` (Settings → Secrets and variables → Actions → Variables).
-- При открытии с самого сервера `public/config.js` ничего не меняет.
+- При открытии с самого alwaysdata `public/config.js` оставляет API на том же адресе. Если старый GitHub Pages адрес временно используется, он продолжает обращаться к серверу по `KU_BACKEND_URL`.
 - `render.yaml` оставлен для тех, кто хочет развернуть копию на Render (засыпает через 15 минут, база очищается при перезапуске).
 
 ## Настройки
@@ -129,7 +128,7 @@ node server.js
 | `LM_STUDIO_URL` | `http://100.86.38.5:1234` | Адрес LM Studio: частный IPv4/localhost (LAN, Tailscale) или `https://` адрес туннеля (Cloudflare Tunnel, Tailscale Funnel, ngrok). Окончание `/v1` допускается |
 | `LM_STUDIO_MODEL` | `google/gemma-4-e4b` | ID модели в LM Studio. Если точного совпадения нет, берётся похожая загруженная модель (в логе — предупреждение) |
 | `LM_STUDIO_API_KEY` | — | Необязательный ключ LM Studio; задаётся только в переменных окружения |
-| `PAGES_ORIGINS` | `https://sakeda-hub.github.io` | Адреса интерфейса на GitHub Pages (через запятую), которым разрешены запросы к API |
+| `PAGES_ORIGINS` | `https://sakeda-hub.github.io` | Разрешённый старый адрес GitHub Pages для переходного периода (через запятую) |
 | `EXAM_SYNC_URL` | — | Адрес отдельно развёрнутого exam-sync. По умолчанию используется встроенный `/exam-sync/` |
 
 ### Онлайн-экзамен
@@ -166,12 +165,12 @@ server/
   dorm.js            общежитие (/api/dorm*)
   demo.js            бета-аккаунты, их занятия и оценки
   ai.js              AI-помощник для сайта университета (/api/ai/*): база KU + LM Studio
-public/              KU Portal (одностраничное приложение) — раздаётся и с GitHub Pages
+public/              KU Portal (одностраничное приложение) — раздаётся Node.js-сервером на alwaysdata
   index.html, style.css, features.css
   app.js             каркас, вход, главная, расписание, оценки, кабинет, переходы в сервисы
   campus.js          клубы и общежитие      services.js   голосование (демо)
   message-launch.js  переход в KU Message и значок непрочитанного      i18n.js  словарь RU/KK/EN
-  config.js          адрес сервера для GitHub Pages
+  config.js          same-origin режим и адрес API для старой копии GitHub Pages
 ku-message/          KU Message (/ku-message/): index.html, core.js (вход, API, тема), views.js (экраны), settings.js, style.css
 exam-sync/           онлайн-экзамен (/exam-sync/) — отдельный проект, не менять
 data/                db.json (база), uploads/ (файлы), exam-sync.json — не в git, деплой их не трогает

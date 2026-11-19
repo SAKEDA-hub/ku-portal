@@ -358,8 +358,8 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
   sec.securityHeaders(req, res);
 
-  // Интерфейс портала на GitHub Pages (public/config.js) обращается к этому серверу с другого адреса.
-  // Разрешаем только перечисленные адреса Pages (PAGES_ORIGINS через запятую); авторизация — заголовок Authorization, без cookie.
+  // Для старой копии интерфейса на GitHub Pages разрешаем отдельный origin из PAGES_ORIGINS.
+  // Основная версия на alwaysdata использует same-origin запросы; авторизация — заголовок Authorization, без cookie.
   if (p.startsWith('/api/') || p.startsWith('/exam-sync/api/')) {
     const origin = req.headers.origin || '';
     if (PAGES_ORIGINS.has(origin)) {
