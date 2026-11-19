@@ -30,7 +30,7 @@ jobs:
           node-version: 22
       - name: Check JS syntax
         run: |
-          for f in server.js server/*.js scripts/*.js exam-sync/*.js public/*.js ku-message/*.js school/*.js; do
+          for f in server.js server/*.js scripts/*.js exam-sync/*.js public/*.js ku-message/*.js results/*.js; do
             node --check "$f"
           done
       - name: Run backend tests

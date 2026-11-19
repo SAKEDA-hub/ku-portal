@@ -99,7 +99,7 @@ const PROGRAMS = {
 };
 const programOf = (u) => PROGRAMS[(u && u.program) || 'ku'] || PROGRAMS.ku;
 /* Роль и служебные права (назначает администратор): руководство клубами ('*' — все), общежитие */
-const permsOf = (u) => (u && u.perms) || { clubs: [], dorm: false, school: false };
+const permsOf = (u) => (u && u.perms) || { clubs: [], dorm: false, results: false };
 const leadsClubs = (u) => permsOf(u).clubs.length > 0;
 function roleLabel(u) {
   if (u.role === 'teacher') return t('Преподаватель');
@@ -108,11 +108,11 @@ function roleLabel(u) {
   return t(p.clubs.includes('*') ? 'Менеджер' : p.clubs.length ? 'Руководитель клуба' : p.dorm ? 'Администрация общежития' : 'Сотрудник');
 }
 /* Служебные плитки на главной: клубы — руководителям, общежитие — администрации (студентам — всегда),
-   учебная база — студентам, преподавателям и администрации (руководителю клуба оценки не нужны) */
-const seesSchool = (u) => u.role === 'student' || u.role === 'teacher' || permsOf(u).school;
+   учебная база результатов — только преподавателям и администрации */
+const seesResults = (u) => u.role === 'teacher' || permsOf(u).results;
 function serviceTiles(u) {
   const p = permsOf(u), out = [];
-  if (seesSchool(u)) out.push(['Учебная база', 'chart', '#/school']);
+  if (seesResults(u)) out.push(['Учебная база', 'chart', '#/results']);
   if (u.role === 'student' || p.clubs.length) out.push(['Клубы', 'ball', '#/clubs']);
   if (u.role === 'student' || p.dorm) out.push(['Общежитие', 'building', '#/dorm']);
   return out;
@@ -358,7 +358,7 @@ function viewAuth(msg) {
     <div id="authform"></div>
     <div class="err" id="autherr">${msg ? esc(msg) : ''}</div>
     <div id="demoBox"></div>
-    <div style="text-align:center;margin-top:12px"><a href="/school/" class="muted">${t('Учебная база результатов')}</a></div>
+    <div style="text-align:center;margin-top:12px"><a href="/results/" class="muted">${t('Учебная база результатов')}</a></div>
   </div>`;
   renderAuthForm();
   renderDemoBox();
@@ -761,7 +761,7 @@ function viewExam() {
       <div class="oe-status" id="oeStatus"><i></i><span>${t('Проверяем доступность сайта…')}</span></div>
       <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}${t('Перейти к онлайн-экзамену')}</a>
       <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}${t('Открыть в новой вкладке')}</a>
-      <a class="btn ghost oe-new" href="/school/">${svg('chart')}${t('Открыть учебную базу результатов')}</a>
+      <a class="btn ghost oe-new" href="/results/">${svg('chart')}${t('Открыть учебную базу результатов')}</a>
     </div>
     <div class="oe-feat">
       ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, ti, d]) => `
@@ -1216,9 +1216,9 @@ function route() {
       return viewHome(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет
-    case 'school': // учебная база — отдельная страница, вход в неё по сеансу портала
-      if (!seesSchool(S.user)) return viewHome();
-      location.href = '/school/'; return;
+    case 'results': // учебная база — отдельная страница, вход в неё по сеансу портала
+      if (!seesResults(S.user)) return viewHome();
+      location.href = '/results/'; return;
     case 'dorm': return S.user.role === 'student' || permsOf(S.user).dorm ? viewDorm() : viewHome(); // public/campus.js
     case 'voting': return viewVoting(); // демо-сервис (public/services.js)
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');

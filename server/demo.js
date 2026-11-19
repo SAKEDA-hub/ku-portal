@@ -18,7 +18,7 @@ function createDemo({ getDB, saveDB, nid, setPasswordSync, subjectForDiscipline,
     { role: 'teacher', email: 'teacher3@demo.kz', lastName: 'Жумабекова', firstName: 'Динара', middleName: 'Ерлановна', dept: 'bio' },
     { role: 'student', email: 'student@demo.kz', lastName: 'Иванов', firstName: 'Данияр', middleName: '', group: DEMO_GROUP },
     { role: 'student', email: 'student2@demo.kz', lastName: 'Каримов', firstName: 'Алихан', middleName: '', group: BT_GROUP },
-    { role: 'staff', email: 'manager@demo.kz', lastName: 'Омарова', firstName: 'Сауле', middleName: 'Кайратовна', perms: { clubs: ['*'], dorm: true, school: true } },
+    { role: 'staff', email: 'manager@demo.kz', lastName: 'Омарова', firstName: 'Сауле', middleName: 'Кайратовна', perms: { clubs: ['*'], dorm: true, results: true } },
     { role: 'staff', email: 'clubs@demo.kz', lastName: 'Нурланов', firstName: 'Арман', middleName: 'Бекович', perms: { clubs: ['volunteer', 'football'] } },
   ];
   /* Занятия бета-преподавателей: [email, дисциплина, тип, группа, день, начало, конец, аудитория] */

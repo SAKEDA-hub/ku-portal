@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Validate school.db and create private runtime JSON + one-time credential CSV.
+"""Validate results.db and create private runtime JSON + one-time credential CSV.
 
 Run on Alwaysdata after uploading the SQLite file:
-  python3 ~/ku-portal/tools/import_school_db.py ~/ku-portal/data/school.db
+  python3 ~/ku-portal/tools/import_results_db.py ~/ku-portal/data/results.db
 Existing runtime data is never replaced unless --replace is explicitly supplied.
 """
 import argparse
@@ -38,11 +38,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("database", type=Path)
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parents[1] / "data")
-    parser.add_argument("--replace", action="store_true", help="replace existing school.json and credentials")
+    parser.add_argument("--replace", action="store_true", help="replace existing results.json and credentials")
     args = parser.parse_args()
     source = args.database.resolve()
-    target = args.data_dir.resolve() / "school.json"
-    credentials = args.data_dir.resolve() / "school-credentials.csv"
+    target = args.data_dir.resolve() / "results.json"
+    credentials = args.data_dir.resolve() / "results-credentials.csv"
     if not source.is_file():
         raise SystemExit("SQLite file not found")
     if not args.replace and (target.exists() or credentials.exists()):
@@ -107,7 +107,7 @@ def main() -> None:
     writer.writerows(credentials_rows)
     atomic_private(credentials, buffer.getvalue())
     print(f"Imported {len(users)} accounts, {len(tests)} tests, {len(results)} results.")
-    print("Credentials saved privately to data/school-credentials.csv (mode 600). Retrieve it over SFTP and delete it after saving a private copy.")
+    print("Credentials saved privately to data/results-credentials.csv (mode 600). Retrieve it over SFTP and delete it after saving a private copy.")
 
 
 if __name__ == "__main__":
