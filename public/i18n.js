@@ -1180,6 +1180,25 @@ const I18N = {
   'Удалить можно только свою публикацию': ['You can only delete your own post', 'Тек өз жарияланымыңызды жоюға болады'],
   'Чат клуба — только для участников': ['The club chat is for members only', 'Клуб чаты тек қатысушыларға арналған'],
 
+  /* --- клубы: профиль и заявки в портале, чат клуба — только в KU Message --- */
+  'Чат клуба': ['Club chat', 'Клуб чаты'],
+  'Чат клуба в KU Message пропадёт, записи на будущие встречи снимутся. История участия останется в профиле активности.': ['The club chat in KU Message will disappear and sign-ups for future meetings will be cancelled. Your participation history stays in your activity profile.', 'KU Message-тегі клуб чаты жойылады, болашақ кездесулерге жазылулар алынады. Қатысу тарихы белсенділік профилінде сақталады.'],
+  'Студент принят — у него появился чат клуба в KU Message': ['Student accepted — the club chat now appears in their KU Message', 'Студент қабылданды — оның KU Message-інде клуб чаты пайда болды'],
+  'Публикации и мероприятия — в канале клуба в KU Message.': ['Posts and events are in the club channel in KU Message.', 'Жарияланымдар мен іс-шаралар — KU Message-тегі клуб арнасында.'],
+  'Канал и чат клуба — в KU Message.': ['The club channel and chat are in KU Message.', 'Клуб арнасы мен чаты — KU Message-те.'],
+  'Глава клуба скоро рассмотрит вашу заявку. Когда её примут, в KU Message появится чат клуба.': ['The club head will review your request soon. Once accepted, the club chat will appear in KU Message.', 'Клуб басшысы өтініміңізді жақында қарайды. Қабылданғанда KU Message-те клуб чаты пайда болады.'],
+  'Когда глава клуба примет заявку, в KU Message появятся канал и чат клуба.': ['Once the club head accepts your request, the club channel and chat will appear in KU Message.', 'Клуб басшысы өтінімді қабылдағанда KU Message-те клуб арнасы мен чаты пайда болады.'],
+  'мероприятий': ['events', 'іс-шара'],
+  'Вы пока не состоите в клубах': ['You are not in any clubs yet', 'Сіз әзірге ешбір клубта жоқсыз'],
+  'Подайте заявку ниже — когда глава клуба её примет, в KU Message появится чат клуба.': ['Apply below — once the club head accepts, the club chat will appear in KU Message.', 'Төменде өтінім беріңіз — клуб басшысы қабылдағанда KU Message-те клуб чаты пайда болады.'],
+  'Найти клуб': ['Find a club', 'Клуб табу'],
+  'Отметьте, кто не пришёл': ['Mark who did not come', 'Келмегендерді белгілеңіз'],
+  'Отметка попадёт в профиль активности студента.': ['The mark goes into the student’s activity profile.', 'Белгі студенттің белсенділік профиліне түседі.'],
+  'Клуб появится здесь, когда глава примет вашу заявку в KU Portal.': ['The club will appear here once the head accepts your request in KU Portal.', 'Басшы KU Portal-дағы өтініміңізді қабылдағанда клуб осында пайда болады.'],
+  'Заявки на вступление и отметки присутствия — в KU Portal, раздел «Клубы».': ['Join requests and attendance are in KU Portal, “Clubs” section.', 'Кіру өтінімдері мен қатысу белгілері — KU Portal, «Клубтар» бөлімінде.'],
+  'Участие в клубе и профиль активности — в KU Portal, раздел «Клубы».': ['Club membership and the activity profile are in KU Portal, “Clubs” section.', 'Клубқа қатысу және белсенділік профилі — KU Portal, «Клубтар» бөлімінде.'],
+  'Открыть «Клубы» в KU Portal': ['Open “Clubs” in KU Portal', 'KU Portal-да «Клубтар» ашу'],
+
   /* --- KU Message: новые настройки (меню разделов, предпросмотр) --- */
   'Имя, группа, часы консультаций': ['Name, group, office hours', 'Аты, тобы, кеңес беру уақыты'],
   'Тема, цвет и предпросмотр': ['Theme, color and preview', 'Тақырып, түс және алдын ала қарау'],
