@@ -106,9 +106,11 @@ test('operator resets a portal password from the host while the site runs and wh
   const before = (await login(call, STUDENT)).value.token;
   const password = app.cli('reset-password', sid);
   assert.match(password, /^[A-Za-z0-9]{12}$/);
-  let applied = false;
-  for (let i = 0; i < 20 && !applied; i++) { await sleep(500); applied = (await login(call, STUDENT, password)).status === 200; }
-  assert.ok(applied, 'новый пароль применён без перезапуска');
+  // ждём, пока сервер заберёт поручение (раз в 5 секунд), не тратя попытки входа — иначе сработает защита от перебора
+  const pending = () => fs.readdirSync(path.join(app.data, 'portal-provision')).filter(f => f.endsWith('.json')).length;
+  for (let i = 0; i < 60 && pending(); i++) await sleep(250);
+  assert.equal(pending(), 0, 'поручение обработано без перезапуска');
+  assert.equal((await login(call, STUDENT, password)).status, 200);
   assert.equal((await call('/api/me', { token: before })).status, 401);
   assert.deepEqual(fs.readdirSync(path.join(app.data, 'portal-provision')), []);
 
