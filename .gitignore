@@ -1,11 +1,11 @@
 node_modules/
 data/db.json
 data/demo-credentials.json
-data/school.json
-data/school.db
-data/school-credentials.csv
-data/school-files/
-data/school-backups/
+data/results.json
+data/results.db
+data/results-credentials.csv
+data/results-files/
+data/results-backups/
 data/ku_context.json
 data/exam-sync.json
 *.log

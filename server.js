@@ -15,8 +15,8 @@ const HOST = process.env.IP || process.env.ALWAYSDATA_HTTPD_IP || (process.env.D
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const MESSAGE_DIR = path.join(ROOT, 'ku-message'); // KU Message — мессенджер университета (/ku-message/)
-const SCHOOL_DIR = path.join(ROOT, 'school'); // закрытый кабинет результатов учебной базы (/school/)
-const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, schoolLinkOf, schoolLinkTaken, setSchoolLink, demo: DEMO_ON } = require('./server/access');
+const RESULTS_DIR = path.join(ROOT, 'results'); // закрытый кабинет результатов учебной базы (/results/)
+const { dataDir: DATA, grantOf, groupsOf, setGroups, permsOf, demo: DEMO_ON } = require('./server/access');
 const { clientIp, readJson, HttpError, sendStatic } = require('./server/http');
 const audit = require('./server/audit').createAudit(DATA);
 const DB_FILE = path.join(DATA, 'db.json');
@@ -334,8 +334,9 @@ function serveStatic(req, res, url) {
   let root = PUB;
   if (p === '/ku-message' || p === '/connect' || p.startsWith('/connect/')) { res.writeHead(301, { Location: '/ku-message/' }); res.end(); return; }
   if (p.startsWith('/ku-message/')) { root = MESSAGE_DIR; p = p.slice('/ku-message'.length); if (p === '/') p = '/index.html'; }
-  if (p === '/school' || p === '/school/') { root = SCHOOL_DIR; p = '/index.html'; }
-  else if (p.startsWith('/school/')) { root = SCHOOL_DIR; p = p.slice('/school'.length); }
+  if (p === '/school' || p.startsWith('/school/') || p === '/results') { res.writeHead(301, { Location: '/results/' }); res.end(); return; } // прежний адрес
+  if (p === '/results/') { root = RESULTS_DIR; p = '/index.html'; }
+  else if (p.startsWith('/results/')) { root = RESULTS_DIR; p = p.slice('/results'.length); }
   p = path.normalize(p).replace(/^([.][.][\/\\])+/, '');
   const file = path.join(root, p);
   const relative = path.relative(root, file);
@@ -355,17 +356,14 @@ function serveStatic(req, res, url) {
 /* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
    раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
 const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON });
-/* Вход в учебную базу через сеанс портала: преподаватель, менеджер (право school, только просмотр), студент (по привязке) */
-function schoolAccess(u) {
+/* Учебная база результатов — только преподаватели и администрация (право results); студентам и руководителям клубов закрыта */
+function resultsAccess(u) {
   if (!u || !grantOf(u)) return null;
-  const role = u.role === 'teacher' ? 'teacher' : permsOf(u).school ? 'viewer' : u.role === 'student' ? 'student' : null;
-  return { id: u.id, fio: u.fio, role, link: role === 'student' ? schoolLinkOf(u) : null };
+  return { id: u.id, fio: u.fio, role: u.role === 'teacher' ? 'teacher' : permsOf(u).results ? 'admin' : null };
 }
-const school = require('./server/school').createSchool({ dataDir: DATA, portal: {
-  fromRequest: req => schoolAccess(userOf(req)),
-  byId: id => schoolAccess(db.users.find(x => x.id === id)),
-  link: (id, username) => setSchoolLink(db.users.find(x => x.id === id), username),
-  linkTaken: (username, id) => schoolLinkTaken(username, db.users.find(x => x.id === id)),
+const results = require('./server/results').createResults({ dataDir: DATA, portal: {
+  fromRequest: req => resultsAccess(userOf(req)),
+  byId: id => resultsAccess(db.users.find(x => x.id === id)),
 } });
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, markDirty: () => { dbDirty = true; } };
@@ -423,10 +421,10 @@ async function handleRequest(req, res) {
   // «Онлайн-экзамен» (exam-sync), встроенный в портал: /exam-sync/...
   if (await examSync(req, res)) return;
   // Отдельная учебная база: собственный вход и роли, независимые от портала/экзамена.
-  if (p.startsWith('/api/school/')) {
-    const limit = p === '/api/school/test-file' ? Math.ceil(5 * 1024 * 1024 * 1.5) + 100_000 : 1e6;
+  if (p.startsWith('/api/results/')) {
+    const limit = p === '/api/results/test-file' ? Math.ceil(5 * 1024 * 1024 * 1.5) + 100_000 : 1e6;
     if (Number(req.headers['content-length'] || 0) > limit) { res.setHeader('Connection', 'close'); return bad(res, 413, 'Слишком большой запрос'); }
-    if (await school.handle(req, res, url)) return;
+    if (await results.handle(req, res, url)) return;
   }
 
   if (!p.startsWith('/api/')) return serveStatic(req, res, url);

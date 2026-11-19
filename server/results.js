@@ -1,16 +1,15 @@
 'use strict';
 
-/* Закрытый API учебной базы. Все проверки прав выполняются здесь, на сервере.
- * Вход: свой логин и пароль либо сеанс KU Portal (portal-login). Через портал:
- *   преподаватель — вся база с правом выставлять баллы; менеджер (право school) — вся база только для просмотра;
- *   студент — только свои результаты, после однократной привязки логина учебной базы (portal-link);
- *   остальные (руководитель клуба, сотрудник без права school) — доступа нет.
+/* Закрытый API учебной базы результатов. Все проверки прав выполняются здесь, на сервере.
+ * Доступ — только преподавателям и администрации:
+ *   вход через сеанс KU Portal (portal-login): преподаватель или администратор (право results) — вся база с правкой;
+ *   собственный логин базы — только у учётных записей с ролью teacher; студенческие логины не входят.
  * Права портала перепроверяются при каждом запросе: отзыв допуска или роли действует сразу. */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { promisify } = require('util');
-const { createStore } = require('./store');
+const { createStore, writeJsonAtomic } = require('./store');
 const { clientIp, readJson, HttpError } = require('./http');
 const { createLimiter } = require('./security');
 
@@ -23,10 +22,28 @@ const SKILLS = new Set(['тесты', 'письмо', 'говорение']);
 const newId = prefix => `${prefix}_${crypto.randomBytes(12).toString('hex')}`;
 const safeUser = u => ({ id: u.id, username: u.username, role: u.role, direction: u.direction, year: u.year, group: u.group, number: u.number, portal: !!u.portal });
 
-function createSchool({ dataDir, portal = null }) {
-  const file = path.join(dataDir, 'school.json');
+/* Прежние имена (school.json, school-backups, school-files и ID с префиксом school_) переводятся один раз при запуске */
+function migrateLegacy(dataDir) {
+  const legacy = name => path.join(dataDir, name), next = name => path.join(dataDir, name.replace('school', 'results'));
+  for (const name of ['school-backups', 'school-files', 'school.json']) {
+    if (fs.existsSync(legacy(name)) && !fs.existsSync(next(name))) fs.renameSync(legacy(name), next(name));
+  }
+  const file = next('school.json'), files = next('school-files');
+  if (!fs.existsSync(file)) return;
+  const text = fs.readFileSync(file, 'utf8');
+  if (!text.includes('"school_')) return;
+  if (fs.existsSync(files)) {
+    for (const n of fs.readdirSync(files)) if (n.startsWith('school_')) fs.renameSync(path.join(files, n), path.join(files, n.replace(/^school_/, 'results_')));
+  }
+  writeJsonAtomic(file, JSON.parse(text.replace(/"school_/g, '"results_')), 1);
+  console.log('[results] учебная база переведена на новые имена');
+}
+
+function createResults({ dataDir, portal = null }) {
+  migrateLegacy(dataDir);
+  const file = path.join(dataDir, 'results.json');
   const store = createStore({
-    file, backupDir: path.join(dataDir, 'school-backups'),
+    file, backupDir: path.join(dataDir, 'results-backups'),
     empty: () => ({ version: 1, users: [], tests: [], components: [], results: [], scores: [] }),
     valid: d => !!d && d.version === 1 && ['users', 'tests', 'components', 'results', 'scores'].every(k => Array.isArray(d[k])),
   });
@@ -44,36 +61,29 @@ function createSchool({ dataDir, portal = null }) {
     return true;
   };
   const save = () => store.save(db);
-  /* Кем человек из портала входит в учебную базу: преподаватель / просмотр / свой студенческий логин / никем */
+  /* Кем человек из портала входит в базу: преподаватель или администратор; остальные — никем */
   function portalIdentity(access) {
-    if (!access) return null;
-    if (access.role === 'teacher' || access.role === 'viewer') {
-      return { id: 'portal:' + access.id, username: access.fio, role: access.role, portal: true };
-    }
-    if (access.role === 'student' && access.link) {
-      const user = db.users.find(u => u.username === access.link && u.role === 'student');
-      return user ? Object.assign({}, user, { portal: true }) : null;
-    }
-    return null;
+    if (!access || !['teacher', 'admin'].includes(access.role)) return null;
+    return { id: 'portal:' + access.id, username: access.fio, role: access.role, portal: true };
   }
   const userOf = req => {
     const raw = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const s = sessions.get(raw);
     if (!s || s.exp < Date.now()) { sessions.delete(raw); return null; }
-    const user = s.portalId ? portalIdentity(portal && portal.byId(s.portalId)) : db.users.find(u => u.id === s.uid);
+    const user = s.portalId ? portalIdentity(portal && portal.byId(s.portalId)) : db.users.find(u => u.id === s.uid && u.role === 'teacher');
     if (!user) { sessions.delete(raw); return null; }
     s.exp = Date.now() + TOKEN_TTL;
     return user;
   };
-  const canViewAll = u => u.role === 'teacher' || u.role === 'viewer';
+  const canViewAll = u => u.role === 'teacher' || u.role === 'admin';
   const startSession = (res, session, user) => {
     const token = crypto.randomBytes(32).toString('hex');
     sessions.set(token, Object.assign({ exp: Date.now() + TOKEN_TTL }, session));
     return json(res, { token, user: safeUser(user) });
   };
-  const BODY_LIMIT = { '/api/school/test-file': Math.ceil(MAX_DOCX * 1.5) + 100_000 };
+  const BODY_LIMIT = { '/api/results/test-file': Math.ceil(MAX_DOCX * 1.5) + 100_000 };
   const reject = (res, status, error) => { json(res, { error }, status); return true; };
-  const teacher = (u, res) => u.role === 'teacher' ? false : reject(res, 403, 'Только преподаватель может выполнять это действие');
+  const teacher = (u, res) => canViewAll(u) ? false : reject(res, 403, 'Только преподаватель или администратор может выполнять это действие');
   async function passwordOk(user, password) {
     const target = user && user.passAlgo === 'scrypt' && user.salt && user.passHash ? user : dummy;
     const got = await scrypt(String(password).slice(0, 256), target.salt, 64, SCRYPT);
@@ -83,7 +93,7 @@ function createSchool({ dataDir, portal = null }) {
 
   async function handle(req, res, url) {
     const p = url.pathname;
-    if (!p.startsWith('/api/school/')) return false;
+    if (!p.startsWith('/api/results/')) return false;
     let body = {};
     if (req.method === 'POST') {
       try { body = await readJson(req, BODY_LIMIT[p] || 1e6); } catch (e) {
@@ -92,19 +102,14 @@ function createSchool({ dataDir, portal = null }) {
         return reject(res, e.status, e.status === 413 ? 'Слишком большой запрос' : 'Некорректный JSON');
       }
     }
-    let access = null;
-    if (p === '/api/school/portal-login' || p === '/api/school/portal-link') {
-      access = portal && portal.fromRequest(req);
+    if (p === '/api/results/portal-login' && req.method === 'POST') {
+      const access = portal && portal.fromRequest(req);
       if (!access) return reject(res, 401, 'Войдите в KU Portal');
-      if (!access.role) return reject(res, 403, 'Учебная база доступна студентам, преподавателям и администрации. Для вашей роли она закрыта');
-      if (access.role !== 'student' && p === '/api/school/portal-link') return reject(res, 400, 'Вход выполняется автоматически');
-    }
-    if (p === '/api/school/portal-login' && req.method === 'POST') {
       const user = portalIdentity(access);
-      if (!user) return json(res, { needLink: true, error: 'Привяжите логин учебной базы' }, 409);
+      if (!user) return reject(res, 403, 'Учебная база результатов доступна только преподавателям и администрации');
       return startSession(res, { portalId: access.id }, user);
     }
-    if ((p === '/api/school/login' || p === '/api/school/portal-link') && req.method === 'POST') {
+    if (p === '/api/results/login' && req.method === 'POST') {
       const username = String(body.username || '').trim().slice(0, 100);
       const ip = clientIp(req), name = username.toLowerCase(), pair = name + '|' + ip;
       const tooMany = () => reject(res, 429, 'Слишком много попыток. Попробуйте через 15 минут.');
@@ -114,24 +119,18 @@ function createSchool({ dataDir, portal = null }) {
       const user = db.users.find(u => u.username === username);
       if (!await passwordOk(user, body.password || '')) return reject(res, 401, 'Неверный логин или пароль');
       releasePair(); releaseUser(); releaseIp();
-      // студент, вошедший в портал, привязывает свой логин — дальше вход автоматический
-      if (p === '/api/school/portal-link') {
-        if (user.role !== 'student') return reject(res, 403, 'Привязать можно только логин студента');
-        if (portal.linkTaken(user.username, access.id)) return reject(res, 409, 'Этот логин уже привязан к другому аккаунту портала');
-        portal.link(access.id, user.username);
-        return startSession(res, { portalId: access.id }, portalIdentity(portal.byId(access.id)));
-      }
+      if (user.role !== 'teacher') return reject(res, 403, 'Учебная база результатов доступна только преподавателям и администрации');
       return startSession(res, { uid: user.id }, user);
     }
-    if (p === '/api/school/health' && req.method === 'GET') return json(res, { ready: db.users.length > 0, users: db.users.length, tests: db.tests.length });
+    if (p === '/api/results/health' && req.method === 'GET') return json(res, { ready: db.users.length > 0 });
     const u = userOf(req);
     if (!u) return reject(res, 401, 'Войдите в систему');
-    if (p === '/api/school/logout' && req.method === 'POST') {
+    if (p === '/api/results/logout' && req.method === 'POST') {
       sessions.delete(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
       return json(res, { ok: true });
     }
-    if (p === '/api/school/me' && req.method === 'GET') return json(res, { user: safeUser(u) });
-    if (p === '/api/school/results' && req.method === 'GET') {
+    if (p === '/api/results/me' && req.method === 'GET') return json(res, { user: safeUser(u) });
+    if (p === '/api/results/results' && req.method === 'GET') {
       const visibleUsers = canViewAll(u) ? db.users : db.users.filter(x => x.id === u.id);
       const ids = new Set(visibleUsers.map(x => x.id));
       const results = db.results.filter(r => ids.has(r.userId)).map(r => ({
@@ -144,7 +143,7 @@ function createSchool({ dataDir, portal = null }) {
       }));
       return json(res, { users: visibleUsers.map(safeUser), tests: db.tests, components: db.components, results });
     }
-    if (p === '/api/school/tests' && req.method === 'POST') {
+    if (p === '/api/results/tests' && req.method === 'POST') {
       if (teacher(u, res)) return true;
       const title = String(body.title || '').trim().slice(0, 160);
       const comps = Array.isArray(body.components) ? body.components : [];
@@ -156,7 +155,7 @@ function createSchool({ dataDir, portal = null }) {
       for (const student of db.users.filter(x => x.role === 'student')) db.results.push({ id: newId('result'), userId: student.id, testId: test.id, totalScore: 0 });
       save(); return json(res, { test }, 201);
     }
-    if (p === '/api/school/scores' && req.method === 'POST') {
+    if (p === '/api/results/scores' && req.method === 'POST') {
       if (teacher(u, res)) return true;
       const result = db.results.find(r => r.id === body.resultId);
       const component = db.components.find(c => c.id === body.componentId && result && c.testId === result.testId);
@@ -167,7 +166,7 @@ function createSchool({ dataDir, portal = null }) {
       result.totalScore = db.scores.filter(s => s.resultId === result.id).reduce((sum, s) => sum + s.points, 0);
       save(); return json(res, { result });
     }
-    if (p === '/api/school/test-file' && req.method === 'POST') {
+    if (p === '/api/results/test-file' && req.method === 'POST') {
       if (teacher(u, res)) return true;
       const component = db.components.find(c => c.id === body.componentId);
       const filename = path.basename(String(body.filename || '')).slice(0, 180);
@@ -175,15 +174,15 @@ function createSchool({ dataDir, portal = null }) {
       if (!component || !filename.toLowerCase().endsWith('.docx') || !base64) return reject(res, 400, 'Нужен файл Word .docx и существующий тест');
       const content = Buffer.from(base64, 'base64');
       if (content.length > MAX_DOCX || content.length < 4 || content.readUInt32LE(0) !== 0x04034b50) return reject(res, 400, 'Файл не похож на DOCX или превышает 5 МБ');
-      const dir = path.join(dataDir, 'school-files'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const dir = path.join(dataDir, 'results-files'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const name = `${component.id}.docx`; fs.writeFileSync(path.join(dir, name), content, { mode: 0o600 });
       component.docxFilename = filename; save(); return json(res, { ok: true });
     }
-    const fileMatch = p.match(/^\/api\/school\/test-file\/([\w-]+)$/);
+    const fileMatch = p.match(/^\/api\/results\/test-file\/([\w-]+)$/);
     if (fileMatch && req.method === 'GET') {
       const component = db.components.find(c => c.id === fileMatch[1]);
       if (!component || !component.docxFilename) return reject(res, 404, 'Файл не найден');
-      const f = path.join(dataDir, 'school-files', `${component.id}.docx`);
+      const f = path.join(dataDir, 'results-files', `${component.id}.docx`);
       try { const bytes = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(component.docxFilename)}`, 'Cache-Control': 'no-store' }); res.end(bytes); return true; }
       catch { return reject(res, 404, 'Файл не найден'); }
     }
@@ -192,4 +191,4 @@ function createSchool({ dataDir, portal = null }) {
   return { handle };
 }
 
-module.exports = { createSchool };
+module.exports = { createResults };
