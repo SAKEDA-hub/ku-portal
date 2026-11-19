@@ -380,7 +380,8 @@ const results = require('./server/results').createResults({ dataDir: DATA, porta
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
 const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
-const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx)];
+const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx),
+  require('./server/polls').createPolls(Object.assign({ audit }, moduleCtx))]; // голосование (server/polls.js)
 /* Админ-панель (server/admin.js): пользователи, допуск, права, сброс пароля, копия базы — право admin */
 /* Восстановление пароля по почте (server/recovery.js, письма — server/mail.js) */
 const recovery = require('./server/recovery').createRecovery({ getDB: () => db, saveDB, ok, bad, sec, audit, grantOf, clientIp, dropUserSessions });

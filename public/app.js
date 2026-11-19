@@ -116,6 +116,7 @@ function serviceTiles(u) {
   if (seesResults(u)) out.push(['Учебная база', 'chart', '#/results']);
   if (u.role === 'student' || p.clubs.length) out.push(['Клубы', 'ball', '#/clubs']);
   if (u.role === 'student' || p.dorm) out.push(['Общежитие', 'building', '#/dorm']);
+  out.push(['Голосование', 'mic', '#/voting']); // опросы — всем (server/polls.js); «Сообщения» — в верхнем меню
   return out;
 }
 const PALETTES = {
@@ -511,7 +512,6 @@ async function viewHome() {
       // «Экзамен» здесь не дублируем — он есть в главном меню
       ['Рейтинг', 'star', '#/rating'], ['Расписание', 'calendar', '#/schedule'], ['Успеваемость', 'book', '#/grades'],
       ...serviceTiles(S.user),
-      ['Голосование', 'mic', '#/voting'], // демо-сервис (public/services.js); «Сообщения» — в верхнем меню
     ];
 
     document.getElementById('pagebody').innerHTML = `
@@ -1239,7 +1239,7 @@ function route() {
       if (!seesResults(S.user)) return viewHome();
       location.href = '/results/'; return;
     case 'dorm': return S.user.role === 'student' || permsOf(S.user).dorm ? viewDorm() : viewHome(); // public/campus.js
-    case 'voting': return viewVoting(); // демо-сервис (public/services.js)
+    case 'voting': return viewVoting(); // опросы (public/services.js, server/polls.js)
     case 'stub': return viewStub(parts[1] ? decodeURIComponent(parts.slice(1).join('/')) : '');
     default: return viewHome();
   }
