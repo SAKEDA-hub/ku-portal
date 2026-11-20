@@ -23,7 +23,6 @@ function viewAuth(msg) {
     <div id="authform"></div>
     <div class="err" id="autherr">${msg ? esc(msg) : ''}</div>
     <div id="demoBox"></div>
-    <div style="text-align:center;margin-top:12px"><a href="/results/" class="muted">${t('Учебная база результатов')}</a></div>
   </div>`;
   renderAuthForm();
   renderDemoBox();

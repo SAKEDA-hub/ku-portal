@@ -34,7 +34,14 @@ async function viewClubs(id) {
   const repaint = async () => {
     try { CLUBS.data = await api('/clubs'); } catch (e) { pb.innerHTML = `<div class="load">${esc(e.message)}</div>`; return; }
     if (!pb.isConnected) return;
-    if (CLUBS.data.canCreate) paintLead(pb, repaint); else paintClubs(pb, repaint);
+    // студент, который ведёт клуб (права клубов из админ-панели), — обычный студент: сверху заявки и посещения его клубов,
+    // ниже весь экран студента (свои клубы, вступление в другие, активность) — ревью п.14–16
+    if (CLUBS.data.canCreate && CLUBS.data.activity) {
+      pb.innerHTML = '<div id="clLead"></div><div id="clStudent"></div>';
+      paintLead(document.getElementById('clLead'), repaint);
+      paintClubs(document.getElementById('clStudent'), repaint);
+    } else if (CLUBS.data.canCreate) paintLead(pb, repaint);
+    else paintClubs(pb, repaint);
     const c = open && CLUBS.data.items.find((x) => x.id === open);
     open = '';
     if (c) clubDlg(c, repaint);
@@ -143,7 +150,8 @@ function findClubHTML(c) {
 }
 function paintClubs(pb, repaint) {
   const d = CLUBS.data, a = d.activity;
-  const mine = d.items.filter((c) => c.joined), rest = d.items.filter((c) => !c.joined).sort((x, y) => y.pending - x.pending);
+  // клубы, которые студент ведёт, показаны выше (paintLead) — в «Найти клуб» их нет
+  const mine = d.items.filter((c) => c.joined), rest = d.items.filter((c) => !c.joined && !c.manage).sort((x, y) => y.pending - x.pending);
   const stat = (c) => a.clubs.find((x) => x.id === c.id) || { hours: 0, events: 0, since: c.since };
   const maxH = Math.max(1, ...mine.map((c) => stat(c).hours));
   const months = actMonths(a.history), maxM = Math.max(1, ...months.map((m) => m.hours));
@@ -189,7 +197,7 @@ function paintLead(pb, repaint) {
   pb.innerHTML = `
     <div class="section-label">${t('Заявки на вступление')}</div>${requestsHTML(d)}
     ${d.recent && d.recent.length ? `<div class="section-label">${t('Отметьте, кто не пришёл')}</div><div class="tx cl-hint">${t('Отметка попадёт в профиль активности студента.')}</div>${d.recent.map(attendanceHTML).join('')}` : ''}
-    <div class="section-label">${t('Клубы')}</div>
+    <div class="section-label">${t(d.activity ? 'Клубы, которые вы ведёте' : 'Клубы')}</div>
     <div class="tx cl-hint">${t('Публикации и мероприятия — в канале клуба в KU Message.')}</div>
     ${d.items.filter((c) => c.manage).map((c) => `<div class="card cl-my" data-club="${esc(c.id)}">${clubAva(c)}
       <div class="club-t"><b>${esc(tv(c.name))}</b><span class="tx">${esc(t('участников: {n}', { n: c.members }))}${c.meet ? ' · ' + esc(meetText(c.meet)) : ''}</span>

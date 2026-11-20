@@ -835,4 +835,4 @@ a.card.lstrow { background: var(--card); border: 1px solid var(--line); padding:
 .svc-bk b { font-size: calc(14.5px * var(--fs)); line-height: 1.3; }
 .svc-bk .btn.sm, .svc-bk .badge { margin-top: 4px; }
 .svc-bk .row2 { width: 100%; gap: 6px; }
-@media (min-width: 1024px) { .svc { max-width: 780px; } }
+/* страницы сервисов — на всю ширину, как главная и рейтинг (ревью п.5: раньше 780px и пустое место справа) */

@@ -61,6 +61,7 @@ const DEMO_CHAT = [
 const DEMO_REQUESTS = { 'student2@demo.kz': ['chess'] };
 const MAX_TEXT = 2000;
 const HOUR_MS = 3600000;
+const { fileRef } = require('./files'); // вложения в канале и чате клуба — те же правила, что в KU Message
 
 function createClubs(ctx) {
   const { getDB, saveDB, nid, ok, bad, pushInbox, permsOf } = ctx;
@@ -163,7 +164,7 @@ function createClubs(ctx) {
   }
   function lastOf(c) {
     const p = c.posts[c.posts.length - 1], e = c.events.filter((x) => x.at).sort((a, b) => a.at - b.at).pop();
-    const x = p && (!e || p.at >= e.at) ? { at: p.at, text: p.text } : e ? { at: e.at, text: '📅 ' + e.title } : null;
+    const x = p && (!e || p.at >= e.at) ? { at: p.at, text: p.text || (p.file ? '📎 ' + p.file.name : '') } : e ? { at: e.at, text: '📅 ' + e.title } : null;
     return x ? { at: x.at, text: x.text.slice(0, 120) } : null;
   }
   const person = (id, c) => { const x = userById(id) || {}; return { id, fio: x.fio || '—', role: x.role || 'student', group: x.group || '', lead: !!(c && x.id && canManage(c, x)) }; };
@@ -239,7 +240,7 @@ function createClubs(ctx) {
       delete c.requests[body.uid];
       const st = userById(body.uid);
       if (body.accept && st && !isMember(c, st)) { c.members.push(st.id); c.since[st.id] = Date.now(); }
-      if (st && pushInbox) pushInbox(st, { type: 'club', club: c.name, accepted: !!body.accept });
+      if (st && pushInbox) pushInbox(st, { type: 'club', clubId: c.id, club: c.name, accepted: !!body.accept });
       saveDB();
       return ok(res);
     }
@@ -248,7 +249,7 @@ function createClubs(ctx) {
       if (!c) return bad(res, 404, 'Клуб не найден');
       if (!canSee(c, u)) return bad(res, 403, 'Канал клуба — только для участников');
       markRead(db, u, 'ch:' + c.id); markDirty();
-      const posts = c.posts.map((x) => ({ id: x.id, type: 'post', text: x.text, at: x.at, by: person(x.by, c), mine: x.by === u.id }))
+      const posts = c.posts.map((x) => ({ id: x.id, type: 'post', text: x.text, file: x.file || null, at: x.at, by: person(x.by, c), mine: x.by === u.id }))
         .concat(c.events.filter((e) => e.at && !e.weekly).map((e) => Object.assign(pubEvent(e, c, u), { type: 'event', at: e.at, by: person(e.by, c), past: e.date < today })))
         .sort((a, b) => a.at - b.at).slice(-200);
       const upcoming = c.events.filter((e) => e.date >= today).map((e) => pubEvent(e, c, u)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
@@ -258,8 +259,10 @@ function createClubs(ctx) {
       const c = club(body.id);
       if (!canManage(c, u)) return bad(res, 403, 'Публикует руководитель клуба');
       const text = clip(body.text, MAX_TEXT);
-      if (!text) return bad(res, 400, 'Пустое сообщение');
-      c.posts.push({ id: nid('cp'), by: u.id, text, at: Date.now() });
+      const file = fileRef(db, u, body.fileId);
+      if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
+      if (!text && !file) return bad(res, 400, 'Пустое сообщение');
+      c.posts.push(Object.assign({ id: nid('cp'), by: u.id, text, at: Date.now() }, file ? { file } : {}));
       markRead(db, u, 'ch:' + c.id);
       saveDB();
       return ok(res);
@@ -279,7 +282,7 @@ function createClubs(ctx) {
       const ids = new Set(c.chat.slice(-300).map((m) => m.from));
       return ok(res, {
         id: c.id, name: c.name, icon: c.icon, members: c.members.length,
-        people: [...ids].map((id) => person(id, c)), items: c.chat.slice(-300).map((m) => ({ id: m.id, from: m.from, text: m.text, at: m.at })),
+        people: [...ids].map((id) => person(id, c)), items: c.chat.slice(-300).map((m) => ({ id: m.id, from: m.from, text: m.text, file: m.file || null, at: m.at })),
         roster: c.members.map((id) => person(id, c)), manage: canManage(c, u),
       });
     }
@@ -287,8 +290,10 @@ function createClubs(ctx) {
       const c = club(body.id);
       if (!c || !canSee(c, u)) return bad(res, 403, 'Чат клуба — только для участников');
       const text = clip(body.text, MAX_TEXT);
-      if (!text) return bad(res, 400, 'Пустое сообщение');
-      c.chat.push({ id: nid('cm'), from: u.id, text, at: Date.now() });
+      const file = fileRef(db, u, body.fileId);
+      if (file === undefined) return bad(res, 400, 'Файл не найден — загрузите его заново');
+      if (!text && !file) return bad(res, 400, 'Пустое сообщение');
+      c.chat.push(Object.assign({ id: nid('cm'), from: u.id, text, at: Date.now() }, file ? { file } : {}));
       if (c.chat.length > 2000) c.chat.splice(0, c.chat.length - 2000);
       markRead(db, u, 'chat:' + c.id);
       saveDB();

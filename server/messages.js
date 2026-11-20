@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const MAX_TEXT = 2000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MIN_TASK_DAYS = 7; // обычные короткие задания не нужны — только работы с долгим сроком сдачи
-const FILE_EXT = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'rtf', 'odt', 'odp', 'ods', 'csv', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'zip', 'rar', '7z'];
+const { fileProblem, fileRef, extOf, IMAGE_MIME } = require('./files'); // какие вложения принимаются — server/files.js
 const MATERIAL_KINDS = ['lecture', 'practice', 'other'];
 const DAY_MS = 86400000;
 
@@ -23,7 +23,8 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 const clip = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
 
 function createMessages(ctx) {
-  const { getDB, saveDB, markDirty, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA } = ctx;
+  const { getDB, saveDB, markDirty, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf } = ctx;
+  const assigned = ctx.teacherGroups || (() => []); // группы, закреплённые за преподавателем в админ-панели
   const UPLOADS = path.join(DATA, 'uploads');
   if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true, mode: 0o700 });
 
@@ -58,26 +59,35 @@ function createMessages(ctx) {
   const person = (x) => ({ id: x.id, fio: x.fio, role: x.role, group: x.group || '', online: isOnline(x), officeHours: x.role === 'teacher' ? settingsOf(x).officeHours : '' });
 
   /* ------------------------------ Доступ ------------------------------ */
-  /* Предметы пользователя — из расписания: студенту — предметы его группы, преподавателю — его предметы */
+  /* Группы предмета: из расписания и группы, закреплённые за его преподавателем в админ-панели
+     (ревью п.8: преподаватель больше не добавляет занятия сам) */
+  function subjectGroups(sub) {
+    const db = getDB();
+    const teacher = userById(sub.teacherId);
+    return [...new Set([...db.schedule.filter((r) => r.subjectId === sub.id).map((r) => r.group), ...(teacher ? assigned(teacher) : [])])];
+  }
+  /* Предметы пользователя: студенту — предметы его группы, преподавателю — его предметы, у которых есть группы */
   function spacesOf(u) {
     const db = getDB();
-    const rows = u.role === 'teacher' ? db.schedule.filter((r) => r.teacherId === u.id) : db.schedule.filter((r) => r.group === u.group);
-    const map = new Map();
-    for (const r of rows) {
-      const s = map.get(r.subjectId) || { id: 's:' + r.subjectId, subjectId: r.subjectId, title: subjName(r.subjectId), teacherId: r.teacherId, teacher: teacherFio(r.teacherId), groups: [] };
-      if (!s.groups.includes(r.group)) s.groups.push(r.group);
-      map.set(r.subjectId, s);
+    const out = [];
+    for (const sub of db.subjects) {
+      if (u.role === 'teacher' && sub.teacherId !== u.id) continue;
+      const groups = subjectGroups(sub);
+      if (!groups.length || (u.role !== 'teacher' && !groups.includes(u.group))) continue;
+      out.push({ id: 's:' + sub.id, subjectId: sub.id, title: subjName(sub.id), teacherId: sub.teacherId, teacher: teacherFio(sub.teacherId), groups });
     }
-    return [...map.values()];
+    return out;
   }
+  /* Личные чаты: студент ↔ преподаватель его группы — по расписанию или по группам, закреплённым в админ-панели
+     (ревью п.8: преподаватель больше не добавляет занятия сам, поэтому одного расписания мало) */
   function contactsOf(u) {
     const db = getDB();
     if (u.role === 'teacher') {
-      const groups = new Set(db.schedule.filter((r) => r.teacherId === u.id).map((r) => r.group));
+      const groups = new Set([...db.schedule.filter((r) => r.teacherId === u.id).map((r) => r.group), ...assigned(u)]);
       return db.users.filter((x) => x.role === 'student' && groups.has(x.group));
     }
     const tids = new Set(db.schedule.filter((r) => r.group === u.group).map((r) => r.teacherId));
-    return db.users.filter((x) => x.role === 'teacher' && tids.has(x.id));
+    return db.users.filter((x) => x.role === 'teacher' && (tids.has(x.id) || assigned(x).includes(u.group)));
   }
   const dmId = (a, b) => 'd:' + [a, b].sort().join(':');
   function access(u, ch) {
@@ -85,9 +95,10 @@ function createMessages(ctx) {
     const s = /^s:([^:]+)$/.exec(ch || '');
     if (s) {
       const sub = db.subjects.find((x) => x.id === s[1]);
-      if (!sub || !db.schedule.some((r) => r.subjectId === sub.id)) return { ok: false };
+      const groups = sub ? subjectGroups(sub) : [];
+      if (!groups.length) return { ok: false };
       const manage = u.role === 'teacher' && sub.teacherId === u.id;
-      return { ok: manage || (u.role === 'student' && db.schedule.some((r) => r.subjectId === sub.id && r.group === u.group)), manage, kind: 'space', subject: sub };
+      return { ok: manage || (u.role === 'student' && groups.includes(u.group)), manage, kind: 'space', subject: sub };
     }
     const d = /^d:([^:]+):([^:]+)$/.exec(ch || '');
     if (d && (d[1] === u.id || d[2] === u.id)) {
@@ -118,14 +129,16 @@ function createMessages(ctx) {
   }
   function notifySubject(sub, item) {
     const db = getDB();
-    const groups = new Set(db.schedule.filter((r) => r.subjectId === sub.id).map((r) => r.group));
-    db.users.filter((x) => x.role === 'student' && groups.has(x.group)).forEach((x) => pushInbox(x, item));
+    const groups = new Set(subjectGroups(sub));
+    const ch = 's:' + sub.id; // по уведомлению портал открывает страницу предмета
+    db.users.filter((x) => x.role === 'student' && groups.has(x.group)).forEach((x) => pushInbox(x, Object.assign({ ch }, item)));
   }
-  function attachFile(u, fileId) {
-    if (!fileId) return null;
-    const f = store().files.find((x) => x.id === fileId && x.owner === u.id);
-    if (!f) return undefined;
-    return { id: f.id, name: f.name, size: f.size };
+  const attachFile = (u, fileId) => fileRef(store(), u, fileId);
+  /* Файл опубликован в клубе, который пользователь видит (участник или руководитель): канал или чат участников */
+  function inVisibleClub(u, fileId) {
+    const lead = permsOf ? permsOf(u).clubs : [];
+    return (getDB().clubs || []).some((c) => (c.members.includes(u.id) || lead.includes('*') || lead.includes(c.id))
+      && [...(c.posts || []), ...(c.chat || [])].some((row) => row.file?.id === fileId));
   }
   const pubMsg = (m) => ({ id: m.id, from: m.from, text: m.text, file: m.file || null, at: m.at });
   const pubMaterial = (m) => ({ id: m.id, kind: m.kind, title: m.title, text: m.text, file: m.file || null, at: m.at, edited: m.edited || null });
@@ -237,7 +250,7 @@ function createMessages(ctx) {
       const m = { id: nid('msg'), ch, from: u.id, text, file, at: Date.now() };
       db.chat.msgs.push(m);
       markRead(u, ch);
-      pushInbox(a.other, { type: 'msg', from: u.fio, text: text.slice(0, 80) || (file ? file.name : '') });
+      pushInbox(a.other, { type: 'msg', ch, from: u.fio, text: text.slice(0, 80) || (file ? file.name : '') }); // ch — открыть этот чат по уведомлению
       saveDB();
       return ok(res, { item: pubMsg(m) });
     }
@@ -257,14 +270,14 @@ function createMessages(ctx) {
   }
 
   /* -------------------------------- Файлы --------------------------------- */
-  async function files(p, req, res, u, body) {
+  async function files(p, req, res, u, body, url) {
     if (p === '/api/files' && req.method === 'POST') {
       const name = clip(body.name, 120).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_');
-      const ext = (name.split('.').pop() || '').toLowerCase();
-      if (!name || !FILE_EXT.includes(ext)) return bad(res, 400, 'Этот тип файла не поддерживается');
       const buf = Buffer.from(String(body.data || ''), 'base64');
       if (!buf.length) return bad(res, 400, 'Пустой файл');
       if (buf.length > MAX_FILE_BYTES) return bad(res, 400, 'Файл больше 10 МБ');
+      const problem = fileProblem(name, buf); // только фото и документы, содержимое совпадает с расширением
+      if (problem) return bad(res, 400, problem);
       let total = 0, mine = 0;
       for (const f of store().files) {
         total += f.size;
@@ -286,12 +299,14 @@ function createMessages(ctx) {
       const chat = store().chat;
       const shared = () => [chat.msgs, chat.materials, chat.tasks].some(rows =>
         rows.some(row => row.file?.id === f.id && access(u, row.ch).ok));
-      if (f.owner !== u.id && !shared()) return bad(res, 404, 'Файл не найден');
+      if (f.owner !== u.id && !shared() && !inVisibleClub(u, f.id)) return bad(res, 404, 'Файл не найден');
       const file = path.join(UPLOADS, f.id);
       if (!fs.existsSync(file)) return bad(res, 404, 'Файл не найден');
+      // фото отдаются с типом картинки — KU Message показывает их в чате (?inline=1), остальное — только скачать
+      const image = url && url.searchParams.get('inline') === '1' && IMAGE_MIME[extOf(f.name)];
       res.writeHead(200, {
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+        'Content-Type': image || 'application/octet-stream',
+        'Content-Disposition': `${image ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`,
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
       });
@@ -303,7 +318,7 @@ function createMessages(ctx) {
 
   return async function handle(p, req, res, u, body, url) {
     if (p.startsWith('/api/message/')) return message(p, req, res, u, body, url);
-    if (p.startsWith('/api/files')) return files(p, req, res, u, body);
+    if (p.startsWith('/api/files')) return files(p, req, res, u, body, url);
     return false;
   };
 }

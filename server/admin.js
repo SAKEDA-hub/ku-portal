@@ -49,7 +49,7 @@ function applyNewPassword(user, hash, { reset2fa, dropUserSessions }) {
 }
 
 function createAdmin(ctx) {
-  const { getDB, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA } = ctx;
+  const { getDB, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA, help } = ctx;
   const confirmed = new Map(); // токен сеанса (отпечаток) → до какого времени не спрашивать пароль
   const provisionDir = path.join(DATA, PROVISION_DIR);
 
@@ -92,6 +92,8 @@ function createAdmin(ctx) {
       const clubs = (db.clubs || []).map(c => ({ id: c.id, name: c.name }));
       return ok(res, { items, groups, clubs, me: u.id, confirmed: isConfirmed(req) });
     }
+    // обращения преподавателей (server/help.js): список — без пароля, ответ — как любое изменение, после подтверждения
+    if (p === '/api/admin/help' && req.method === 'GET') return ok(res, { items: help ? help.listAll() : [] });
     if (req.method !== 'POST') return bad(res, 404, 'Не найдено');
 
     if (p === '/api/admin/confirm') {
@@ -111,6 +113,13 @@ function createAdmin(ctx) {
     }
 
     if (!isConfirmed(req)) return needConfirm(res);
+    if (p === '/api/admin/help/reply') {
+      if (!help) return bad(res, 404, 'Не найдено');
+      const r = help.reply(u, body);
+      if (r.error) return bad(res, r.error[0], r.error[1]);
+      audit('portal.help.reply', u.id, String(body.id || ''));
+      return ok(res, r);
+    }
     const target = userById(body.id);
     if (!target) return bad(res, 404, 'Пользователь не найден');
     const self = target.id === u.id;

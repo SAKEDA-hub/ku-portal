@@ -403,3 +403,28 @@ textarea.inp { resize: vertical; line-height: 1.5; }
   .set-inline { flex-direction: column; align-items: stretch; } .set-inline .inp { min-width: 0; } .set-inline .btn { width: 100%; }
   .qr-row .inp { min-width: 0; flex: 1; }
 }
+
+/* ---------- свёрнутый список: только аватарки (ревью п.18; views.js — setFold/bindSideFold), только на компьютере ---------- */
+.only-d, .side-grip { display: none; }
+@media (min-width: 861px) {
+  .only-d { display: inline-flex; }
+  .side { position: relative; }
+  .side-fold svg { transition: transform .2s; }
+  .side-grip { display: block; position: absolute; top: 0; right: -4px; bottom: 0; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+  .side-grip:hover, .side-grip.drag { background: linear-gradient(to right, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+  .km.fold { grid-template-columns: 72px 84px 1fr; }
+  .km.fold .side-t, .km.fold .search, .km.fold .row-t, .km.fold .sep, .km.fold .empty-s, .km.fold .side-h .grow { display: none; }
+  .km.fold .side-h { justify-content: center; padding: 12px 0 4px; }
+  .km.fold .side-fold svg { transform: rotate(180deg); }
+  .km.fold .list { padding: 4px 8px 14px; }
+  .km.fold .row { justify-content: center; padding: 8px 0; }
+  .km.fold .row.unread > :first-child { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+}
+
+/* ---------- фото в сообщениях: картинкой, нажатие — крупно (ревью п.11; core.js — fileCard/bindFiles) ---------- */
+.file-img { display: block; margin-top: 4px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; background: var(--hover); cursor: zoom-in; max-width: min(320px, 100%); }
+.file-img img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
+.file-img-ph { display: grid; place-items: center; width: 220px; height: 140px; color: var(--muted); }
+.file-img-ph svg { width: 28px; height: 28px; }
+.file-img.broken .file-img-ph { color: var(--danger); }
+.img-full { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto 12px; border-radius: 10px; }

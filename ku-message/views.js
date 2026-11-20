@@ -78,7 +78,7 @@ function startApp() {
   const u = M.user;
   app.innerHTML = `<div class="km" id="km">
     <nav class="rail" id="rail">
-      <a class="rail-logo" href="#/" title="KU Message"><span class="logo">${svg('logo')}</span></a>
+      <a class="rail-logo" href="${esc(backUrl())}" title="${t('Главная KU Portal')}"><span class="logo">${svg('logo')}</span></a>
       ${railItems().map(([k, ic, l]) => `<button class="rail-i" data-t="${k}">${svg(ic)}<span>${t(l)}</span><em hidden></em></button>`).join('')}
       <span class="grow"></span>
       <button class="rail-i" data-t="settings">${svg('gear')}<span>${t('Настройки')}</span></button>
@@ -90,12 +90,15 @@ function startApp() {
         <b class="side-t" id="sideT"></b>
         <span class="grow"></span>
         <a class="ib only-m" href="${esc(backUrl())}" title="KU Portal">${svg('home')}</a>
+        <button class="ib only-d side-fold" id="sideFold" aria-pressed="false" title="${t('Свернуть список')}">${svg('back')}</button>
       </header>
       <label class="search" id="searchBox">${svg('search')}<input id="q" placeholder="${t('Поиск')}" autocomplete="off"></label>
       <div class="list" id="list"></div>
+      <div class="side-grip" id="sideGrip" title="${t('Потяните, чтобы свернуть или развернуть список')}"></div>
     </aside>
     <main class="main" id="main"></main>
   </div>`;
+  bindSideFold();
   document.getElementById('rail').onclick = (e) => {
     const b = e.target.closest('button[data-t]'); if (!b) return;
     if (b.dataset.t === 'settings') { location.hash = '#/settings'; return; }
@@ -107,6 +110,29 @@ function startApp() {
   route();
   refreshList();
   T.list = setInterval(refreshList, POLL_LIST_MS);
+}
+/* Список чатов и клубов сворачивается до аватарок (ревью п.18): кнопкой в шапке списка или перетаскиванием
+   его правого края мышью. Выбор запоминается в браузере (kum_fold). Только на компьютере — на телефоне список и так на весь экран. */
+const FOLD_KEY = 'kum_fold';
+const FOLD_AT = 200; // уже — свернуть, шире — развернуть (px от левого края списка)
+function setFold(on) {
+  const km = document.getElementById('km'), b = document.getElementById('sideFold');
+  if (!km) return;
+  km.classList.toggle('fold', on);
+  if (b) { b.setAttribute('aria-pressed', String(on)); b.title = t(on ? 'Развернуть список' : 'Свернуть список'); }
+  try { localStorage.setItem(FOLD_KEY, on ? '1' : ''); } catch { }
+}
+function bindSideFold() {
+  let saved = false; try { saved = localStorage.getItem(FOLD_KEY) === '1'; } catch { }
+  setFold(saved);
+  document.getElementById('sideFold').onclick = () => setFold(!document.getElementById('km').classList.contains('fold'));
+  const grip = document.getElementById('sideGrip'), side = document.querySelector('.side');
+  grip.onpointerdown = (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId); grip.classList.add('drag');
+    const left = side.getBoundingClientRect().left;
+    grip.onpointermove = (m) => setFold(m.clientX - left < FOLD_AT);
+    grip.onpointerup = () => { grip.onpointermove = grip.onpointerup = null; grip.classList.remove('drag'); };
+  };
 }
 const sumUnread = (list) => (list || []).reduce((n, x) => n + (x.unread || 0), 0);
 const clubUnread = (c) => (c.unread ? c.unread.channel + c.unread.chat : 0);
@@ -140,7 +166,8 @@ function route() {
   const c = /^#\/c\/([\w-]+)(?:\/(chat))?$/.exec(h);
   if (c) { M.tab = 'clubs'; M.ch = 'club:' + c[1]; km.classList.add('open'); paintRail(); paintList(); return openClub(c[1], c[2] || 'channel'); }
   const m = /^#\/(s|d)\/(.+)$/.exec(h);
-  M.ch = m ? decodeURIComponent(m[2]) : null;
+  let ch = null; try { ch = m ? decodeURIComponent(m[2]) : null; } catch { ch = null; } // испорченная ссылка не ломает страницу
+  M.ch = ch;
   if (m && m[1] === 'd' && !['chats', 'students'].includes(M.tab)) M.tab = teacher() && !(M.list && M.list.contacts.some((x) => x.ch === M.ch && x.last)) ? 'students' : 'chats';
   if (m && m[1] === 's') M.tab = 'subjects';
   if (!m && M.tab === 'settings') M.tab = homeTab();
@@ -159,7 +186,7 @@ async function refreshList() {
 const subjIcon = (title) => esc(String(title || '?').split(/\s+/).filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?');
 /* Строка списка как в Telegram: имя и время сверху, превью и счётчик снизу */
 function rowHTML(href, ico, name, sub, when, badge, on, unread) {
-  return `<a class="row ${on ? 'on' : ''} ${unread ? 'unread' : ''}" href="${href}">${ico}
+  return `<a class="row ${on ? 'on' : ''} ${unread ? 'unread' : ''}" href="${href}" title="${esc(name)}">${ico}
     <span class="row-t"><span class="row-1"><b>${esc(name)}</b>${when ? `<small>${when}</small>` : ''}</span>
     <span class="row-2"><span class="row-s">${sub}</span>${badge || ''}</span></span></a>`;
 }
@@ -182,7 +209,7 @@ function paintList() {
       esc(teacher() ? s.groups.join(', ') : s.teacher),
       s.last ? esc(whenShort(s.last.at)) : '',
       s.unread ? pill(s.unread) : s.nextDue ? `<span class="due-chip">${esc(t('до {d}', { d: fmtDay(s.nextDue) }))}</span>` : '',
-      M.ch === s.id, s.unread)).join('') || `<div class="empty-s">${t(teacher() ? 'Предметы появятся, когда вы добавите занятия в расписание.' : 'Предметы появятся, когда преподаватель добавит занятия вашей группе.')}</div>`;
+      M.ch === s.id, s.unread)).join('') || `<div class="empty-s">${t(teacher() ? 'Предметы появятся, когда администратор закрепит за вами группы.' : 'Предметы появятся, когда преподаватель добавит занятия вашей группе.')}</div>`;
   } else if (M.tab === 'chats') {
     const talks = d.contacts.filter((c) => c.last && q(c.fio)).sort((a, b) => b.last.at - a.last.at);
     html = talks.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, lastText(c), esc(whenShort(c.last.at)), pill(c.unread), M.ch === c.ch, c.unread)).join('');
@@ -198,7 +225,7 @@ function paintList() {
     html = groups.map((g) => {
       const people = d.contacts.filter((c) => c.group === g && q(c.fio));
       return people.length ? `<div class="sep">${esc(g)}</div>` + people.map((c) => rowHTML(`#/d/${encodeURIComponent(c.ch)}`, personIco(c), c.fio, esc(c.online ? t('в сети') : t('Студент')), '', `<span class="link">${t('Написать')}</span>`, M.ch === c.ch)).join('') : '';
-    }).join('') || `<div class="empty-s">${t('Студенты появятся, когда у вас будут занятия с группами.')}</div>`;
+    }).join('') || `<div class="empty-s">${t('Студенты появятся, когда администратор закрепит за вами группы.')}</div>`;
   }
   box.innerHTML = html;
 }
@@ -459,11 +486,13 @@ async function openClub(id, tab) {
     <nav class="tabs">${tabs.map(([k, suf, l, n]) => `<a href="#/c/${c.id}${suf}" class="tab ${tab === k ? 'on' : ''}">${t(l)}${n && tab !== k ? `<em class="pill">${n}</em>` : ''}</a>`).join('')}</nav>
     <div class="pinned" id="pinned" hidden></div>
     <div class="pane-b chat wall" id="chatBody"><div class="col" id="chatList"><div class="skel big"></div></div></div>
-    ${tab === 'chat' || c.manage ? composerHTML({ placeholder: t(tab === 'chat' ? 'Сообщение участникам…' : 'Публикация в канале…'), extra: tab === 'channel' ? `<button class="ib" id="evNew" title="${t('Мероприятие')}">${svg('calendar')}</button>` : '' })
+    ${tab === 'chat' || c.manage ? composerHTML({ attach: true, placeholder: t(tab === 'chat' ? 'Сообщение участникам…' : 'Публикация в канале…'), extra: tab === 'channel' ? `<button class="ib" id="evNew" title="${t('Мероприятие')}">${svg('calendar')}</button>` : '' })
       : `<footer class="ch-foot"><span>${svg('megaphone')}${t('В канале публикуют только главы клуба')}</span><a class="btn sm" href="#/c/${c.id}/chat">${svg('chat')}${t('Обсудить в чате')}</a></footer>`}`;
   document.getElementById('clInfo').onclick = () => clubInfoDlg(c);
   if (main.querySelector('.composer')) {
-    V.send = tab === 'chat' ? (text) => api('/clubs/chat/send', { method: 'POST', body: { id: c.id, text } }) : (text) => api('/clubs/post', { method: 'POST', body: { id: c.id, text } });
+    // файлы и фото — в чат участников и в канал (ревью п.17)
+    const send = (path) => (text, file) => api(path, { method: 'POST', body: { id: c.id, text, fileId: file ? file.id : '' } });
+    V.send = send(tab === 'chat' ? '/clubs/chat/send' : '/clubs/post');
     bindComposer();
     const ev = document.getElementById('evNew'); if (ev) ev.onclick = () => clubEventDlg(c);
   }
@@ -500,10 +529,11 @@ function paintChannel(d, list) {
     return `${sep}<article class="cpost ${x.type === 'event' ? 'is-ev' : ''}">
       <div class="cp-h">${clubIco(d, 'sm')}<b>${esc(tv(d.name))}</b><small>${x.by.id ? esc(x.by.fio) : ''}</small>
         ${x.mine && x.type === 'post' ? `<button class="ib sm del" data-del="${esc(x.id)}" title="${t('Удалить')}">${svg('trash')}</button>` : ''}</div>
-      ${x.type === 'event' ? eventCard(x) : `<p class="txt">${md(x.text)}</p>`}
+      ${x.type === 'event' ? eventCard(x) : `${x.text ? `<p class="txt">${md(x.text)}</p>` : ''}${x.file ? fileCard(x.file) : ''}`}
       <span class="meta">${esc(timeOf(x.at))}</span>
     </article>`;
   }).join('') : `<div class="empty chip-empty">${svg('megaphone')}<span>${t(d.manage ? 'Напишите первую публикацию — её увидят все участники клуба.' : 'В канале пока нет публикаций.')}</span></div>`;
+  bindFiles(list);
   list.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить публикацию?'), t('Публикация исчезнет у всех участников.'), () => act('/clubs/post/delete', { id: b.dataset.del }))));
   list.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => act('/clubs/event/register', { id: b.dataset.go, on: !!b.dataset.v }, b.dataset.v ? t('Вы записаны на мероприятие') : t('Запись отменена'))));
   list.querySelectorAll('[data-evdel]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить мероприятие?'), t('Мероприятие исчезнет у всех участников.'), () => act('/clubs/event/delete', { id: b.dataset.evdel }, t('Мероприятие удалено')))));
@@ -527,6 +557,7 @@ function paintClubChat(d, list) {
   const people = Object.fromEntries(d.people.map((p) => [p.id, p]));
   list.innerHTML = d.items.length ? msgsHTML(d.items, { group: true, people })
     : `<div class="empty chip-empty">${svg('users')}<span>${t('Здесь участники клуба обмениваются новостями. Напишите первым!')}</span></div>`;
+  bindFiles(list);
   list.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить сообщение?'), t('Сообщение исчезнет у всех участников.'), () => act('/clubs/chat/delete', { id: b.dataset.del }))));
 }
 function clubInfoDlg(c) {

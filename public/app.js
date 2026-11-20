@@ -70,12 +70,13 @@ function stopPoll() {
   if (window.__poll) { clearInterval(window.__poll); window.__poll = null; }
   if (window.__unsub) { const f = window.__unsub; window.__unsub = null; f(); }
 }
-function toast(text, isErr) {
+function toast(text, isErr, onClick) {
   const t = document.createElement('div');
-  t.className = 'toast' + (isErr ? ' err' : '');
+  t.className = 'toast' + (isErr ? ' err' : '') + (onClick ? ' link' : '');
   t.textContent = text;
+  if (onClick) { t.setAttribute('role', 'button'); t.tabIndex = 0; t.onclick = () => { t.remove(); onClick(); }; }
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3200);
+  setTimeout(() => t.remove(), onClick ? 6000 : 3200);
 }
 async function api(path, o) {
   o = o || {};
@@ -108,14 +109,15 @@ function roleLabel(u) {
   return t(p.clubs.includes('*') ? 'Менеджер' : p.clubs.length ? 'Руководитель клуба' : p.dorm ? 'Администрация общежития' : 'Сотрудник');
 }
 /* Служебные плитки на главной: клубы — руководителям, общежитие — администрации (студентам — всегда),
-   учебная база результатов — только преподавателям и администрации */
-const seesResults = (u) => u.role === 'teacher' || permsOf(u).results;
+   учебная база результатов — только по праву «учебная база» (администрация; преподавателям она убрана, ревью п.6) */
+const seesResults = (u) => !!permsOf(u).results;
 function serviceTiles(u) {
   const p = permsOf(u), out = [];
   if (p.admin) out.push(['Администрирование', 'shield', '#/admin']);
   if (seesResults(u)) out.push(['Учебная база', 'chart', '#/results']);
   if (u.role === 'student' || p.clubs.length) out.push(['Клубы', 'ball', '#/clubs']);
   if (u.role === 'student' || p.dorm) out.push(['Общежитие', 'building', '#/dorm']);
+  if (u.role === 'teacher') out.push(['Помощь', 'info', '#/help']); // обращения к администрации (public/services.js, server/help.js)
   out.push(['Голосование', 'mic', '#/voting']); // опросы — всем (server/polls.js); «Сообщения» — в верхнем меню
   return out;
 }
@@ -205,6 +207,7 @@ function fmtWhen(ts) {
 const NOTIF = { unread: 0, items: [], seen: null, timer: null, examOpen: null };
 const notifTypePref = { grade: 'notifGrades', schedule: 'notifSchedule', exam: 'notifExam' };
 const DORM_STATUS_TEXT = { new: 'Принята', work: 'В работе', done: 'Выполнена', rejected: 'Отклонена' };
+const HELP_STATUS_TEXT = { new: 'Принято', work: 'В работе', done: 'Решено', rejected: 'Отклонено' }; // обращения преподавателя (server/help.js)
 function notifText(n) {
   if (n.type === 'grade') return { title: t('Новая оценка'), body: `${tv(n.subject)} — ${n.score}` };
   if (n.type === 'schedule') return { title: t('Изменение в расписании'), body: `${tv(n.subject)} · ${weekdayName(n.day)} ${n.start}${n.room ? ' · ' + t('ауд.') + ' ' + n.room : ''}` };
@@ -214,8 +217,19 @@ function notifText(n) {
   if (n.type === 'material') return { title: t('Новый материал'), body: `${tv(n.subject)} — ${n.title}` };
   if (n.type === 'task') return { title: t('Новое задание'), body: `${tv(n.subject)} — ${n.title}${n.due ? ' · ' + t('до {d}', { d: fmtDay(n.due) }) : ''}` };
   if (n.type === 'club') return { title: t(n.accepted ? 'Заявка принята' : 'Заявка отклонена'), body: n.accepted ? t('Вы в клубе «{c}» — канал и чат открыты', { c: tv(n.club) }) : tv(n.club) };
+  if (n.type === 'help') return { title: t('Ответ на обращение'), body: [t(HELP_STATUS_TEXT[n.status] || ''), n.reply].filter(Boolean).join(' · ') };
   if (n.type === 'dorm') return { title: t('Обращение в общежитие'), body: [t(DORM_STATUS_TEXT[n.status] || ''), n.category ? tv(n.category) : '', n.reply].filter(Boolean).join(' · ') };
   return { title: t('Уведомление'), body: '' };
+}
+/* Куда ведёт уведомление (ревью п.3): сообщение — в этот чат KU Message, материал и задание — на страницу предмета,
+   клуб — в канал клуба, оценка, расписание, общежитие, помощь — в свой раздел портала. null — уведомление без перехода. */
+function notifTarget(n) {
+  const km = (open) => () => openMessage(false, open);
+  if (n.type === 'msg') return km(n.ch ? '/d/' + encodeURIComponent(n.ch) : '');
+  if (n.type === 'material' || n.type === 'task') return km(n.ch ? '/s/' + encodeURIComponent(n.ch) : '');
+  if (n.type === 'club') return n.accepted && n.clubId ? km('/c/' + n.clubId) : () => { location.hash = '#/clubs'; };
+  const hash = { grade: '#/grades', schedule: '#/schedule', dorm: '#/dorm', help: '#/help', login: '#/profile/security', exam: '#/exam' }[n.type];
+  return hash ? () => { location.hash = hash; } : null;
 }
 let audioCtx = null;
 function chime() {
@@ -234,10 +248,10 @@ function deliver(n) {
   const p = getPrefs();
   if (notifTypePref[n.type] && !p[notifTypePref[n.type]]) return; // этот тип уведомлений выключен
   const { title, body } = notifText(n);
-  toast(body ? `${title}: ${body}` : title);
+  toast(body ? `${title}: ${body}` : title, false, notifTarget(n) || undefined);
   if (p.notifSound) chime();
   if (p.notifPush && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
-    try { const x = new Notification(title, { body, tag: 'ku-' + (n.id || n.type) }); x.onclick = () => { window.focus(); x.close(); }; } catch { }
+    try { const go = notifTarget(n); const x = new Notification(title, { body, tag: 'ku-' + (n.id || n.type) }); x.onclick = () => { window.focus(); x.close(); if (go) go(); }; } catch { }
   }
 }
 function paintBell() {
@@ -282,9 +296,13 @@ function stopNotif() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.user) pollInbox(); });
 function openInbox() {
   const list = NOTIF.items;
+  // уведомление с переходом — кнопка: открывает чат, предмет или раздел (notifTarget)
   modal(t('Уведомления'), list.length
-    ? `<div class="inbox">${list.map((n) => { const x = notifText(n); return `<div class="inbox-it ${n.read ? '' : 'new'}"><b>${esc(x.title)}</b>${x.body ? `<span>${esc(x.body)}</span>` : ''}<small>${esc(fmtWhen(n.at))}</small></div>`; }).join('')}</div>`
-    : `<div class="next-empty">${t('Новых уведомлений нет')}</div>`);
+    ? `<div class="inbox">${list.map((n, i) => { const x = notifText(n), go = !!notifTarget(n), tag = go ? 'button' : 'div';
+      return `<${tag} class="inbox-it ${n.read ? '' : 'new'} ${go ? 'go' : ''}" ${go ? `type="button" data-n="${i}"` : ''}><b>${esc(x.title)}</b>${x.body ? `<span>${esc(x.body)}</span>` : ''}<small>${esc(fmtWhen(n.at))}</small></${tag}>`; }).join('')}</div>`
+    : `<div class="next-empty">${t('Новых уведомлений нет')}</div>`, (box, close) => {
+    box.querySelectorAll('[data-n]').forEach((b) => (b.onclick = () => { const go = notifTarget(list[+b.dataset.n]); close(); if (go) go(); }));
+  });
   if (NOTIF.unread) {
     api('/inbox/read', { method: 'POST', body: {} }).then(() => { NOTIF.unread = 0; NOTIF.items.forEach((x) => { x.read = true; }); paintBell(); }).catch(() => { });
   }
@@ -306,11 +324,12 @@ async function askNotifPermission() {
 }
 
 /* ------------------------------ Общие блоки ------------------------------ */
-/* Верхнее меню. «KU Message» и «Экзамен» — страницы входа в отдельные сервисы (переход — кнопкой на странице) */
+/* Верхнее меню. «KU Message» и «Экзамен» открывают отдельные сервисы сразу, без промежуточной страницы.
+   Значок и надпись «KU Portal» ведут на главную. */
 function navHTML(active) {
   const it = (href, key, icon, label) => `<a href="${href}" data-nav="${key}" class="${active === key ? 'on' : ''}"><span class="ic">${svg(icon)}</span>${t(label)}</a>`;
   return `<nav class="bnav">
-    <span class="bnav-brand">${svg(programOf(S.user).icon)}<b>KU Portal</b></span>
+    <a class="bnav-brand" href="#/" title="${t('Главная')}">${svg(programOf(S.user).icon)}<b>KU Portal</b></a>
     ${it('#/', 'home', 'home', 'Главная')}
     ${it('#/chats', 'message', 'kumsg', 'KU Message')}
     ${S.user.role === 'staff' ? '' : it('#/exam', 'exam', 'clipboard', 'Экзамен')}
@@ -330,10 +349,10 @@ function headHTML() {
       <button class="avatar" id="goProfile" title="${t('Кабинет')}">${esc(u.firstName.charAt(0).toUpperCase())}</button>
     </div>
   </div>
-  <div class="uni">
+  <a class="uni" href="#/">
     <div class="mark brand-mark"><img src="bird-idle.png" alt="" /></div>
     <div class="uname">${esc(programOf(u).name)}</div>
-  </div>`;
+  </a>`;
 }
 function miniHead(title) {
   return `<a class="back" href="#/">${svg('back')} ${t('Назад')}</a><h1 class="ptitle">${esc(t(title))}</h1>`;
@@ -341,6 +360,17 @@ function miniHead(title) {
 
 /* ============================ Главная (студент) ============================ */
 const KU_SITE_URL = 'https://stikech.github.io/ku-frontend/ku.edu.kz/ru/'; // новый сайт Kozybayev University
+/* Нижняя панель со ссылкой на сайт университета — на главной у всех ролей */
+function siteCardHTML() {
+  return `<a class="news" href="${KU_SITE_URL}" target="_blank" rel="noopener">
+        <div class="tg">${svg('tg')}</div>
+        <div style="flex:1">
+          <b>${t('Сайт Kozybayev University')}</b>
+          <span>${t('Новости, объявления и задания')}</span>
+        </div>
+        <div class="chev">${svg('chev')}</div>
+      </a>`;
+}
 async function viewHome() {
   stopPoll();
   if (S.user.role === 'teacher') return viewHomeT();
@@ -384,14 +414,7 @@ async function viewHome() {
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
       </div>
-      <a class="news" href="${KU_SITE_URL}" target="_blank" rel="noopener">
-        <div class="tg">${svg('tg')}</div>
-        <div style="flex:1">
-          <b>${t('Сайт Kozybayev University')}</b>
-          <span>${t('Новости, объявления и задания')}</span>
-        </div>
-        <div class="chev">${svg('chev')}</div>
-      </a>`;
+      ${siteCardHTML()}`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
@@ -421,8 +444,8 @@ async function viewHomeT() {
   try {
     const d = await api('/teacher/subjects');
     const srvs = [
-      // «Экзамен» — в главном меню и в карточке выше; «Мои предметы» вели туда же, что и «Оценки»
-      ['Добавить занятие', 'plus', '#/t/schedule'], ['Оценки', 'star', '#/t/grades'], ['Расписание', 'calendar', '#/schedule'],
+      // «Экзамен» — в главном меню; «Добавить занятие» убрано (ревью п.8): группы преподавателю назначает администратор
+      ['Оценки', 'star', '#/t/grades'], ['Расписание', 'calendar', '#/schedule'],
       ...serviceTiles(S.user), // клубы и общежитие — только если администратор назначил; «Сообщения» — в верхнем меню
     ];
     document.getElementById('pagebody').innerHTML = `
@@ -441,7 +464,8 @@ async function viewHomeT() {
       <div class="section-label">${t('Сервисы')}</div>
       <div class="srv-grid">
         ${srvs.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}
-      </div>`;
+      </div>
+      ${siteCardHTML()}`;
     document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
   } catch (e) {
     document.getElementById('pagebody').innerHTML = `<div class="load">${esc(e.message)}</div>`;
@@ -463,6 +487,7 @@ function viewHomeS() {
       <div class="section-label">${t('Сервисы')}</div>
       ${tiles.length ? `<div class="srv-grid">${tiles.map((s) => `<button class="srv" data-href="${s[2]}">${svg(s[1])}<span>${t(s[0])}</span></button>`).join('')}</div>`
         : `<div class="card next-empty">${t('Администратор портала ещё не назначил вам обязанности. Когда назначит — здесь появятся клубы или общежитие.')}</div>`}
+      ${siteCardHTML()}
     </div>${navHTML('home')}`;
   bindHead();
   document.querySelectorAll('.srv').forEach((b) => (b.onclick = () => { location.hash = b.dataset.href; }));
@@ -523,11 +548,12 @@ async function viewRating() {
     const d = await api('/rating');
     document.getElementById('pagebody').innerHTML = `
       <div class="card"><div class="stud-fio">${esc(t('Группа {g}', { g: d.group }))}</div>
-      <div class="stud-group">${d.selfPos ? t('Вы на {n}-м месте из {total}', { n: d.selfPos, total: d.rows.length }) : t('Пока нет оценок в группе')}</div></div>
+      <div class="stud-group">${d.selfPos ? t('Вы на {n}-м месте из {total}', { n: d.selfPos, total: d.total }) : t('Пока нет оценок в группе')}</div>
+      ${d.selfHidden ? `<div class="tx" style="margin-top:6px">${t('Вы скрыты из рейтинга: одногруппники вас не видят. Изменить — Кабинет → Конфиденциальность.')}</div>` : ''}</div>
       <div class="card">
         ${d.rows.length ? d.rows.map((r, i) => `
           <div class="lstrow ${r.id === S.user.id ? 'me' : ''}" style="cursor:default">
-            <div>${i + 1}. ${r.hidden ? `<span class="tx">${t('Студент скрыл себя в рейтинге')}</span>` : esc(r.fio)}${r.online ? `<span class="online-dot" title="${t('В сети')}"></span>` : ''}</div>
+            <div>${r.pos}. ${esc(r.fio)}${r.online ? `<span class="online-dot" title="${t('В сети')}"></span>` : ''}</div>
             <div class="r" style="color:var(--accent-deep);font-weight:700">${r.avg == null ? '—' : r.avg}</div>
           </div>`).join('') : `<div class="next-empty">${t('В группе пока нет студентов.')}</div>`}
       </div>`;
@@ -541,27 +567,12 @@ async function viewRating() {
  * Сайт экзаменов показывает кнопку «KU Portal» для возврата сюда (параметры from/back).
  */
 const EXAM_SYNC_PATH = API_BASE + '/exam-sync/'; // онлайн-экзамен живёт на сервере портала
-I.external = '<path d="M13.5 4.5h6v6"/><path d="M19.5 4.5 11 13"/><path d="M17.5 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"/>';
 I.monitor = '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="m9.2 10.4 1.9 1.9 3.8-3.9"/>';
-const EXAM_FEATURES = {
-  student: [
-    ['clipboard', 'Тесты онлайн', 'Grammar, vocabulary и другие тесты с таймером — прогресс сохраняется, если закрыть вкладку.'],
-    ['book', 'Writing', 'Письменная часть экзамена прямо в браузере, черновик не потеряется.'],
-    ['mic', 'Speaking-очередь', 'Комнаты экзамена с очередью на устную часть и live-обновлениями.'],
-    ['star', 'Результаты', 'Баллы по частям экзамена и разбор ответов.'],
-  ],
-  teacher: [
-    ['plus', 'Редактор тестов', 'Создание тестов с разными типами вопросов, импорт и экспорт.'],
-    ['door', 'Комнаты экзамена', 'Собираете экзамен из тестов, writing и speaking, открываете комнату группе.'],
-    ['users', 'Speaking-очередь', 'Вызов студентов, таймер ответа, оценка устной части.'],
-    ['chart', 'Ведомость', 'Сводные баллы студентов по всем частям экзамена.'],
-  ],
-};
 const EXAM_COLOR = { ku: 'incampus', arizona: 'intl' }; // палитра портала → цвет онлайн-экзамена
 function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
-  u.searchParams.set('back', location.href.split('#')[0] + '#/exam'); // с учётом пути (GitHub Pages: /ku-portal/)
+  u.searchParams.set('back', location.href.split('#')[0] + '#/'); // с учётом пути (GitHub Pages: /ku-portal/); на главную, иначе экзамен откроется снова
   u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
   // Оформление портала целиком: цвет (с учётом «Авто»), режим, размер текста, «меньше анимации».
   // Kozybayev → inCampus, Arizona → «Международный кампус», остальные палитры в экзамене называются так же.
@@ -594,44 +605,13 @@ function appTransition(href, o) {
   // Вернулись кнопкой «Назад» из bfcache — убрать оверлей
   window.addEventListener('pageshow', function h(e) { if (e.persisted) { ov.remove(); window.removeEventListener('pageshow', h); } });
 }
+/* «Экзамен» в меню — сразу переход в онлайн-экзамен (ревью п.1: без промежуточной страницы).
+   Адрес в истории меняется на главную, чтобы «Назад» из экзамена не открывал его снова. */
 function viewExam() {
   stopPoll();
-  const teacher = S.user.role === 'teacher';
-  const href = examLaunchUrl();
-  app.innerHTML = `${miniHead('Экзамен')}<div id="pagebody">
-    <div class="card oe-hero">
-      <div class="oe-bridge sm" aria-hidden="true"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg('monitor')}</span></div>
-      <div class="oe-kicker">${t('Сервис экзаменов')}</div>
-      <div class="oe-title">${t('Онлайн-экзамен')}</div>
-      <div class="tx oe-lead">${teacher
-        ? t('Отдельный сайт для проведения письменных экзаменов: тесты, writing, speaking и ведомость в одном месте.')
-        : t('Отдельный сайт для сдачи экзамена онлайн: тесты, writing и запись на speaking в одном месте.')}</div>
-      <div class="oe-status" id="oeStatus"><i></i><span>${t('Проверяем доступность сайта…')}</span></div>
-      <a class="btn pri oe-go" id="oeGo" href="${esc(href)}">${svg('monitor')}${t('Перейти к онлайн-экзамену')}</a>
-      <a class="btn ghost oe-new" href="${esc(href)}" target="_blank" rel="noopener">${svg('external')}${t('Открыть в новой вкладке')}</a>
-      <a class="btn ghost oe-new" href="/results/">${svg('chart')}${t('Открыть учебную базу результатов')}</a>
-    </div>
-    <div class="oe-feat">
-      ${EXAM_FEATURES[teacher ? 'teacher' : 'student'].map(([ic, ti, d]) => `
-        <div class="card oe-fi"><span class="oe-fic">${svg(ic)}</span><div><b>${esc(t(ti))}</b><div class="tx">${esc(t(d))}</div></div></div>`).join('')}
-    </div>
-    <div class="card oe-note">
-      <span class="oe-fic">${svg('info')}</span>
-      <div class="tx"><b>${t('Вход на сайте экзаменов отдельный.')}</b> ${t('Используйте логин и пароль, которые выдал преподаватель. Вернуться в портал можно кнопкой «KU Portal» в верхней панели сайта экзаменов.')}</div>
-    </div>
-  </div>${navHTML('exam')}`;
-
-  const st = document.getElementById('oeStatus');
-  const setSt = (cls, text) => { if (!st.isConnected) return; st.className = 'oe-status ' + cls; st.querySelector('span').textContent = text; };
-  fetch(EXAM_SYNC_PATH + 'api/info', { cache: 'no-store' })
-    .then((r) => setSt(r.ok ? 'ok' : 'bad', r.ok ? t('Сайт доступен') : t('Сайт экзаменов временно недоступен')))
-    .catch(() => setSt('bad', t('Не удалось связаться с сайтом экзаменов')));
-
-  document.getElementById('oeGo').addEventListener('click', (e) => {
-    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // открыть в новой вкладке — как обычно
-    e.preventDefault();
-    examTransition(href);
-  });
+  history.replaceState(null, '', '#/');
+  viewHome();
+  examTransition(examLaunchUrl());
 }
 
 /* ============================ Заглушки ============================ */
@@ -669,13 +649,13 @@ function route() {
     case 'rating': return S.user.role === 'student' ? viewRating() : viewHome();
     case 'exam': return S.user.role === 'staff' ? viewHome() : viewExam(); // старые адреса #/exam/... (комнаты очереди) тоже ведут сюда
     case 'chats': case 'chat': return viewMessage(); // KU Message — отдельное приложение (public/message-launch.js, ku-message/)
+    case 'help': return S.user.role === 'teacher' ? viewHelp() : viewHome(); // обращения преподавателя (public/services.js)
     case 'clubs': // клубы — студентам и руководителям клубов
       if (S.user.role !== 'student' && !leadsClubs(S.user)) return viewHome();
       return viewClubs(parts[1] ? decodeURIComponent(parts[1]) : '');
     case 't':
       if (S.user.role !== 'teacher') return viewHome();
-      if (parts[1] === 'schedule') return viewTSchedule();
-      if (parts[1] === 'grades') return viewTGrades();
+      if (parts[1] === 'grades') return viewTGrades(); // #/t/schedule («Добавить занятие») убран — ведёт на главную
       return viewHome(); // #/t/queue, #/t/room/... — бывшая очередь
     case 'profile': return viewProfile(parts[1]);
     case 'settings': return viewProfile(parts[1]); // старые адреса настроек — теперь это личный кабинет

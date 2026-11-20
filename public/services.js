@@ -93,3 +93,45 @@ function newPollDlg(done) {
     };
   });
 }
+
+/* ============================ Помощь (преподаватель) ============================ */
+/* Обращения к администрации портала (server/help.js, ревью п.10): вопрос, расписание (обжалование, ошибка),
+   технический сбой, другое. Ответ и статус приходят сюда и в уведомления; отвечает администратор в админ-панели. */
+const HELP_CATS = { question: 'Вопрос', schedule: 'Расписание', tech: 'Технический сбой', other: 'Другое' };
+const HELP_ST = { new: ['Принято', ''], work: ['В работе', 'warn'], done: ['Решено', 'ok'], rejected: ['Отклонено', 'bad'] };
+async function viewHelp() {
+  stopPoll();
+  app.innerHTML = `${miniHead('Помощь')}<div id="pagebody" class="svc"><div class="card next-empty">${t('Загрузка…')}</div></div>${navHTML()}`;
+  const pb = document.getElementById('pagebody');
+  let d;
+  try { d = await api('/help'); } catch (e) { pb.innerHTML = `<div class="card next-empty">${esc(e.message)}</div>`; return; }
+  if (!pb.isConnected) return;
+  pb.innerHTML = `
+    <div class="card">
+      <div class="stud-fio">${t('Новое обращение')}</div>
+      <div class="tx" style="margin:4px 0 10px">${t('Задайте вопрос администрации портала, сообщите об ошибке в расписании или обжалуйте его. Ответ придёт сюда и в уведомления.')}</div>
+      <label class="lbl" for="hCat">${t('Тема')}</label>
+      <select class="inp" id="hCat">${Object.entries(HELP_CATS).map(([k, l]) => `<option value="${k}">${t(l)}</option>`).join('')}</select>
+      <label class="lbl" for="hText">${t('Сообщение')}</label>
+      <textarea class="inp" id="hText" rows="4" maxlength="2000" placeholder="${t('Опишите вопрос: группа, предмет, день недели — всё, что поможет разобраться')}"></textarea>
+      <button class="btn pri" id="hSend">${t('Отправить')}</button>
+    </div>
+    <div class="section-label">${t('Мои обращения')}</div>
+    ${d.items.length ? d.items.map((r) => {
+      const [st, cls] = HELP_ST[r.status] || HELP_ST.new;
+      return `<div class="card svc-item">
+        <div class="svc-row"><b>${t(HELP_CATS[r.category] || 'Другое')}</b><span class="badge ${cls}">${t(st)}</span></div>
+        <div class="tx">${esc(fmtDay(svcIso(new Date(r.at)), true))}</div>
+        <p style="margin:8px 0 0;white-space:pre-wrap">${esc(r.text)}</p>
+        ${r.reply ? `<div class="help-reply"><b>${t('Ответ администрации')}</b><span>${esc(r.reply)}</span></div>` : ''}
+      </div>`;
+    }).join('') : `<div class="card next-empty">${t('Обращений пока нет.')}</div>`}`;
+  document.getElementById('hSend').onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      await api('/help', { method: 'POST', body: { category: document.getElementById('hCat').value, text: document.getElementById('hText').value } });
+      toast(t('Обращение отправлено — администратор ответит здесь'));
+      viewHelp();
+    } catch (err) { toast(err.message, true); b.disabled = false; }
+  };
+}
