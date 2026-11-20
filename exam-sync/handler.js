@@ -89,6 +89,26 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
       migrated = true;
     }
   }
+  // Add archive templates idempotently; never reset existing tests, rooms, attempts, grades, or timers.
+  try {
+    const baseData = JSON.parse(fs.readFileSync(path.join(__dirname, 'base-exams.json'), 'utf8'));
+    const ownerMeta = { 't-aronov':['evgeney-aronov', 'евгений аронов'], 't-temirshol':['gilmira-temirshol', 'гильмира темиршол'], 't-vasilievna':['elena-vasilievna', 'елена васильевна'], 't-kosgahmenova':['dayana-kosgahmenova', 'даяна косгахменова'] };
+    for (const source of baseData.tests || []) {
+      const [login, name] = ownerMeta[source.ownerId] || [];
+      const owner = [...db.users.values()].find(u => u.role === 'teacher' && (u.login.toLowerCase() === login || String(u.name || '').trim().toLowerCase() === name));
+      if (!owner) continue;
+      const test = { ...source, ownerId:owner.id };
+      const sourceRoom = (baseData.rooms || []).find(r => r.test?.testIds?.includes(source.id));
+      const linkedRoom = sourceRoom && { ...sourceRoom, ownerId:owner.id, open:true };
+      const existing = db.tests.get(test.id);
+      const inUse = linkedRoom && [...db.attempts.values(), ...db.writings.values(), ...db.queue.values(), ...db.grades.values()].some(x => x.roomId === linkedRoom.id || x.testId === source.id);
+      if (!existing) { db.tests.set(test.id, test); migrated = true; }
+      else if (existing.kind === 'exam' && existing.baseKey === test.baseKey && !inUse && existing.baseSkillsVersion < test.baseSkillsVersion) {
+        db.tests.set(test.id, { ...test, ...existing, exam:test.exam, baseSkillsVersion:test.baseSkillsVersion }); migrated = true;
+      }
+      if (linkedRoom && !db.rooms.has(linkedRoom.id)) { db.rooms.set(linkedRoom.id, linkedRoom); migrated = true; }
+    }
+  } catch (error) { if (error.code !== 'ENOENT') console.error('[exam-sync] базовые экзамены не добавлены:', error.message); }
   if (migrated) persist(db);
   for (const [event, id] of accountEvents) audit(event, 'operator', id);
   for (const file of processed) fs.unlinkSync(path.join(provisionDir, file));
@@ -149,6 +169,20 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
     if (route === '/client.js' && req.method === 'GET') {
       sendStatic(req, res, 'exam-sync/client.js', fs.readFileSync(path.join(__dirname, 'client.js')), { 'Content-Type': 'text/javascript; charset=utf-8' }); return true;
     }
+    if (req.method === 'GET' && route === '/portal-refine.css') {
+      sendStatic(req, res, 'exam-sync/portal-refine.css', fs.readFileSync(path.join(__dirname, 'portal-refine.css')), { 'Content-Type': 'text/css; charset=utf-8' }); return true;
+    }
+    if (req.method === 'GET' && /^\/fonts\/montserrat-(?:cyrillic|cyrillic-ext|latin)-(?:400|500|600|700|800)-normal\.woff2$/.test(route)) {
+      const file = path.join(__dirname, route.slice(1));
+      sendStatic(req, res, 'exam-sync' + route, fs.readFileSync(file), { 'Content-Type': 'font/woff2', 'Cache-Control': 'public, max-age=31536000, immutable' }); return true;
+    }
+    if (req.method === 'GET' && route.startsWith('/eb/')) {
+      const name = route.slice(4);
+      if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:js|md)$/.test(name)) throw new HttpError(404, 'Не найдено');
+      const file = path.join(__dirname, 'eb', name);
+      if (!file.startsWith(path.join(__dirname, 'eb') + path.sep) || !fs.existsSync(file)) throw new HttpError(404, 'Не найдено');
+      sendStatic(req, res, 'exam-sync/eb/' + name, fs.readFileSync(file), { 'Content-Type': name.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/markdown; charset=utf-8' }); return true;
+    }
     if (route === '/api/info' && req.method === 'GET') return json(res, { demo });
     if (route === '/api/login' && req.method === 'POST') {
       const body = await readJson(req, 4096);
@@ -180,7 +214,8 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
       streams.set(res, token); res.on('close', () => streams.delete(res)); return true;
     }
     if (req.method !== 'POST') throw new HttpError(404, 'Не найдено');
-    const limit = { '/api/sync': 5 * 1024 * 1024, '/api/attempt': 1_000_000, '/api/writing': 500_000 };
+    const syncLimit = (+process.env.EXAM_MAX_BODY_MB > 0 ? +process.env.EXAM_MAX_BODY_MB : 32) * 1024 * 1024;
+    const limit = { '/api/sync': syncLimit, '/api/attempt': 1_000_000, '/api/writing': 500_000 };
     const body = await readJson(req, limit[route] || 8192);
     requireSession(token);
     if (route === '/api/logout') { sessions.delete(token); saveSessions(); return json(res, { ok: true }); }
