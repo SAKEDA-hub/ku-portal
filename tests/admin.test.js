@@ -7,7 +7,7 @@ const path = require('node:path');
 const { installation } = require('./harness');
 const { scrubUsers, purgeDemo } = require('../server/cleanup');
 
-const person = (email, role, extra = {}) => ({ lastName: 'Test', firstName: role, email, role, group: role === 'student' ? 'G1' : '', password: 'password-' + role, ...extra });
+const person = (email, role, extra = {}) => ({ lastName: 'Test', firstName: role, email, role, group: role === 'student' ? 'ИСУ2025-1' : '', password: 'password-' + role, ...extra });
 const ADMIN = person('admin@example.test', 'staff'), STUDENT = person('student@example.test', 'student'), TEACHER = person('teacher@example.test', 'teacher');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -40,7 +40,7 @@ test('admin panel: approve with groups, reset password once confirmed, permissio
   assert.equal((await call('/api/admin/confirm', { token: admin, body: { password: ADMIN.password } })).status, 200);
 
   // преподаватель: группы + допуск; студент — допуск
-  assert.equal((await call('/api/admin/groups', { token: admin, body: { id: tid, groups: 'G1, G2 , G1' } })).value.user.groups.join(), 'G1,G2');
+  assert.equal((await call('/api/admin/groups', { token: admin, body: { id: tid, groups: 'ИСУ2025-1, ИСУ2025-2 , ИСУ2025-1' } })).value.user.groups.join(), 'ИСУ2025-1,ИСУ2025-2');
   assert.equal((await call('/api/admin/approve', { token: admin, body: { id: tid } })).status, 200);
   assert.equal((await call('/api/admin/approve', { token: admin, body: { id: sid } })).status, 200);
   const student = (await login(call, STUDENT)).value.token;
@@ -140,13 +140,13 @@ test('demo accounts left in a production database are removed with everything at
   const db = {
     users: [
       { id: 'tch_1', role: 'teacher', email: 'teacher@demo.kz', fio: 'Demo Teacher', demo: true },
-      { id: 'std_1', role: 'student', email: 'student@demo.kz', fio: 'Demo Student', group: 'G1', demo: true },
+      { id: 'std_1', role: 'student', email: 'student@demo.kz', fio: 'Demo Student', group: 'ИСУ2025-1', demo: true },
       { id: 'tch_4', role: 'teacher', email: 'real.teacher@example.test', fio: 'Real Teacher' },
-      { id: 'std_3', role: 'student', email: 'real.student@example.test', fio: 'Real Student', group: 'G1' },
+      { id: 'std_3', role: 'student', email: 'real.student@example.test', fio: 'Real Student', group: 'ИСУ2025-1' },
     ],
     subjects: [{ id: 'sub_1', teacherId: 'tch_1', name: 'Demo subject' }, { id: 'sub_8', teacherId: 'tch_4', name: 'Python' }],
-    schedule: [{ id: 'sc_1', teacherId: 'tch_1', subjectId: 'sub_1', group: 'G1', day: 0, start: '08:30', end: '09:50' },
-      { id: 'sc_11', teacherId: 'tch_4', subjectId: 'sub_8', group: 'G1', day: 1, start: '13:00', end: '14:20' }],
+    schedule: [{ id: 'sc_1', teacherId: 'tch_1', subjectId: 'sub_1', group: 'ИСУ2025-1', day: 0, start: '08:30', end: '09:50' },
+      { id: 'sc_11', teacherId: 'tch_4', subjectId: 'sub_8', group: 'ИСУ2025-1', day: 1, start: '13:00', end: '14:20' }],
     grades: [{ id: 'gr_1', studentId: 'std_3', teacherId: 'tch_1', subjectId: 'sub_1', score: 80 },
       { id: 'gr_2', studentId: 'std_1', teacherId: 'tch_4', subjectId: 'sub_8', score: 70 },
       { id: 'gr_9', studentId: 'std_3', teacherId: 'tch_4', subjectId: 'sub_8', score: 92 }],

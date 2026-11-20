@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const access = require('./access');
 const { scrubUsers } = require('./cleanup');
+const { GROUP_CATALOG } = require('./groups');
 
 const CONFIRM_MS = 60 * 60 * 1000;
 const TEMP_PASSWORD_MS = 72 * 60 * 60 * 1000; // временный пароль действует 3 суток — потом только новый сброс
@@ -88,9 +89,11 @@ function createAdmin(ctx) {
 
     if (p === '/api/admin/users' && req.method === 'GET') {
       const items = db.users.map(view).sort((a, b) => (a.access - b.access) || (b.createdAt || 0) - (a.createdAt || 0));
-      const groups = [...new Set(db.users.filter(x => x.role === 'student' && x.group).map(x => x.group))].sort();
+      // группы для выбора: справочник (server/groups.js) и прежние группы студентов, которых в нём нет
+      const catalog = GROUP_CATALOG;
+      const groups = [...new Set(db.users.filter(x => x.role === 'student' && x.group).map(x => x.group))].filter(g => !catalog.includes(g)).sort();
       const clubs = (db.clubs || []).map(c => ({ id: c.id, name: c.name }));
-      return ok(res, { items, groups, clubs, me: u.id, confirmed: isConfirmed(req) });
+      return ok(res, { items, groups, catalog, clubs, me: u.id, confirmed: isConfirmed(req) });
     }
     // обращения преподавателей (server/help.js): список — без пароля, ответ — как любое изменение, после подтверждения
     if (p === '/api/admin/help' && req.method === 'GET') return ok(res, { items: help ? help.listAll() : [] });

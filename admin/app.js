@@ -187,8 +187,20 @@ async function downloadBackup() {
   toast('Копия скачана. Храните файл в надёжном месте: в нём хеши паролей и переписка.');
 }
 
-const groupsField = value => `<label>Группы, которые ведёт преподаватель (через запятую)<input type="text" name="groups" list="groups-list" value="${esc(value)}" placeholder="ИСУ-26-2-а, БТ-26-1-а"></label>
-  <datalist id="groups-list">${data.groups.map(g => `<option value="${esc(g)}">`).join('')}</datalist>`;
+/* Группы преподавателя — галочками: справочник (направление → год набора → 3 группы, server/groups.js)
+   и прежние группы (созданные до справочника), если они есть у студентов или уже закреплены */
+const groupCheck = (g, on) => `<label class="check grp"><input type="checkbox" name="grp" value="${esc(g)}" ${on ? 'checked' : ''}>${esc(g)}</label>`;
+function groupsField(selected) {
+  const sel = new Set(selected), catalog = data.catalog || [];
+  const byDir = {};
+  for (const g of catalog) { const m = /^(\D+)(\d{4})-/.exec(g); if (m) ((byDir[m[1]] = byDir[m[1]] || {})[m[2]] = byDir[m[1]][m[2]] || []).push(g); }
+  const old = [...new Set([...data.groups, ...selected.filter(g => !catalog.includes(g))])].sort();
+  return `<p class="muted">Группы, которые ведёт преподаватель: их студентам он ставит оценки и пишет в KU Message.</p>
+    <div class="grp-box">${Object.entries(byDir).map(([dir, years]) => `<fieldset><legend>${esc(dir)}</legend>
+      ${Object.entries(years).map(([year, list]) => `<div class="grp-row"><span class="muted">${esc(year)}</span>${list.map(g => groupCheck(g, sel.has(g))).join('')}</div>`).join('')}</fieldset>`).join('')}
+    ${old.length ? `<fieldset><legend>Прежние группы</legend><div class="grp-old">${old.map(g => groupCheck(g, sel.has(g))).join('')}</div></fieldset>` : ''}</div>`;
+}
+const readGroups = form => [...form.querySelectorAll('input[name=grp]:checked')].map(x => x.value);
 
 const ACTIONS = {
   approve(u) {
@@ -196,9 +208,9 @@ const ACTIONS = {
       sensitive('approve', { id: u.id }).then(r => { if (r) { toast('Доступ открыт: ' + u.fio); load(); } }, error => toast(error.message, true));
       return;
     }
-    openDialog(`<h2>Подтвердить преподавателя</h2><p>${esc(u.fio)} · ${esc(u.email)}</p>${groupsField((u.groups || []).join(', '))}
+    openDialog(`<h2>Подтвердить преподавателя</h2><p>${esc(u.fio)} · ${esc(u.email)}</p>${groupsField(u.groups || [])}
       <div class="row">${cancelBtn}<button>Подтвердить</button></div>`, async form => {
-      if (!(await sensitive('groups', { id: u.id, groups: form.groups.value }))) return;
+      if (!(await sensitive('groups', { id: u.id, groups: readGroups(form) }))) return;
       await api('approve', { id: u.id });
       toast('Доступ открыт: ' + u.fio); load();
     });
@@ -210,9 +222,9 @@ const ACTIONS = {
     });
   },
   groups(u) {
-    openDialog(`<h2>Группы преподавателя</h2><p>${esc(u.fio)}</p>${groupsField(u.groups.join(', '))}
+    openDialog(`<h2>Группы преподавателя</h2><p>${esc(u.fio)}</p>${groupsField(u.groups)}
       <div class="row">${cancelBtn}<button>Сохранить</button></div>`, async form => {
-      if (await sensitive('groups', { id: u.id, groups: form.groups.value })) { toast('Группы сохранены'); load(); }
+      if (await sensitive('groups', { id: u.id, groups: readGroups(form) })) { toast('Группы сохранены'); load(); }
     });
   },
   perms(u) {

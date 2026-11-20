@@ -76,6 +76,7 @@ function migrateTeacherGroups() {
     catch (error) { console.error('[access] группы не перенесены:', t.id, error.code || error.message); }
   }
 }
+const GROUPS = require('./server/groups'); // справочник групп: ИСУ и БТ, наборы 2023–2026, по 3 группы
 const teacherHasGroup = (u, group) => (groupsOf(u) || []).includes(String(group).trim());
 const teacherGroups = (u) => [...new Set(groupsOf(u) || [])].sort(); // группы, закреплённые администратором
 function nid(prefix) {
@@ -440,6 +441,8 @@ async function handleRequest(req, res) {
       if (!ROLES.includes(role)) return bad(res, 400, 'Выберите роль');
       if (!PROGRAMS.includes(program)) return bad(res, 400, 'Выберите программу');
       if (role === 'student' && !String(group).trim()) return bad(res, 400, 'Укажите группу');
+      // новая регистрация студента — только группа из справочника (ИСУ2025-2 и т.п.); прежние группы у старых студентов остаются
+      if (role === 'student' && !GROUPS.isCatalogGroup(group)) return bad(res, 400, 'Выберите группу из списка');
       const em = String(email).trim().toLowerCase();
       if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
       registerByIp.hit(clientIp(req));
@@ -532,6 +535,10 @@ async function handleRequest(req, res) {
 
     if (p === '/api/version' && req.method === 'GET') {
       return ok(res, VERSION);
+    }
+    // справочник групп для формы регистрации (до входа) — server/groups.js
+    if (p === '/api/groups' && req.method === 'GET') {
+      return ok(res, { directions: GROUPS.DIRECTIONS, years: GROUPS.YEARS, groups: GROUPS.GROUP_CATALOG });
     }
 
     if (p === '/api/demo' && req.method === 'GET') {

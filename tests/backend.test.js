@@ -12,7 +12,7 @@ const root = path.join(__dirname, '..');
 
 const { installation } = require('./harness');
 
-const portalUser = { lastName: 'Example', firstName: 'Tester', email: 'person@example.test', group: 'G1', password: 'local-test-password' };
+const portalUser = { lastName: 'Example', firstName: 'Tester', email: 'person@example.test', group: 'ИСУ2025-1', password: 'local-test-password' };
 
 test('portal requires an operator grant, supports restart, KU Message handoff and immediate revocation', async t => {
   const app = installation(t); await app.start();
@@ -355,7 +355,7 @@ test('results database: only holders of the results right, through the portal se
   const call = app.request;
   const people = {};
   for (const [key, role] of [['student', 'student'], ['teacher', 'teacher'], ['lead', 'staff'], ['manager', 'staff']]) {
-    const person = { ...portalUser, email: key + '@example.test', role, group: role === 'student' ? '1g' : '' };
+    const person = { ...portalUser, email: key + '@example.test', role, group: role === 'student' ? 'ИСУ2025-3' : '' };
     assert.equal((await call('/api/auth/register', { body: person })).status, 202);
     const id = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users.find(u => u.email === person.email).id;
     app.cli('approve', id);

@@ -11,7 +11,7 @@ const person = (email, role, group = '') => ({ lastName: 'Test', firstName: role
 test('polls: admin publishes, students vote once and anonymously, others cannot manage', async t => {
   const app = installation(t); await app.start();
   const call = app.request;
-  const people = { admin: person('admin@example.test', 'staff'), s1: person('s1@example.test', 'student', 'G1'), s2: person('s2@example.test', 'student', 'G2'), teacher: person('t@example.test', 'teacher') };
+  const people = { admin: person('admin@example.test', 'staff'), s1: person('s1@example.test', 'student', 'ИСУ2025-1'), s2: person('s2@example.test', 'student', 'ИСУ2025-2'), teacher: person('t@example.test', 'teacher') };
   for (const p of Object.values(people)) assert.equal((await call('/api/auth/register', { body: p })).status, 202);
   const users = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users;
   const token = {};
@@ -26,7 +26,7 @@ test('polls: admin publishes, students vote once and anonymously, others cannot 
   assert.equal((await post('admin', 'create', { q: 'Вопрос?', opts: ['a', 'a'], days: 3 })).status, 400);
   assert.equal((await post('admin', 'create', { q: 'Вопрос?', opts: ['a', 'b'], days: 0 })).status, 400);
   const all = (await post('admin', 'create', { q: 'Когда начинать пары?', opts: ['8:00', '8:30', '9:00'], days: 7 })).value.poll;
-  const g1 = (await post('admin', 'create', { q: 'Только для G1', opts: ['да', 'нет'], days: 2, groups: ['G1'] })).value.poll;
+  const g1 = (await post('admin', 'create', { q: 'Только для ИСУ2025-1', opts: ['да', 'нет'], days: 2, groups: ['ИСУ2025-1'] })).value.poll;
 
   const listOf = async who => (await call('/api/polls', { token: token[who] })).value.items.map(p => p.id).sort();
   assert.deepEqual(await listOf('s1'), [all.id, g1.id].sort());
