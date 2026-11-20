@@ -266,7 +266,11 @@ function teacherWrite(db, col, row, session, now) {
   }
   if (!validId(row.id)) invalid();
   const previous = db[col].get(row.id);
-  if (['tests', 'rooms'].includes(col) && (row.ownerId !== session.uid || (previous && previous.ownerId !== session.uid))) deny();
+  if (['tests', 'rooms'].includes(col)) {
+    if (previous && previous.ownerId !== session.uid) deny();
+    if (!previous && row.ownerId && row.ownerId !== session.uid) deny();
+    if (!row.ownerId) row = { ...row, ownerId:session.uid };
+  }
   if (col === 'tests') validateTest(row);
   else if (col === 'rooms') {
     if (typeof row.title !== 'string' || !parts.every(p => row[p] && typeof row[p].on === 'boolean') ||
