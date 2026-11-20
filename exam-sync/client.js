@@ -125,6 +125,14 @@ async function syncStart() {
   sessionStorage.removeItem('edu-exam-session');
   const info = await examApi('info');
   SYNC.demo = info.demo;
+  const portalCode = new URLSearchParams(location.hash.slice(1)).get('portal');
+  if (portalCode) {
+    history.replaceState(null, '', location.pathname + location.search);
+    rememberToken('');
+    const state = await examApi('portal/redeem', { code: portalCode });
+    rememberToken(state.token); applyExamState(state); enterExam();
+    return;
+  }
   rememberToken(sessionStorage.getItem('edu-api-token') || '');
   if (SYNC.token) {
     applyExamState(await examApi('state'));

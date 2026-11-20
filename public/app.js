@@ -607,11 +607,16 @@ function appTransition(href, o) {
 }
 /* «Экзамен» в меню — сразу переход в онлайн-экзамен (ревью п.1: без промежуточной страницы).
    Адрес в истории меняется на главную, чтобы «Назад» из экзамена не открывал его снова. */
-function viewExam() {
+async function viewExam() {
   stopPoll();
   history.replaceState(null, '', '#/');
   viewHome();
-  examTransition(examLaunchUrl());
+  try {
+    const { code } = await api('/exam/handoff', { method: 'POST', body: {} });
+    const launch = new URL(examLaunchUrl());
+    launch.hash = new URLSearchParams({ portal: code }).toString();
+    examTransition(launch.href);
+  } catch (e) { toast(e.message, true); }
 }
 
 /* ============================ Заглушки ============================ */

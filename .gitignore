@@ -8,6 +8,7 @@ data/results-files/
 data/results-backups/
 data/ku_context.json
 data/exam-sync.json
+data/account-inventory.csv
 *.log
 .DS_Store
 .restart

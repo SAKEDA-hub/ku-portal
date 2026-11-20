@@ -14,7 +14,7 @@ const personal = (map, userId) => values(map).filter(r => r.userId === userId);
 const failing = (status, reason) => { throw new HttpError(status, reason); };
 const deny = () => failing(403, 'Нет доступа к этой операции');
 const invalid = () => failing(400, 'Некорректные данные экзамена');
-const publicUser = u => ({ id: u.id, login: u.login, name: u.name, role: u.role });
+const publicUser = u => ({ id: u.id, login: u.login, name: u.name, role: u.role, ...(u.authSource === 'portal' ? { authSource: 'portal' } : {}) });
 const publicTimer = ({ examTest, ...timer }) => timer;
 const timerId = (room, user, part, test = '') => ['tm', room, user, part, test].join('|');
 const findWork = (map, uid, room, test) => values(map).find(r => r.userId === uid && r.roomId === room && (!test || r.testId === test));
@@ -45,7 +45,7 @@ function publicTest(test) {
 function view(db, user) {
   if (user.role === 'teacher') {
     const data = Object.fromEntries(collections.map(c => [c, values(db[c])]));
-    data.users = data.users.map(publicUser);
+    data.users = data.users.filter(u => u.authSource !== 'portal' || u.portalActive !== false).map(publicUser);
     data.timers = data.timers.filter(t => t.limit > 0).map(publicTimer);
     return data;
   }

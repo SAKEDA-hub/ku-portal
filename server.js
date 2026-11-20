@@ -333,9 +333,41 @@ function serveStatic(req, res, url) {
 
 /* --------------------------------- API ----------------------------------- */
 
-/* «Онлайн-экзамен» (github.com/StephCurrysvg/exam-sync) — отдельное приложение под /exam-sync/,
-   раздел «Экзамен» портала (public/app.js, viewExam) ведёт сюда */
-const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON });
+const examHandoffCodes = new Map(); // одноразовый SSO-код KU Portal → онлайн-экзамен
+const portalExamUser = user => user && ({ id: user.id, fio: user.fio, role: user.role, group: user.group || '' });
+function portalSessionForExam(sessionKey) {
+  const user = sessions.get(sessionKey), meta = db.sessMeta && db.sessMeta[sessionKey];
+  if (!user || !meta || sessionExpired(sessionKey, Date.now())) return null;
+  const grant = grantOf(user);
+  return grant && meta.grant === grant ? user : null;
+}
+function portalExamAccounts() {
+  return db.users.filter(user => ['student', 'teacher'].includes(user.role) && grantOf(user))
+    .map(portalExamUser).filter(Boolean);
+}
+async function resolveExamHandoff(code) {
+  const item = examHandoffCodes.get(code);
+  examHandoffCodes.delete(code);
+  if (!item || item.expires <= Date.now()) return null;
+  const user = portalSessionForExam(item.session);
+  if (!user || user.mustChangePassword || !['student', 'teacher'].includes(user.role)) return null;
+  return { user: portalExamUser(user), sessionId: item.session, accounts: portalExamAccounts() };
+}
+function verifyExamPortalPassword(sessionKey, password) {
+  const user = portalSessionForExam(sessionKey);
+  return !!user && typeof password === 'string' && sec.checkPassword(user, password);
+}
+
+/* --------------------------------- API ----------------------------------- */
+
+/* Онлайн-экзамен — приложение под /exam-sync/; вход получает аккаунт портала через одноразовый SSO-код. */
+const examSync = require('./exam-sync/handler').createExamSync({
+  base: '/exam-sync', dataFile: path.join(DATA, 'exam-sync.json'), demo: DEMO_ON,
+  resolvePortalHandoff: resolveExamHandoff,
+  validatePortalSession: sessionKey => !!portalSessionForExam(sessionKey),
+  verifyPortalPassword: verifyExamPortalPassword,
+  getPortalAccounts: portalExamAccounts,
+});
 /* Учебная база результатов — только преподаватели и администрация (право results); студентам и руководителям клубов закрыта */
 function resultsAccess(u) {
   if (!u || !grantOf(u)) return null;
@@ -519,6 +551,17 @@ async function handleRequest(req, res) {
       // вышел на последнем устройстве — сразу не «в сети»
       if (u && !Object.values(db.sessions || {}).includes(u.id)) u.lastSeen = 0;
       return ok(res);
+    }
+
+    if (p === '/api/exam/handoff' && req.method === 'POST') {
+      if (!u) return bad(res, 401, 'Войдите в KU Portal');
+      if (!grantOf(u)) return bad(res, 403, 'Доступ к порталу не подтверждён');
+      if (u.mustChangePassword) return bad(res, 403, 'Сначала задайте постоянный пароль в KU Portal');
+      if (!['student', 'teacher'].includes(u.role)) return bad(res, 403, 'Онлайн-экзамен доступен студентам и преподавателям');
+      for (const [key, value] of examHandoffCodes) if (value.expires <= Date.now()) examHandoffCodes.delete(key);
+      const code = crypto.randomBytes(24).toString('hex');
+      examHandoffCodes.set(code, { session: reqToken(req), expires: Date.now() + HANDOFF_CODE_MS });
+      return ok(res, { code });
     }
 
     /* Переход в KU Message без повторного входа: портал получает одноразовый код (60 с) и передаёт его

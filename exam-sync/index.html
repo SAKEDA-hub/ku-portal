@@ -1609,7 +1609,7 @@ function settingsHTML(){
       </section>
 
       <section class="st-sec"><h4>${ico('shield')}${L('Аккаунт', 'Account', 'Аккаунт')}</h4>
-        <button class="st-row link" data-st="password"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту')}</b></span>${ico('chev')}</button>
+        ${ME.authSource === 'portal' ? `<div class="st-row"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Пароль KU Portal', 'KU Portal password', 'KU Portal құпиясөзі')}</b><small>${L('Измените его в настройках KU Portal', 'Change it in KU Portal settings', 'Оны KU Portal баптауларында өзгертіңіз')}</small></span></div>` : `<button class="st-row link" data-st="password"><span class="st-ic">${ico('lock')}</span><span class="st-t"><b>${L('Сменить пароль', 'Change password', 'Құпиясөзді өзгерту')}</b></span>${ico('chev')}</button>`}
       </section>
     </div></div>`;
 }
@@ -1877,7 +1877,7 @@ function userInitials(u){
 }
 const avatarColor = u => u && u.role === 'teacher' ? subjOf(u.subject).color : STUDENT_AV;
 const avatarOf = (u, cls = '') => `<span class="avatar uav ${cls}" style="--av:${avatarColor(u)}" aria-hidden="true">${esc(userInitials(u))}</span>`;
-const roleName = u => u.role === 'teacher' ? L('Преподаватель', 'Teacher', 'Оқытушы') : L('Студент', 'Student', 'Студент');
+const roleName = u => u.role === 'teacher' ? L('Преподаватель', 'Teacher', 'Оқытушы') : u.role === 'staff' ? L('Сотрудник', 'Staff', 'Қызметкер') : L('Студент', 'Student', 'Студент');
 
 // незавершённое прохождение теста — своё у каждого пользователя
 function saveRun(){ try{ if(S.run && ME) localStorage.setItem(RUN_KEY + ME.id, JSON.stringify(S.run.kind === 'exam' ? Object.assign({}, S.run, { test:Object.assign({}, S.run.test, { exam:null }) }) : S.run)); }catch(e){} }
@@ -2484,7 +2484,7 @@ function vLogin(){
       <div class="lg-err" id="lg-err" role="alert"></div>
       <button class="btn block" type="submit">${L('Войти', 'Log in', 'Кіру')}</button>
     </form>
-    ${KU_BACK ? `<div class="ku-login">${L('Перешли из портала университета?', 'Came from the university portal?', 'Университет порталынан келдіңіз бе?')} ${kuBackBtn('inline')}</div>` : ''}
+    ${KU_BACK ? `<div class="ku-login">${L('Используйте тот же аккаунт KU Portal. Откройте сервис из портала для автоматического входа.', 'Use the same KU Portal account. Open this service from the portal to sign in automatically.', 'KU Portal аккаунтын қолданыңыз. Автоматты кіру үшін сервисті порталдан ашыңыз.')} ${kuBackBtn('inline')}</div>` : ''}
   </section></div>`;
 }
 async function doLogin(){

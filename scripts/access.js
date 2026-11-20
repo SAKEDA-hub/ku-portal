@@ -18,6 +18,27 @@ const { setPasswordSync } = require('../server/security');
 const { writeJsonAtomic } = require('../server/store');
 
 function run([command, key, role, name]) {
+  if (command === 'accounts') {
+    const portalFile = path.join(dataDir, 'db.json');
+    const examFile = path.join(dataDir, 'exam-sync.json');
+    const portalUsers = fs.existsSync(portalFile) ? JSON.parse(fs.readFileSync(portalFile, 'utf8')).users || [] : [];
+    const examSnapshot = fs.existsSync(examFile) ? JSON.parse(fs.readFileSync(examFile, 'utf8')) : null;
+    const rows = [
+      ...portalUsers.map(user => ({ system:'KU Portal / KU Message', id:user.id, login:user.email, name:user.fio, role:user.role,
+        group:user.role === 'teacher' ? (groupsOf(user) || []).join(', ') : user.group || '',
+        permissions:permsText(permsOf(user)), access:grantOf(user) ? 'подтверждён' : 'ожидает подтверждения', portalUserId:user.id, source:'portal' })),
+      ...((examSnapshot && examSnapshot.db && Array.isArray(examSnapshot.db.users)) ? examSnapshot.db.users.map(([, user]) => ({
+        system:'Онлайн-экзамен', id:user.id, login:user.login, name:user.name, role:user.role,
+        group:user.portalGroup || [user.faculty, user.year, user.group].filter(x => x != null && x !== '').join('-'), permissions:'',
+        access:user.authSource === 'portal' && user.portalActive === false ? 'доступ закрыт в портале' : 'аккаунт экзамена',
+        portalUserId:user.portalUserId || '', source:user.authSource === 'portal' ? 'KU Portal SSO' : 'старый отдельный аккаунт',
+      })) : []),
+    ];
+    const cell = value => '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"';
+    process.stdout.write(['system;id;login;name;role;group;permissions;access;portal_user_id;source', ...rows.map(row =>
+      [row.system,row.id,row.login,row.name,row.role,row.group,row.permissions,row.access,row.portalUserId,row.source].map(cell).join(';'))].join('\n') + '\n');
+    return;
+  }
   if (command === 'exam-reset' || command === 'exam-disable') {
     if (!key?.trim() || key.length > 100) throw new Error('Укажите логин экзамена');
     if (command === 'exam-reset' && (!['teacher', 'student'].includes(role) || !name?.trim() || name.length > 150)) {
@@ -39,7 +60,7 @@ function run([command, key, role, name]) {
     return;
   }
   if (!['list', 'approve', 'revoke', 'groups', 'role', 'reset-password'].includes(command)) {
-    throw new Error('Команды: list | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | role <ID> manager|club-lead|dorm|admin|none ["<клуб1,клуб2>"] | reset-password <ID> [--2fa] | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
+    throw new Error('Команды: list | accounts | approve <ID> | revoke <ID> | groups <ID> "<группа1,группа2>" | role <ID> manager|club-lead|dorm|admin|none ["<клуб1,клуб2>"] | reset-password <ID> [--2fa] | exam-reset <логин> <роль> "<ФИО>" | exam-disable <логин>');
   }
   const file = path.join(dataDir, 'db.json');
   const users = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).users : [];
