@@ -11,9 +11,9 @@ const { fileProblem } = require('../server/files');
 const person = (email, role, group = '') => ({ lastName: 'Test', firstName: role, email, role, group, password: 'password-' + role + '-1' });
 const ADMIN = person('admin@example.test', 'staff');
 const TEACHER = person('teacher@example.test', 'teacher');
-const S1 = person('s1@example.test', 'student', 'ИСУ-26-1');
-const S2 = person('s2@example.test', 'student', 'ИСУ-26-1');
-const LEAD = person('lead@example.test', 'student', 'БТ-26-1'); // студент, который ведёт клуб
+const S1 = person('s1@example.test', 'student', 'ИСУ2025-1');
+const S2 = person('s2@example.test', 'student', 'ИСУ2025-1');
+const LEAD = person('lead@example.test', 'student', 'БТ2025-1'); // студент, который ведёт клуб
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 
 async function setup(t) {
@@ -62,9 +62,9 @@ test('rating hides students who turned it off; teacher grades only groups assign
   const grade = () => as(TEACHER, '/api/teacher/grades', { studentId: id(S1), subjectId: sub, score: 90 });
   assert.equal((await grade()).status, 403);
   assert.deepEqual((await as(TEACHER, '/api/teacher/groups')).value.items, []);
-  app.cli('groups', id(TEACHER), 'ИСУ-26-1');
-  assert.deepEqual((await as(TEACHER, '/api/teacher/groups')).value.items, [{ group: 'ИСУ-26-1', students: 2 }]);
-  const students = (await as(TEACHER, '/api/teacher/students?group=' + encodeURIComponent('ИСУ-26-1'))).value.items.map((x) => x.id);
+  app.cli('groups', id(TEACHER), 'ИСУ2025-1');
+  assert.deepEqual((await as(TEACHER, '/api/teacher/groups')).value.items, [{ group: 'ИСУ2025-1', students: 2 }]);
+  const students = (await as(TEACHER, '/api/teacher/students?group=' + encodeURIComponent('ИСУ2025-1'))).value.items.map((x) => x.id);
   assert.deepEqual(students.sort(), [id(S1), id(S2)].sort());
   assert.ok(!(await as(TEACHER, '/api/teacher/students')).value.items.some((x) => x.id === id(LEAD)));
   assert.equal((await grade()).status, 200);
@@ -107,7 +107,7 @@ test('teacher help: teacher asks, others are refused, admin replies after confir
   const { id, as } = await setup(t);
   assert.equal((await as(S1, '/api/help', { category: 'question', text: 'Можно мне тоже спросить?' })).status, 403);
   assert.equal((await as(TEACHER, '/api/help', { category: 'schedule', text: 'коротко' })).status, 400);
-  assert.equal((await as(TEACHER, '/api/help', { category: 'schedule', text: 'В расписании у ИСУ-26-1 две пары одновременно в среду' })).status, 200);
+  assert.equal((await as(TEACHER, '/api/help', { category: 'schedule', text: 'В расписании у ИСУ2025-1 две пары одновременно в среду' })).status, 200);
   const list = (await as(ADMIN, '/api/admin/help')).value.items;
   assert.equal(list.length, 1);
   assert.equal(list[0].fio, 'Test teacher');
@@ -123,4 +123,14 @@ test('teacher help: teacher asks, others are refused, admin replies after confir
   // удаление преподавателя убирает и его обращения
   assert.equal((await as(ADMIN, '/api/admin/delete', { id: id(TEACHER), confirmEmail: TEACHER.email })).status, 200);
   assert.equal((await as(ADMIN, '/api/admin/help')).value.items.length, 0);
+});
+
+test('group catalog: ИСУ and БТ, intakes 2023–2026, three groups each; registration only from the list', async (t) => {
+  const app = installation(t); await app.start();
+  const list = (await app.request('/api/groups')).value.groups;
+  assert.equal(list.length, 24);
+  for (const g of ['ИСУ2023-1', 'ИСУ2025-2', 'БТ2026-3']) assert.ok(list.includes(g), g);
+  const reg = (group) => app.request('/api/auth/register', { body: { ...person('new@example.test', 'student', group) } });
+  assert.equal((await reg('Lox 26')).status, 400);
+  assert.equal((await reg('БТ2024-2')).status, 202);
 });

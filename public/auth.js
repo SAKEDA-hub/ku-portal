@@ -4,6 +4,18 @@
  * только во время вызова. */
 /* ============================ Аутентификация ============================ */
 let authTab = 'login', authRole = 'student', authProgram = 'ku';
+/* Справочник групп для регистрации студента (GET /api/groups, server/groups.js): ИСУ и БТ, наборы 2023–2026, по 3 группы */
+let groupCatalog = null;
+function loadGroupCatalog() {
+  if (groupCatalog) return Promise.resolve(groupCatalog);
+  return api('/groups').then((d) => (groupCatalog = d.groups || []), () => []);
+}
+function groupSelectHTML() {
+  const by = {};
+  for (const g of groupCatalog || []) { const m = /^(\D+)(\d{4})-/.exec(g); if (m) (by[`${m[1]} · ${t('набор {y}', { y: m[2] })}`] = by[`${m[1]} · ${t('набор {y}', { y: m[2] })}`] || []).push(g); }
+  return `<select class="inp" id="rGroup" aria-label="${t('Группа')}"><option value="">${t(groupCatalog ? 'Выберите группу' : 'Загрузка…')}</option>
+    ${Object.entries(by).map(([label, list]) => `<optgroup label="${esc(label)}">${list.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+}
 function viewAuth(msg) {
   stopPoll();
   app.innerHTML = `
@@ -60,7 +72,7 @@ function renderAuthForm() {
         <button class="chip ${authProgram === 'ku' ? 'on' : ''}" id="chKU">Kozybayev University</button>
         <button class="chip ${authProgram === 'arizona' ? 'on' : ''}" id="chAZ">University of Arizona</button>
       </div>
-      <div id="grpWrap">${authRole === 'student' ? `<input class="inp" id="rGroup" placeholder="${t('Группа (например: ИСУ-26-2-а)')}"><label class="lbl">${t('Оценки и расписание появятся, когда преподаватель добавит их для вашей группы')}</label>` : ''}</div>
+      <div id="grpWrap">${authRole === 'student' ? `${groupSelectHTML()}<label class="lbl">${t('Оценки и расписание появятся, когда преподаватель добавит их для вашей группы')}</label>` : ''}</div>
       <button class="btn pri" id="rBtn">${t('Создать аккаунт')}</button>`;
     document.getElementById('chStud').onclick = () => { authRole = 'student'; renderAuthForm(); };
     document.getElementById('chTeach').onclick = () => { authRole = 'teacher'; renderAuthForm(); };
@@ -74,6 +86,8 @@ function renderAuthForm() {
     document.getElementById('chKU').onclick = () => pickProgram('ku');
     document.getElementById('chAZ').onclick = () => pickProgram('arizona');
     document.getElementById('rBtn').onclick = doRegister;
+    // список групп приходит с сервера один раз — подставить, не трогая уже введённые поля
+    if (authRole === 'student' && !groupCatalog) loadGroupCatalog().then(() => { const sel = document.getElementById('rGroup'); if (sel) sel.outerHTML = groupSelectHTML(); });
   }
 }
 /* Блок быстрого входа в тестовые аккаунты (если сервер запущен с демо-данными) */

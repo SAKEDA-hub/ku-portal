@@ -8,7 +8,7 @@ const path = require('node:path');
 const { installation } = require('./harness');
 const { buildMessage } = require('../server/mail');
 
-const STUDENT = { lastName: 'Test', firstName: 'Student', email: 'student@example.test', role: 'student', group: 'G1', password: 'first-password' };
+const STUDENT = { lastName: 'Test', firstName: 'Student', email: 'student@example.test', role: 'student', group: 'ИСУ2025-1', password: 'first-password' };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /* Подставной sendmail: каждое письмо — файл в каталоге outbox */

@@ -1262,6 +1262,9 @@ const I18N = {
   'Аккаунт KU Portal': ['KU Portal account', 'KU Portal аккаунты'],
   'На этом устройстве': ['On this device', 'Осы құрылғыда'],
   /* ревью 1.0 */
+  'Выберите группу': ['Choose your group', 'Топты таңдаңыз'],
+  'Выберите группу из списка': ['Choose a group from the list', 'Тізімнен топты таңдаңыз'],
+  'набор {y}': ['intake {y}', '{y} қабылдау'],
   'Предметы появятся, когда администратор закрепит за вами группы.': ['Subjects will appear once the administrator assigns groups to you.', 'Әкімші сізге топ бекіткенде пәндер пайда болады.'],
   'Студенты появятся, когда администратор закрепит за вами группы.': ['Students will appear once the administrator assigns groups to you.', 'Әкімші сізге топ бекіткенде студенттер пайда болады.'],
   'Слишком много обращений за сутки — попробуйте завтра': ['Too many requests today — try again tomorrow', 'Бір тәулікте өтініш тым көп — ертең қайталаңыз'],

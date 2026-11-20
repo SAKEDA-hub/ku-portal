@@ -37,3 +37,11 @@ footer{margin-top:28px;color:var(--muted);font-size:12px}
 h2{font-size:18px;margin:0 0 6px}
 .help-text{margin:6px 0 0;white-space:pre-wrap;word-break:break-word;font-size:14px}
 textarea{resize:vertical}
+.grp-box{display:flex;flex-direction:column;gap:10px;max-height:52vh;overflow:auto}
+.grp-box fieldset{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0}
+.grp-box legend{font-weight:700;padding:0 4px}
+.grp-row{display:grid;grid-template-columns:40px repeat(3,minmax(0,1fr));align-items:center;gap:4px 10px;padding:3px 0}
+.grp-old{display:flex;flex-wrap:wrap;gap:4px 14px;padding:3px 0}
+.check.grp{white-space:nowrap}
+.grp-row>.muted{min-width:40px;font-size:13px}
+.check.grp{margin:0}
