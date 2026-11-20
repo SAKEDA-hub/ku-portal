@@ -59,6 +59,7 @@ function scrubUsers(db, idList, { keepTeaching = true } = {}) {
   scrubChat(db, ids, removedSubjects);
   scrubClubs(db, ids);
   if (db.dorm && Array.isArray(db.dorm.requests)) db.dorm.requests = db.dorm.requests.filter(r => !ids.has(r.by));
+  if (Array.isArray(db.help)) db.help = db.help.filter(r => !ids.has(r.by)); // обращения преподавателя (server/help.js)
   const files = Array.isArray(db.files) ? db.files.filter(f => ids.has(f.owner)).map(f => f.id) : [];
   if (Array.isArray(db.files)) db.files = db.files.filter(f => !ids.has(f.owner));
   return files;

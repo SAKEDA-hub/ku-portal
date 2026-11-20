@@ -4,11 +4,9 @@
  * преподаватель — свои предметы, студенты закреплённых групп, выставление оценок, добавление занятий.
  * Группы преподавателю назначает администратор (teacherHasGroup). handle(...) возвращает false, если запрос не о учёбе.
  */
-const crypto = require('crypto');
-
 function createStudy(ctx) {
   const { getDB, saveDB, ok, bad, audit, nid, isOnline, settingsOf, pushInbox, subjName, teacherFio, avgOf, nextLesson,
-    detectDiscipline, teacherHasGroup, WEEKDAYS } = ctx;
+    detectDiscipline, teacherHasGroup, teacherGroups, WEEKDAYS } = ctx;
   return async function handle(p, req, res, u, body, url) {
     const db = getDB();
     /* ---------- Студент ---------- */
@@ -39,13 +37,14 @@ function createStudy(ctx) {
 
     if (p === '/api/rating' && u.role === 'student') {
       const mates = db.users.filter((x) => x.role === 'student' && x.group === u.group);
-      // «Показывать меня в рейтинге» выключено — одногруппники видят строку без имени; себя студент видит всегда
-      const rows = mates.map((m) => {
-        const hidden = m.id !== u.id && !settingsOf(m).showInRating;
-        return { id: hidden ? 'hidden_' + crypto.createHash('sha1').update(m.id).digest('hex').slice(0, 8) : m.id, fio: hidden ? null : m.fio, hidden, online: !hidden && m.id !== u.id && isOnline(m), avg: avgOf(m.id) };
-      }).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
+      // «Показывать меня в рейтинге» выключено — студента нет в рейтинге у одногруппников (ни имени, ни строки);
+      // себя студент видит всегда, с пометкой, что скрыт
+      const rows = mates.filter((m) => m.id === u.id || settingsOf(m).showInRating)
+        .map((m) => ({ id: m.id, fio: m.fio, online: m.id !== u.id && isOnline(m), avg: avgOf(m.id) }))
+        .sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1))
+        .map((r, i) => Object.assign(r, { pos: i + 1 }));
       const self = rows.find((r) => r.id === u.id);
-      return ok(res, { group: u.group, selfPos: self ? rows.indexOf(self) + 1 : null, selfAvg: self ? self.avg : null, rows });
+      return ok(res, { group: u.group, selfPos: self ? self.pos : null, selfAvg: self ? self.avg : null, total: rows.length, selfHidden: !settingsOf(u).showInRating, rows });
     }
 
     /* ---------- Преподаватель ---------- */
@@ -60,11 +59,18 @@ function createStudy(ctx) {
       return ok(res, { id: s.id, name: s.name, discipline: s.discipline });
     }
 
+    /* Группы преподавателя — те, что закрепил администратор (админ-панель → «Группы»), с числом студентов */
+    if (p === '/api/teacher/groups' && req.method === 'GET' && u.role === 'teacher') {
+      const groups = teacherGroups(u);
+      const items = groups.map((g) => ({ group: g, students: db.users.filter((x) => x.role === 'student' && x.group === g).length }));
+      return ok(res, { items });
+    }
     if (p === '/api/teacher/students' && req.method === 'GET' && u.role === 'teacher') {
       const g = String(url.searchParams.get('group') || '').trim();
-      const groups = new Set(db.schedule.filter(r => r.teacherId === u.id && teacherHasGroup(u, r.group)).map(r => r.group));
+      const groups = new Set(teacherGroups(u));
       const items = db.users.filter((x) => x.role === 'student' && groups.has(x.group) && (!g || x.group === g))
-        .map((x) => ({ id: x.id, fio: x.fio, group: x.group, online: isOnline(x) }));
+        .map((x) => ({ id: x.id, fio: x.fio, group: x.group, online: isOnline(x) }))
+        .sort((a, b) => a.group.localeCompare(b.group) || a.fio.localeCompare(b.fio));
       return ok(res, { items });
     }
 
@@ -75,7 +81,7 @@ function createStudy(ctx) {
       const sc = Number(score);
       if (!st) return bad(res, 400, 'Выберите студента');
       if (!sub) return bad(res, 400, 'Выберите свой предмет');
-      if (!teacherHasGroup(u, st.group) || !db.schedule.some(r => r.teacherId === u.id && r.subjectId === sub.id && r.group === st.group)) return bad(res, 403, 'Группа не назначена на этот предмет');
+      if (!teacherGroups(u).includes(st.group)) return bad(res, 403, 'Эта группа не закреплена за вами. Её назначает администратор портала');
       if (!(sc >= 0 && sc <= 100)) return bad(res, 400, 'Балл — число от 0 до 100');
       const g = { id: nid('gr'), studentId, subjectId, teacherId: u.id, score: sc, date: new Date().toISOString().slice(0, 10) };
       db.grades.push(g);

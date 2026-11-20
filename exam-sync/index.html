@@ -1753,7 +1753,8 @@ const KU_BACK = (() => {
   }catch(e){}
   if(!back){ try{ back = sessionStorage.getItem(KU_BACK_KEY); }catch(e){} }
   if(fresh) document.documentElement.classList.add('from-ku');
-  return back;
+  // «#/exam» в портале сразу открывает экзамен снова — возвращаемся на главную портала
+  return back && back.replace(/#\/exam$/, '#/');
 })();
 const kuBackBtn = cls => KU_BACK ? `<a class="ku-back ${cls || ''}" href="${esc(KU_BACK)}" title="${L('Вернуться в KU Portal', 'Back to KU Portal', 'KU Portal-ға оралу')}">${ico('back')}<span>KU Portal</span></a>` : '';
 

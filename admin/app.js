@@ -7,7 +7,9 @@ const token = (() => { try { return localStorage.getItem('ku_token') || ''; } ca
 const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ROLE = { student: 'Студент', teacher: 'Преподаватель', staff: 'Сотрудник' };
 const TABS = [['pending', 'Ожидают подтверждения'], ['all', 'Все'], ['student', 'Студенты'], ['teacher', 'Преподаватели'], ['staff', 'Сотрудники']];
-let data = null, query = '';
+let data = null, query = '', help = [];
+const HELP_CATS = { question: 'Вопрос', schedule: 'Расписание', tech: 'Технический сбой', other: 'Другое' };
+const HELP_ST = { new: 'новое', work: 'в работе', done: 'решено', rejected: 'отклонено' };
 let tab = TABS.some(([id]) => '#' + id === location.hash) ? location.hash.slice(1) : 'pending'; // вкладка в адресе: /admin/#all
 
 class ConfirmNeeded extends Error {}
@@ -33,16 +35,17 @@ function openDialog(html, onSubmit) {
   dlgForm.innerHTML = html + '<p class="error" id="dlg-err"></p>';
   dlgForm.onsubmit = async event => {
     event.preventDefault();
-    if (event.submitter && event.submitter.value === 'cancel') { dlg.close(); return; }
     const buttons = dlgForm.querySelectorAll('button'); buttons.forEach(b => { b.disabled = true; });
     try { if (await onSubmit(dlgForm) !== false) dlg.close(); }
     catch (error) { const err = dlgForm.querySelector('#dlg-err'); if (err && dlg.open) err.textContent = error.message; else toast(error.message, true); }
     finally { dlgForm.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
   };
+  // «Отмена» — type="button": Enter в поле нажимает основную кнопку, а не отмену (раньше Enter отменял действие)
+  dlgForm.querySelectorAll('[data-cancel]').forEach(b => b.addEventListener('click', () => dlg.close()));
   if (!dlg.open) dlg.showModal();
   const first = dlgForm.querySelector('input:not([type=checkbox]),select'); if (first) first.focus();
 }
-const cancelBtn = '<button class="secondary" value="cancel" formnovalidate>Отмена</button>';
+const cancelBtn = '<button type="button" class="secondary" data-cancel>Отмена</button>';
 
 /* Пароль администратора раз в час — для любых изменений и копии базы (украденного сеанса недостаточно) */
 function askConfirm() {
@@ -66,7 +69,10 @@ async function sensitive(path, body) {
 }
 
 async function load() {
-  try { data = await api('users'); render(); } catch (error) {
+  try {
+    [data, { items: help }] = await Promise.all([api('users'), api('help').catch(error => { toast('Обращения не загрузились: ' + error.message, true); return { items: [] }; })]);
+    render();
+  } catch (error) {
     if (error.status === 401 || !token) { app.innerHTML = `<section class="card"><h1>Нужен вход</h1><div class="notice">Войдите в KU Portal, затем откройте админ-панель снова.</div><p><a href="/">Перейти к входу →</a></p></section>`; return; }
     app.innerHTML = `<section class="card"><h1>Нет доступа</h1><div class="notice">${esc(error.message)}</div><p><a href="/">← Вернуться в KU Portal</a></p></section>`;
   }
@@ -130,14 +136,41 @@ function render() {
       <div class="toolbar"><input type="search" id="q" placeholder="Поиск: ФИО, email, группа, ID" value="${esc(query)}"></div>
       <div class="tabs">${TABS.map(([id, label]) => `<button data-tab="${id}" class="${id === tab ? 'on' : ''}">${label}${id === 'pending' && pending ? ` (${pending})` : ''}</button>`).join('')}</div>
       <div id="list"></div>
-    </section>`;
+    </section>
+    <section class="card" id="help"></section>`;
   paintList();
+  paintHelp();
   document.getElementById('q').addEventListener('input', event => { query = event.target.value.trim().toLowerCase(); paintList(); });
   app.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; history.replaceState(null, '', '#' + tab); render(); }));
   document.getElementById('reload').addEventListener('click', load);
   document.getElementById('backup').addEventListener('click', downloadBackup);
 }
+/* Обращения преподавателей (server/help.js): новые и в работе — сверху, ответ — диалогом со статусом */
+function paintHelp() {
+  const box = document.getElementById('help'); if (!box) return;
+  const open = help.filter(r => r.status === 'new' || r.status === 'work').length;
+  box.innerHTML = `<h2>Обращения преподавателей${open ? ` <span class="pill wait">${open} открыто</span>` : ''}</h2>
+    ${help.length ? help.map(r => `<div class="user"><div>
+        <div class="name">${esc(HELP_CATS[r.category] || r.category)} · ${esc(r.fio)}</div>
+        <div class="sub">${esc(r.email)} · ${fmtDate(r.at)}</div>
+        <p class="help-text">${esc(r.text)}</p>
+        ${r.reply ? `<p class="help-text muted">Ответ: ${esc(r.reply)}</p>` : ''}
+        <div class="pills"><span class="pill ${r.status === 'new' ? 'wait' : r.status === 'done' ? 'ok' : ''}">${HELP_ST[r.status] || r.status}</span></div>
+      </div><div class="actions"><button class="secondary" data-help="${esc(r.id)}">Ответить</button></div></div>`).join('')
+      : '<p class="muted">Обращений пока нет.</p>'}`;
+}
+function replyHelp(r) {
+  openDialog(`<h2>Ответ на обращение</h2><p>${esc(r.fio)} · ${esc(HELP_CATS[r.category] || '')}</p>
+    <p class="help-text">${esc(r.text)}</p>
+    <label>Статус<select name="status">${Object.entries(HELP_ST).map(([k, l]) => `<option value="${k}" ${k === (r.status === 'new' ? 'work' : r.status) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label>Ответ (преподаватель увидит его в портале)<textarea name="reply" rows="4" maxlength="2000">${esc(r.reply)}</textarea></label>
+    <div class="row">${cancelBtn}<button>Отправить</button></div>`, async form => {
+    if (await sensitive('help/reply', { id: r.id, status: form.status.value, reply: form.reply.value })) { toast('Ответ отправлен'); load(); }
+  });
+}
 app.addEventListener('click', event => {
+  const hb = event.target.closest('[data-help]');
+  if (hb) { const r = help.find(x => x.id === hb.dataset.help); if (r) replyHelp(r); return; }
   const button = event.target.closest('[data-act]');
   if (!button || !data) return;
   const user = data.items.find(u => u.id === button.dataset.id);
@@ -186,8 +219,9 @@ const ACTIONS = {
     const p = u.perms, all = p.clubs.includes('*'), me = u.id === data.me;
     const clubs = data.clubs.map(c => `<label class="check"><input type="checkbox" name="club" value="${esc(c.id)}" ${!all && p.clubs.includes(c.id) ? 'checked' : ''}>${esc(c.name)}</label>`).join('');
     openDialog(`<h2>Служебные права</h2><p>${esc(u.fio)} · ${ROLE[u.role] || ''}</p>
+      ${u.role === 'student' ? '<p class="muted">Студенту можно дать клубы — он будет вести их и останется обычным студентом.</p>' : ''}
       <label class="check"><input type="checkbox" name="admin" ${p.admin ? 'checked' : ''} ${me ? 'disabled' : ''}>Админ-панель: пользователи, доступ, пароли</label>
-      <label class="check"><input type="checkbox" name="results" ${p.results ? 'checked' : ''}>Учебная база результатов</label>
+      <label class="check"><input type="checkbox" name="results" ${p.results ? 'checked' : ''}>Учебная база результатов (преподавателям по умолчанию закрыта)</label>
       <label class="check"><input type="checkbox" name="dorm" ${p.dorm ? 'checked' : ''}>Общежитие</label>
       <label class="check"><input type="checkbox" name="allClubs" ${all ? 'checked' : ''}>Все клубы (менеджер)</label>
       <div style="padding-left:24px">${clubs}</div>

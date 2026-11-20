@@ -77,6 +77,7 @@ function migrateTeacherGroups() {
   }
 }
 const teacherHasGroup = (u, group) => (groupsOf(u) || []).includes(String(group).trim());
+const teacherGroups = (u) => [...new Set(groupsOf(u) || [])].sort(); // группы, закреплённые администратором
 function nid(prefix) {
   db.seq = db.seq || {};
   db.seq[prefix] = (db.seq[prefix] || 0) + 1;
@@ -298,6 +299,7 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
 };
@@ -336,17 +338,19 @@ const examSync = require('./exam-sync/handler').createExamSync({ base: '/exam-sy
 /* Учебная база результатов — только преподаватели и администрация (право results); студентам и руководителям клубов закрыта */
 function resultsAccess(u) {
   if (!u || !grantOf(u)) return null;
-  return { id: u.id, fio: u.fio, role: u.role === 'teacher' ? 'teacher' : permsOf(u).results ? 'admin' : null };
+  // учебная база — только по праву «учебная база» (ревью п.6: у преподавателей по умолчанию её нет)
+  return { id: u.id, fio: u.fio, role: !permsOf(u).results ? null : u.role === 'teacher' ? 'teacher' : 'admin' };
 }
 const results = require('./server/results').createResults({ dataDir: DATA, portal: {
   fromRequest: req => resultsAccess(userOf(req)),
   byId: id => resultsAccess(db.users.find(x => x.id === id)),
 } });
 /* Модули API: KU Message и файлы, клубы, общежитие (server/). Каждый возвращает false, если запрос не его. */
-const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, markDirty: () => { dbDirty = true; } };
+const moduleCtx = { getDB: () => db, saveDB, nid, ok, bad, isOnline, settingsOf, pushInbox, subjName, teacherFio, DATA, permsOf, teacherGroups, markDirty: () => { dbDirty = true; } };
 const { createMessages, MAX_FILE_BYTES } = require('./server/messages');
+const help = require('./server/help').createHelp(moduleCtx); // помощь преподавателю: обращения к администрации (server/help.js)
 const apiModules = [createMessages(moduleCtx), require('./server/clubs').createClubs(moduleCtx), require('./server/dorm').createDorm(moduleCtx),
-  require('./server/polls').createPolls(Object.assign({ audit }, moduleCtx))]; // голосование (server/polls.js)
+  require('./server/polls').createPolls(Object.assign({ audit }, moduleCtx)), help.handle]; // голосование (server/polls.js)
 /* Админ-панель (server/admin.js): пользователи, допуск, права, сброс пароля, копия базы — право admin */
 /* Восстановление пароля по почте (server/recovery.js, письма — server/mail.js) */
 const recovery = require('./server/recovery').createRecovery({ getDB: () => db, saveDB, ok, bad, sec, audit, grantOf, clientIp, dropUserSessions });
@@ -354,8 +358,8 @@ const recovery = require('./server/recovery').createRecovery({ getDB: () => db, 
 const account = require('./server/account').createAccount({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropSession, dropUserSessions,
   pubUser, settingsOf, SETTING_DEFAULTS, SETTING_TEXT_MAX, PASS_SHORT, subjName, teacherFio, WEEKDAYS });
 const study = require('./server/study').createStudy({ getDB: () => db, saveDB, ok, bad, audit, nid, isOnline, settingsOf, pushInbox, subjName, teacherFio,
-  avgOf, nextLesson, detectDiscipline, teacherHasGroup, WEEKDAYS });
-const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA });
+  avgOf, nextLesson, detectDiscipline, teacherHasGroup, teacherGroups, WEEKDAYS });
+const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA, help });
 const MUST_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/settings', '/api/sessions', '/api/inbox']);
 const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
 const handoffCodes = new Map(); // одноразовые коды перехода в KU Message: code → { uid, exp }

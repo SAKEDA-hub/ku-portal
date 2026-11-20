@@ -337,7 +337,7 @@ test('staff members can register and wait for operator approval', async t => {
   assert.equal((await app.request('/api/auth/register', { body: { ...staffUser, email: 'x@example.test', role: 'admin' } })).status, 400);
 });
 
-test('results database: only teachers and administrators, through the portal session; students and club leads are refused', async t => {
+test('results database: only holders of the results right, through the portal session; students, club leads and plain teachers are refused', async t => {
   const app = installation(t);
   const hash = pw => { const salt = crypto.randomBytes(16).toString('hex'); return { salt, passAlgo: 'scrypt', passHash: crypto.scryptSync(pw, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }).toString('hex') }; };
   // база в прежнем формате (school.json, ID school_*) переводится на новые имена при запуске
@@ -371,6 +371,9 @@ test('results database: only teachers and administrators, through the portal ses
   // студенческие логины самой базы тоже не входят, даже с верным паролем
   assert.equal((await call('/api/results/login', { body: { username: 'pupil1', password: 'pupil-one-pass' } })).status, 403);
 
+  // ревью 1.0 п.6: учебная база у преподавателей убрана — только по праву «учебная база», которое выдаёт администратор
+  assert.equal((await portalLogin('teacher')).status, 403);
+  app.cli('role', people.teacher.id, 'manager');
   const teacher = await portalLogin('teacher');
   assert.equal(teacher.value.user.role, 'teacher');
   assert.equal((await call('/api/results/results', { token: teacher.value.token })).value.results.length, 2);

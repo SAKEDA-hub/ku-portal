@@ -135,7 +135,10 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 
 /* ------------------------------ Файлы ------------------------------ */
 const FILE_LIMIT = 10 * 1024 * 1024;
-const FILE_ACCEPT = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.rtf,.odt,.odp,.ods,.csv,.png,.jpg,.jpeg,.gif,.webp,.zip,.rar,.7z';
+// только документы и фото — без архивов и программ (ревью п.12; сервер проверяет ещё и содержимое — server/files.js)
+const FILE_ACCEPT = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.rtf,.odt,.odp,.ods,.csv,.png,.jpg,.jpeg,.gif,.webp';
+const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+const isImageName = (name) => IMAGE_EXT.includes((String(name).split('.').pop() || '').toLowerCase());
 function pickFile() {
   return new Promise((resolve) => { const i = document.createElement('input'); i.type = 'file'; i.accept = FILE_ACCEPT; i.onchange = () => resolve(i.files[0] || null); i.click(); });
 }
@@ -159,11 +162,38 @@ async function downloadFile(id, name) {
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   } catch (e) { toast(e.message, true); }
 }
+/* Вложение: фото показывается картинкой прямо в сообщении (ревью п.11), остальное — карточкой файла */
 function fileCard(f) {
+  if (isImageName(f.name)) return `<button class="file-img" type="button" data-file="${esc(f.id)}" data-name="${esc(f.name)}" data-img title="${esc(f.name)}"><img alt="${esc(f.name)}" hidden><span class="file-img-ph">${svg('file')}</span></button>`;
   const ext = (f.name.split('.').pop() || '').toLowerCase().slice(0, 4);
   return `<button class="file" type="button" data-file="${esc(f.id)}" data-name="${esc(f.name)}"><span class="file-ic">${esc(ext)}</span><span class="file-t"><b>${esc(f.name)}</b><small>${fmtSize(f.size)}</small></span></button>`;
 }
-function bindFiles(root) { root.querySelectorAll('[data-file]').forEach((b) => (b.onclick = () => downloadFile(b.dataset.file, b.dataset.name))); }
+/* Фото загружаются с сеансом (Authorization) и кешируются как blob: на время открытой вкладки */
+const IMG_CACHE = new Map(); // id → Promise<objectURL>
+function imageUrl(id) {
+  if (!IMG_CACHE.has(id)) {
+    IMG_CACHE.set(id, fetch('/api/files/' + id + '?inline=1', { headers: { Authorization: 'Bearer ' + M.token } })
+      .then((r) => { if (!r.ok) throw new Error(t('Файл не найден')); return r.blob(); })
+      .then((b) => URL.createObjectURL(b))
+      .catch((e) => { IMG_CACHE.delete(id); throw e; }));
+  }
+  return IMG_CACHE.get(id);
+}
+function showImage(id, name) {
+  imageUrl(id).then((src) => modal(name, `<img class="img-full" src="${esc(src)}" alt="${esc(name)}"><button class="btn wide" id="imgDl">${svg('file')}${t('Скачать')}</button>`, (box) => {
+    box.querySelector('#imgDl').onclick = () => downloadFile(id, name);
+  }), (e) => toast(e.message, true));
+}
+function bindFiles(root) {
+  root.querySelectorAll('[data-file]').forEach((b) => {
+    if (!('img' in b.dataset)) { b.onclick = () => downloadFile(b.dataset.file, b.dataset.name); return; }
+    b.onclick = () => showImage(b.dataset.file, b.dataset.name);
+    imageUrl(b.dataset.file).then((src) => {
+      const img = b.querySelector('img'), ph = b.querySelector('.file-img-ph');
+      img.src = src; img.hidden = false; if (ph) ph.remove();
+    }, () => { b.classList.add('broken'); });
+  });
+}
 
 /* ------------------------------ Уведомления ------------------------------
    Источник — /api/inbox портала: личные сообщения, новые лекции и практики, задания. Тост, звук, уведомление браузера. */
@@ -210,7 +240,8 @@ function safeBack(u) {
     return x.origin === location.origin || /\.github\.io$/i.test(x.hostname) || x.hostname === 'localhost' || x.hostname === '127.0.0.1' ? x.href : null;
   } catch { return null; }
 }
-function backUrl() { try { return safeBack(localStorage.getItem('kum_back') || '') || PORTAL_URL; } catch { return PORTAL_URL; } }
+// старый адрес возврата «#/chats» теперь сразу открывает KU Message снова — возвращаем на главную портала
+function backUrl() { try { return (safeBack(localStorage.getItem('kum_back') || '') || PORTAL_URL).replace(/#\/(chats?|exam)$/, '#/'); } catch { return PORTAL_URL; } }
 /* Параметры перехода из портала (#code=…&theme=…&mode=…&lang=…&back=…). Адрес вида #/… — раздел KU Message. */
 function readLaunchParams() {
   if (!location.hash || location.hash.startsWith('#/')) return null;
@@ -218,7 +249,8 @@ function readLaunchParams() {
   if (h.get('mode')) { portalLook = { palette: h.get('theme') || '', mode: h.get('mode') }; try { sessionStorage.setItem('kum_look', JSON.stringify(portalLook)); } catch { } }
   if (h.get('lang')) setLang(h.get('lang'));
   const back = safeBack(h.get('back') || ''); if (back) { try { localStorage.setItem('kum_back', back); } catch { } }
-  const open = /^\/c\/[\w-]+(\/chat)?$/.test(h.get('open') || '') ? '#' + h.get('open') : ''; // портал может открыть клуб сразу
+  // портал может открыть сразу клуб (/c/<id>), личный чат (/d/<канал>) или страницу предмета (/s/<канал>) — по уведомлению
+  const open = /^\/(c\/[\w-]+(\/chat)?|[ds]\/(?:[\w.-]|%[0-9A-Fa-f]{2}){1,200})$/.test(h.get('open') || '') ? '#' + h.get('open') : '';
   history.replaceState(null, '', location.pathname + open); // код одноразовый — убрать из адреса и истории
   return h.get('code');
 }
