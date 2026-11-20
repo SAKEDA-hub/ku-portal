@@ -112,3 +112,9 @@ body.wz .dock{left:190px}
 }
 @media(prefers-reduced-motion:reduce){.wz-tab,.wz-tab-icon,.wz-tab-grow{animation:none;transition:none}}
 :root[data-still] .wz-tab,:root[data-still] .wz-tab-icon{transition:none}
+.ku-back{display:inline-flex;align-items:center;gap:4px;height:36px;padding:0 10px 0 6px;border-radius:var(--rs);background:var(--ac-dd);color:var(--ac);font-weight:700;font-size:14px;text-decoration:none;white-space:nowrap;flex:none}
+.ku-back:hover{background:var(--ac-d);color:var(--ac-h)}
+.ku-back svg.i{width:18px;height:18px}
+.ku-back.inline{height:auto;padding:2px 8px 2px 4px;font-size:15px;vertical-align:middle}
+.ku-login{margin:14px 0 4px;color:var(--tx2);font-size:15px;text-align:center}
+@media(max-width:420px){.ku-back:not(.inline) span{display:none}.ku-back:not(.inline){padding:0 8px}}

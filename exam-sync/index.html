@@ -2451,6 +2451,29 @@ function expireRooms(now){
   });
 }
 
+/* ---------- возврат в KU Portal ----------
+   Параметр возврата принимается только для собственных доменов/локальной разработки. */
+const KU_BACK_KEY = 'ku-portal-back';
+const KU_HOSTS = ['ku-portalnew.onrender.com', 'ku-portal.onrender.com', 'sakeda-hub.github.io'];
+const kuHostOk = h => h === location.hostname || KU_HOSTS.includes(h) || h === 'localhost' || h === '127.0.0.1' || /^(10|192\.168)\.[\d.]+$/.test(h) || /^172\.(1[6-9]|2\d|3[01])\.[\d.]+$/.test(h);
+const KU_BACK = (() => {
+  let back = null, fresh = false;
+  try{
+    const q = new URLSearchParams(location.search);
+    if(q.get('from') === 'ku-portal'){
+      fresh = true;
+      const u = new URL(q.get('back') || '');
+      if(/^https?:$/.test(u.protocol) && kuHostOk(u.hostname)){ back = u.href; sessionStorage.setItem(KU_BACK_KEY, back); }
+      q.delete('from'); q.delete('back'); q.delete('theme'); q.delete('mode'); q.delete('lang'); q.delete('fs'); q.delete('still');
+      history.replaceState(history.state, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash);
+    }
+  }catch(e){}
+  if(!back){ try{ back = sessionStorage.getItem(KU_BACK_KEY); }catch(e){} }
+  if(fresh) document.documentElement.classList.add('from-ku');
+  return back && back.replace(/#\/exam$/, '#/');
+})();
+const kuBackBtn = cls => KU_BACK ? `<a class="ku-back ${cls || ''}" href="${esc(KU_BACK)}" title="${L('Вернуться в KU Portal', 'Back to KU Portal', 'KU Portal-ға оралу')}">${ico('back')}<span>KU Portal</span></a>` : '';
+
 /* ---------- вход ---------- */
 function vLogin(){
   return `<div class="login"><section class="widget login-card">
