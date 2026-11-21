@@ -142,6 +142,10 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stro
 .brand-ic{width:36px;height:36px;border-radius:var(--rs);background:var(--brand-bg);color:var(--brand-fg);display:flex;align-items:center;justify-content:center;flex:none}
 .brand-ic svg.i{width:21px;height:21px}
 .brand-t{font-size:18px;font-weight:900;letter-spacing:.01em;color:var(--brand-tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase}
+.ku-back{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:0 12px;border:1px solid var(--line2);border-radius:var(--rs);background:var(--s1);color:var(--tx2);font-size:14px;font-weight:700;text-decoration:none;white-space:nowrap;flex:none}
+.ku-back svg.i{width:18px;height:18px}
+@media (hover:hover){.ku-back:hover{background:var(--s2);border-color:var(--ac);color:var(--ac)}}
+.ku-back:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 .lang{display:inline-flex;flex:none;padding:2px;gap:2px;border:1px solid var(--line2);border-radius:var(--rs);background:var(--ctl)}
 .lang button{border:0;background:none;color:var(--tx2);font-size:13px;font-weight:700;letter-spacing:.04em;min-width:36px;height:32px;padding:0 8px;border-radius:4px}
 .lang button.on{background:var(--ac);color:var(--on-ac)}
@@ -2363,7 +2367,7 @@ function renderTop(){
   const u = ME;
   document.getElementById('topbar').innerHTML = `<div class="tb-in">
     ${u ? `<button class="brand home" data-act="tab" data-v="exam" aria-label="${L('Онлайн-экзамен — на главную', 'Online Exam — home', 'Онлайн емтихан — басты бетке')}" title="${L('На главную', 'Home', 'Басты бетке')}">` : '<span class="brand">'}<span class="brand-ic">${ico('cap')}</span><span class="brand-t">${L('Онлайн-экзамен', 'Online Exam', 'Онлайн емтихан')}</span>${u ? '</button>' : '</span>'}
-    <span class="grow"></span>${langSwitch()}
+    <span class="grow"></span>${kuBackBtn('topbar')}${langSwitch()}
     ${u ? `<span class="tb-sep hide-s" aria-hidden="true"></span><button class="me" data-act="account" title="${L('Профиль и настройки', 'Profile and settings', 'Профиль және баптаулар')}" aria-label="${L('Профиль и настройки', 'Profile and settings', 'Профиль және баптаулар')}: ${esc(u.name)} · ${roleName(u)}">${avatarOf(u, '')}<span class="me-t"><b>${esc(u.name)}</b><small>${roleName(u)}</small></span><span class="me-gear" aria-hidden="true">${ico('gear')}</span></button>` : ''}</div>`;
 }
 /* виджет в стиле Brightspace: белая панель с заголовком */
@@ -2469,6 +2473,11 @@ const KU_BACK = (() => {
     }
   }catch(e){}
   if(!back){ try{ back = sessionStorage.getItem(KU_BACK_KEY); }catch(e){} }
+  if(!back){
+    const portalPath = /\/exam-sync(?:\/|$)/.test(location.pathname)
+      ? location.pathname.replace(/\/exam-sync(?:\/.*)?$/, '/') : '/';
+    back = new URL(portalPath + '#/', location.origin).href;
+  }
   if(fresh) document.documentElement.classList.add('from-ku');
   return back && back.replace(/#\/exam$/, '#/');
 })();
