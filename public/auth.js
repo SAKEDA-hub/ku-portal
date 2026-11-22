@@ -46,12 +46,16 @@ function renderAuthForm() {
   const box = document.getElementById('authform');
   if (authTab === 'login') {
     box.innerHTML = `
-      <input class="inp" id="liEmail" type="email" placeholder="Email">
+      <input class="inp" id="liIdentifier" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="${t('Email или логин (например ISU6576)')}">
       <input class="inp" id="liPass" type="password" placeholder="${t('Пароль')}">
       <button class="btn pri" id="liBtn">${t('Войти')}</button>
       <div style="text-align:center;margin-top:10px"><a href="#/forgot" id="liForgot" class="muted">${t('Забыли пароль?')}</a></div>`;
     document.getElementById('liBtn').onclick = doLogin;
-    document.getElementById('liForgot').onclick = (e) => { e.preventDefault(); viewForgot(document.getElementById('liEmail').value.trim()); }; // public/auth.js
+    document.getElementById('liForgot').onclick = (e) => {
+      e.preventDefault();
+      const value = document.getElementById('liIdentifier').value.trim();
+      viewForgot(value.includes('@') ? value : '');
+    };
     document.getElementById('liPass').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
   } else {
     box.innerHTML = `
@@ -124,12 +128,12 @@ function deviceId() {
   } catch { return ''; }
 }
 /* Вход: пароль → (если включена двухфакторная аутентификация) код из приложения-аутентификатора */
-async function loginWith(email, password, code) {
-  const d = await api('/auth/login', { method: 'POST', body: { email, password, code, deviceId: deviceId() } });
-  if (d.need2fa) return showCodeStep(email, password);
+async function loginWith(identifier, password, code) {
+  const d = await api('/auth/login', { method: 'POST', body: { identifier, password, code, deviceId: deviceId() } });
+  if (d.need2fa) return showCodeStep(identifier, password);
   S.token = d.token; localStorage.setItem('ku_token', d.token); S.user = d.user; goHome();
 }
-function showCodeStep(email, password) {
+function showCodeStep(identifier, password) {
   const box = document.getElementById('authform');
   if (!box) return;
   authErr('');
@@ -138,7 +142,7 @@ function showCodeStep(email, password) {
     <input class="inp" id="liCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
     <button class="btn pri" id="liCodeBtn">${t('Подтвердить')}</button>
     <button class="btn ghost" id="liCodeBack" style="margin-top:8px">${t('Назад')}</button>`;
-  const go = async () => { authErr(''); try { await loginWith(email, password, v('liCode')); } catch (e) { authErr(e.message); } };
+  const go = async () => { authErr(''); try { await loginWith(identifier, password, v('liCode')); } catch (e) { authErr(e.message); } };
   document.getElementById('liCodeBtn').onclick = go;
   document.getElementById('liCode').onkeydown = (e) => { if (e.key === 'Enter') go(); };
   document.getElementById('liCodeBack').onclick = () => viewAuth();
@@ -147,7 +151,7 @@ function showCodeStep(email, password) {
 function goHome() { if (location.hash === '#/' || !location.hash) route(); else location.hash = '#/'; }
 async function doLogin() {
   authErr('');
-  try { await loginWith(v('liEmail'), v('liPass')); } catch (e) { authErr(e.message); }
+  try { await loginWith(v('liIdentifier'), v('liPass')); } catch (e) { authErr(e.message); }
 }
 async function doRegister() {
   authErr('');
@@ -216,7 +220,7 @@ function viewReset(token) {
       const d = await api('/auth/reset', { method: 'POST', body: { token, password } });
       history.replaceState(null, '', '#/');
       authTab = 'login'; viewAuth();
-      const field = document.getElementById('liEmail'); if (field) field.value = d.email || '';
+      const field = document.getElementById('liIdentifier'); if (field) field.value = d.email || '';
       toast(t('Пароль изменён. Войдите с новым паролем'));
     } catch (e) { authErr(e.message); btn.disabled = false; }
   };

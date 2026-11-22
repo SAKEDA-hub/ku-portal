@@ -91,6 +91,19 @@ function createClubs(ctx) {
         if (!e.at && !e.weekly) { e.at = Math.min(Date.now(), new Date(e.date + 'T09:00').getTime() - 5 * DAY_MS); dirty = true; } // время публикации в канале
       }
     }
+    /* Imported accounts join only the isolated DEMO clubs; production data never reads this field. */
+    if (process.env.DEMO === '1') {
+      const now = Date.now();
+      for (const user of db.users.filter((x) => x.demo && Array.isArray(x.demoClubs))) {
+        for (const clubId of user.demoClubs) {
+          const club = db.clubs.find((x) => x.id === clubId);
+          if (!club || club.members.includes(user.id)) continue;
+          club.members.push(user.id);
+          club.since[user.id] = now - 40 * DAY_MS;
+          dirty = true;
+        }
+      }
+    }
     if (!db.clubsSeeded) { seedExtra(db); db.clubsSeeded = true; dirty = true; }
     if (!db.clubsDemoV2) { seedDemoHistory(db); db.clubsDemoV2 = true; dirty = true; }
     if (!db.clubsDemoV3) { seedDemoFeed(db); db.clubsDemoV3 = true; dirty = true; }

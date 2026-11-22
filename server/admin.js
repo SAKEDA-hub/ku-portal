@@ -57,7 +57,7 @@ function createAdmin(ctx) {
   const isAdmin = u => !!u && !u.demo && !!access.grantOf(u) && access.permsOf(u).admin;
   const userById = id => (typeof id === 'string' && ID_RE.test(id) ? getDB().users.find(x => x.id === id) : null);
   const view = x => ({
-    id: x.id, role: x.role, fio: x.fio, email: x.email, group: x.group || '', createdAt: x.createdAt || null,
+    id: x.id, role: x.role, fio: x.fio, email: x.email, login: x.login || '', group: x.group || '', createdAt: x.createdAt || null,
     lastSeen: x.lastSeen || null, online: isOnline(x), access: !!access.grantOf(x), demo: !!x.demo,
     groups: x.role === 'teacher' ? access.groupsOf(x) || [] : undefined, perms: access.permsOf(x),
     twoFactor: !!(x.totp && x.totp.enabled), mustChangePassword: !!x.mustChangePassword,

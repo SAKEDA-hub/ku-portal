@@ -85,6 +85,46 @@ function nid(prefix) {
   return prefix + '_' + db.seq[prefix];
 }
 
+const USERNAME_RE = /^[A-Z]{2,5}[0-9]{4}$/;
+const CYRILLIC_LATIN = Object.freeze({
+  А:'A', Б:'B', В:'V', Г:'G', Д:'D', Е:'E', Ё:'E', Ж:'ZH', З:'Z', И:'I', Й:'I', К:'K', Л:'L', М:'M', Н:'N', О:'O', П:'P', Р:'R', С:'S', Т:'T', У:'U', Ф:'F', Х:'KH', Ц:'TS', Ч:'CH', Ш:'SH', Щ:'SHCH', Ъ:'', Ы:'Y', Ь:'', Э:'E', Ю:'YU', Я:'YA',
+  Ә:'A', Ғ:'G', Қ:'K', Ң:'N', Ө:'O', Ұ:'U', Ү:'U', Һ:'H', І:'I',
+});
+function usernamePrefix(user) {
+  const source = user.role === 'student' ? String(user.group || '').split(/[\s-]+/)[0]
+    : user.role === 'teacher' ? 'TCH' : user.role === 'staff' ? 'STF' : 'KU';
+  const latin = [...source.toUpperCase()].map(char => CYRILLIC_LATIN[char] ?? char).join('').replace(/[^A-Z]/g, '').slice(0, 5);
+  return /^[A-Z]{2,5}$/.test(latin) ? latin : user.role === 'student' ? 'STU' : user.role === 'teacher' ? 'TCH' : 'STF';
+}
+function assignUsername(user, used) {
+  const existing = String(user.login || '').trim().toUpperCase();
+  if (USERNAME_RE.test(existing) && !used.has(existing)) {
+    const normalized = user.login !== existing;
+    user.login = existing;
+    used.add(existing);
+    return normalized;
+  }
+  const prefix = usernamePrefix(user);
+  for (let attempt = 0; attempt < 10000; attempt++) {
+    const candidate = prefix + String(crypto.randomInt(0, 10000)).padStart(4, '0');
+    if (!used.has(candidate)) {
+      user.login = candidate;
+      used.add(candidate);
+      return true;
+    }
+  }
+  throw new Error('Не удалось выдать уникальный логин для группы ' + prefix);
+}
+function migrateUsernames() {
+  const used = new Set();
+  let changed = false;
+  for (const user of db.users) changed = assignUsername(user, used) || changed;
+  if (changed) {
+    saveDB();
+    console.log('[accounts] назначены логины пользователям');
+  }
+}
+
 /* -------------------------------- helpers -------------------------------- */
 
 function send(res, code, obj) {
@@ -95,7 +135,7 @@ function bad(res, code, msg) { send(res, code, { error: msg }); }
 function ok(res, obj) { send(res, 200, obj || { ok: true }); }
 
 /* Ограничения попыток (server/security.js):
-   вход — по паре email + IP (чужой человек не может запереть владельца аккаунта), по email в целом — выше, против
+   вход — по паре логин/email + IP (чужой человек не может запереть владельца аккаунта), по идентификатору в целом — выше, против
    перебора с разных адресов (кроме бета-аккаунтов: их пароль и так публичный), по IP — общий (у кампуса общий IP — лимит выше);
    регистрация — по IP; ввод пароля для смены пароля / отключения 2FA / удаления аккаунта — по пользователю */
 const LIMIT_MS = 15 * 60 * 1000;
@@ -107,7 +147,7 @@ const passCheckByUser = sec.createLimiter({ max: 8, windowMs: LIMIT_MS });
 const TOO_MANY_LOGINS = 'Слишком много попыток входа. Попробуйте через 15 минут';
 const TOO_MANY_PASS = 'Слишком много попыток. Попробуйте через 15 минут';
 const PASS_SHORT = 'Пароль — минимум 8 символов';
-// неизвестный email проверяется против этого хеша — ответ занимает столько же времени, сколько для существующего
+// неизвестный логин/email проверяется против этого хеша — ответ занимает столько же времени, сколько для существующего
 const NO_USER = {}; sec.setPasswordSync(NO_USER, crypto.randomBytes(16).toString('hex'));
 /* Пароль для действия с аккаунтом: неверный — счётчик, исчерпан — 429 (текст ошибки или null, если верный) */
 async function passError(u, pw) {
@@ -222,7 +262,7 @@ function trackOf(u) {
 }
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, group: u.group || '', program: programOf(u), track: trackOf(u), perms: permsOf(u), mustChangePassword: !!u.mustChangePassword };
+  return { id: u.id, role: u.role, fio: u.fio, firstName: u.firstName, email: u.email, login: u.login || '', group: u.group || '', groups: u.role === 'teacher' ? groupsOf(u) || [] : [], program: programOf(u), track: trackOf(u), perms: permsOf(u), mustChangePassword: !!u.mustChangePassword };
 }
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -334,7 +374,7 @@ function serveStatic(req, res, url) {
 /* --------------------------------- API ----------------------------------- */
 
 const examHandoffCodes = new Map(); // одноразовый SSO-код KU Portal → онлайн-экзамен
-const portalExamUser = user => user && ({ id: user.id, fio: user.fio, role: user.role, group: user.group || '' });
+const portalExamUser = user => user && ({ id: user.id, fio: user.fio, login: user.login || '', email: user.email || '', role: user.role, group: user.group || '', groups: user.role === 'teacher' ? groupsOf(user) || [] : [] });
 function portalSessionForExam(sessionKey) {
   const user = sessions.get(sessionKey), meta = db.sessMeta && db.sessMeta[sessionKey];
   if (!user || !meta || sessionExpired(sessionKey, Date.now())) return null;
@@ -501,21 +541,27 @@ async function handleRequest(req, res) {
     }
 
     if (p === '/api/auth/login' && req.method === 'POST') {
-      const { email = '', password = '' } = body;
-      if (typeof email !== 'string' || email.length > 254 || typeof password !== 'string' || password.length > 4096) return bad(res, 401, 'Неверный email или пароль');
-      const em = String(email).trim().toLowerCase(), ip = clientIp(req), emIp = em + '|' + ip;
-      const user = db.users.find((x) => x.email === em);
-      const guardEmail = true; // бета-аккаунты теперь закрыты и используют личные случайные пароли
-      if (loginByEmailIp.blocked(emIp) || loginByIp.blocked(ip) || (guardEmail && loginByEmail.blocked(em))) return bad(res, 429, TOO_MANY_LOGINS);
-      const releasePair = loginByEmailIp.reserve(emIp), releaseIp = loginByIp.reserve(ip);
-      const releaseEmail = guardEmail && loginByEmail.reserve(em);
+      const rawIdentifier = typeof body.identifier === 'string' ? body.identifier : body.email;
+      const password = body.password ?? '';
+      if (typeof rawIdentifier !== 'string' || rawIdentifier.length > 320 || typeof password !== 'string' || password.length > 4096) return bad(res, 401, 'Неверный логин или email или пароль');
+      const value = rawIdentifier.trim();
+      const isEmail = value.includes('@');
+      const identifier = isEmail ? value.toLowerCase() : value.toUpperCase();
+      const validIdentifier = isEmail ? identifier.length <= 254 && /^\S+@\S+\.\S+$/.test(identifier) : USERNAME_RE.test(identifier);
+      const ip = clientIp(req), identifierIp = identifier + '|' + ip;
+      const user = validIdentifier && (isEmail
+        ? db.users.find(x => String(x.email || '').toLowerCase() === identifier)
+        : db.users.find(x => String(x.login || '').toUpperCase() === identifier));
       const eligible = user && (!user.demo || DEMO_ON);
+      if (loginByEmailIp.blocked(identifierIp) || loginByIp.blocked(ip) || loginByEmail.blocked(identifier)) return bad(res, 429, TOO_MANY_LOGINS);
+      const releasePair = loginByEmailIp.reserve(identifierIp), releaseIp = loginByIp.reserve(ip);
+      const releaseIdentifier = loginByEmail.reserve(identifier);
       const passHash = eligible && user.passHash;
       const passOk = await sec.checkPassword(eligible ? user : NO_USER, password);
       if (!eligible || !passOk || user.passHash !== passHash || !db.users.includes(user)) {
-        return bad(res, 401, 'Неверный email или пароль');
+        return bad(res, 401, 'Неверный логин или email или пароль');
       }
-      releasePair(); releaseIp(); if (releaseEmail) releaseEmail();
+      releasePair(); releaseIp(); if (releaseIdentifier) releaseIdentifier();
       if (user.mustChangePassword && Date.now() > (user.tempPasswordUntil || 0)) return bad(res, 401, 'Временный пароль истёк. Попросите администратора сбросить пароль ещё раз');
       const grant = grantOf(user);
       if (!grant) return bad(res, 403, 'Доступ ожидает подтверждения администратором');
@@ -615,7 +661,7 @@ async function handleRequest(req, res) {
     // пароль выдан администратором: до смены на свой доступны только кабинет и смена пароля
     if (u.mustChangePassword && !MUST_CHANGE_ALLOWED.has(p)) return bad(res, 403, 'Сначала задайте свой пароль: Кабинет → Безопасность');
 
-    if (p === '/api/exams/open' && req.method === 'GET') return ok(res, { rooms: examSync.openRooms() });
+    if (p === '/api/exams/open' && req.method === 'GET') return ok(res, { rooms: examSync.openRooms(u) });
 
     if (await admin.handle(p, req, res, u, body) !== false) return;
     for (const handle of apiModules) if (await handle(p, req, res, u, body, url) !== false) return;
@@ -662,6 +708,7 @@ function purgeDemoAccounts() {
 purgeDemoAccounts();
 seedDemo();
 migrateTeacherGroups();
+migrateUsernames();
 loadSessions();
 admin.applyProvision();
 setInterval(admin.applyProvision, 5000).unref(); // сброс пароля командой с хоста (scripts/access.js reset-password)

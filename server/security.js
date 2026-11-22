@@ -6,6 +6,8 @@
  *   HTTP-заголовки — securityHeaders: запрет встраивания на чужие сайты, nosniff, Referrer-Policy, HSTS по https.
  */
 const crypto = require('crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { promisify } = require('util');
 const { isHttps, reportProxy } = require('./http');
 
@@ -13,6 +15,23 @@ const scrypt = promisify(crypto.scrypt);
 const PASSWORD_MIN = 8; // для новых паролей; старые короткие продолжают работать
 const SCRYPT_KEYLEN = 32;
 const SCRYPT_OPTS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+
+/* Harden existing local data directories too: mkdir({mode}) does not change permissions
+   when the directory already exists. Do not follow symlinks while walking private data. */
+function secureDataDirectory(dir) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return; // Windows ACLs, not POSIX mode bits, control access.
+  const root = fs.realpathSync(dir);
+  const visit = current => {
+    fs.chmodSync(current, 0o700);
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) visit(target);
+      else if (entry.isFile()) fs.chmodSync(target, 0o600);
+    }
+  };
+  visit(root);
+}
 
 const legacyHash = (pw, salt) => crypto.createHash('sha256').update(salt + pw).digest('hex');
 const scryptHex = async (pw, salt) => (await scrypt(String(pw), salt, SCRYPT_KEYLEN, SCRYPT_OPTS)).toString('hex');
@@ -42,6 +61,21 @@ async function checkPassword(user, pw) {
 const needsRehash = (user) => !!user && user.passAlgo !== 'scrypt';
 
 /* Счётчик неудач: blocked(key) — исчерпан лимит в текущем окне; hit — неудача; reset — успех */
+/* A small process-wide concurrency gate for expensive external/model operations. */
+function createConcurrencyLimiter(max) {
+  if (!Number.isInteger(max) || max < 1) throw new TypeError('max must be a positive integer');
+  let active = 0;
+  return {
+    reserve() {
+      if (active >= max) return null;
+      active++;
+      let pending = true;
+      return () => { if (pending) { pending = false; active--; } };
+    },
+    get active() { return active; },
+  };
+}
+
 const LIMITER_KEYS_MAX = 10_000;
 const KEY_MAX = 300; // ключ (email, IP) обрезается — длинные строки из запроса не раздувают память
 function createLimiter({ max, windowMs, now = Date.now }) {
@@ -78,7 +112,7 @@ function htmlPolicy(html) {
   const scripts = [...html.toString().replace(/\r\n?/g, '\n').matchAll(/<script>([\s\S]*?)<\/script>/gi)];
   const hashes = scripts.map(m => "'sha256-" + crypto.createHash('sha256').update(m[1]).digest('base64') + "'");
   return basePolicy + "; default-src 'self'; script-src 'self' " + hashes.join(' ') +
-    "; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com";
+    "; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com";
 }
 function securityHeaders(req, res) {
   reportProxy(req);
@@ -90,4 +124,4 @@ function securityHeaders(req, res) {
   if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
 }
 
-module.exports = { PASSWORD_MIN, setPassword, setPasswordSync, checkPassword, needsRehash, createLimiter, securityHeaders, htmlPolicy };
+module.exports = { PASSWORD_MIN, setPassword, setPasswordSync, checkPassword, needsRehash, createLimiter, createConcurrencyLimiter, securityHeaders, htmlPolicy, secureDataDirectory };

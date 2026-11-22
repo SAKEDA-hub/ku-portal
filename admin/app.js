@@ -82,7 +82,7 @@ function matches(u) {
   if (tab === 'pending' && u.access) return false;
   if (['student', 'teacher', 'staff'].includes(tab) && u.role !== tab) return false;
   if (!query) return true;
-  return [u.fio, u.email, u.group, u.id, ...(u.groups || [])].join(' ').toLowerCase().includes(query);
+  return [u.fio, u.email, u.login, u.group, u.id, ...(u.groups || [])].join(' ').toLowerCase().includes(query);
 }
 function permsText(p) {
   return [p.admin ? 'админ-панель' : '', p.clubs.includes('*') ? 'все клубы' : p.clubs.length ? 'клубы: ' + p.clubs.map(id => (data.clubs.find(c => c.id === id) || { name: id }).name).join(', ') : '', p.dorm ? 'общежитие' : '', p.results ? 'учебная база' : ''].filter(Boolean).join(' · ');
@@ -111,7 +111,7 @@ function userRow(u) {
     me ? '' : act('delete', 'Удалить', 'danger'),
   ].join('');
   return `<div class="user"><div><div class="name">${esc(u.fio)}</div>
-    <div class="sub">${esc(u.email)} · ${esc(u.id)} · регистрация ${fmtDate(u.createdAt)} · был(а) ${fmtDate(u.lastSeen)}</div>
+    <div class="sub">${esc(u.email)} · ${esc(u.login || '—')} · ${esc(u.id)} · регистрация ${fmtDate(u.createdAt)} · был(а) ${fmtDate(u.lastSeen)}</div>
     <div class="pills">${pills}</div></div><div class="actions">${actions}</div></div>`;
 }
 function paintList() {
@@ -133,7 +133,7 @@ function render() {
       <div class="toolbar" style="margin-top:14px"><button class="secondary" id="backup">Скачать копию базы</button><button class="secondary" id="reload">Обновить</button></div>
     </section>
     <section class="card">
-      <div class="toolbar"><input type="search" id="q" placeholder="Поиск: ФИО, email, группа, ID" value="${esc(query)}"></div>
+      <div class="toolbar"><input type="search" id="q" placeholder="Поиск: ФИО, email, логин, группа, ID" value="${esc(query)}"></div>
       <div class="tabs">${TABS.map(([id, label]) => `<button data-tab="${id}" class="${id === tab ? 'on' : ''}">${label}${id === 'pending' && pending ? ` (${pending})` : ''}</button>`).join('')}</div>
       <div id="list"></div>
     </section>

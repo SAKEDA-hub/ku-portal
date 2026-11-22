@@ -1905,7 +1905,7 @@ const wordsTxt = n => n + ' ' + pl(n, 'слово', 'слова', 'слов', 'w
 const PARTS = ['test', 'writing', 'speaking'];
 const spOrderName = o => ({ any:L('спикинг в любое время', 'speaking any time', 'спикинг кез келген уақытта'), first:L('сначала спикинг', 'speaking first', 'алдымен спикинг'), after:L('спикинг после остального', 'speaking last', 'спикинг соңында') })[o];
 /* ---------- фильтры групп для публикации ---------- */
-const FACULTIES = [ { code:'ФМ', lat:'fm' }, { code:'ИСУ', lat:'isu' }, { code:'БТ', lat:'bt' } ];
+const FACULTIES = [ { code:'ФМ', lat:'fm' }, { code:'ИСУ', lat:'isu' }, { code:'БТ', lat:'bt' }, { code:'BM', lat:'bm' }, { code:'BD', lat:'bd' } ];
 const YEARS = [23, 24, 25, 26];
 const GROUPS = [1, 2, 3];
 const PER_GROUP = 2;
@@ -1925,9 +1925,15 @@ const studentLogin = (f, y, g, n) => `${f}-${y}-${g}g-${n}`;
 // номер курса по году набора: учебный год начинается 1 сентября
 function courseNo(y){ const d = new Date(), yy = d.getFullYear() % 100, acad = d.getMonth() >= 8 ? yy : yy - 1; return acad - y + 1; }
 const courseLabel = y => { const n = courseNo(y); return n >= 1 && n <= 6 ? n + ' ' + L('курс', 'year', 'курс') : ''; };
-const userGroup = u => u && u.faculty ? groupCode(u.faculty, u.year, u.group) : '';
+const portalGroupCode = value => {
+  const m = /^(ИСУ|БТ|ISU|BT|BM|BD)-?(20\d{2}|\d{2})-(\d+)$/.exec(String(value || '').normalize('NFKC').trim().toUpperCase());
+  if (!m) return '';
+  const faculty = ({ ISU:'ИСУ', BT:'БТ' })[m[1]] || m[1];
+  return groupCode(faculty, Number(m[2]) % 100, Number(m[3]));
+};
+const userGroup = u => u && (portalGroupCode(u.group) || (u.faculty ? groupCode(u.faculty, u.year, u.group) : ''));
 // экзамен без выбранных групп доступен всем студентам; иначе — только студентам выбранных групп
-const roomForUser = (r, u) => !!u && (u.role === 'teacher' || !r.subgroups.length || r.subgroups.includes(userGroup(u)));
+const roomForUser = (r, u) => !!u && (u.role === 'teacher' || !r.subgroups.length || r.subgroups.some(group => portalGroupCode(group) === userGroup(u)));
 // студенты комнаты: выбранные группы + те, у кого уже есть работы в ней (если группы потом изменили — работы не теряются)
 function roomStudents(r){
   const had = new Set(); ['attempts', 'writings', 'queue', 'grades'].forEach(k => D[k].forEach(x => { if(x.roomId === r.id) had.add(x.userId); }));
@@ -1965,7 +1971,7 @@ function splitEven(d, total){
   total = Math.max(1, Math.round(+total || 100)); const each = Math.floor(total / ks.length * 2) / 2;
   ks.forEach((k, i) => { d[k].max = i === ks.length - 1 ? r2(total - each * (ks.length - 1)) : each; });
 }
-function newRoom(){ return { id:uid(), ownerId:ME ? ME.id : '', subject:(ME && ME.subject) || '', cover:'', title:'', description:'', courses:[], subgroups:[], examStart:'', durMode:'minutes', durMinutes:90, durDays:1, startAt:null, endAt:null, createdAt:Date.now(),
+function newRoom(){ return { id:uid(), ownerId:ME ? ME.id : '', subject:(ME && ME.subject) || '', cover:'', title:'', description:'', courses:[], subgroups:Array.isArray(ME?.groups) ? [...new Set(ME.groups.map(portalGroupCode).filter(Boolean))] : [], examStart:'', durMode:'minutes', durMinutes:90, durDays:1, startAt:null, endAt:null, createdAt:Date.now(),
   test:{ on:true, testIds:[], max:20 }, reading:{ max:20 }, listening:{ max:20 }, writing:{ on:true, prompt:'', minWords:120, max:20, minutes:0 }, speaking:{ on:true, prompt:'', minutes:5, max:20, order:'any' } }; }
 /* ---------- длительность экзамена ----------
    Экзамен существует с startAt до endAt (мс, общие для всех часовых поясов). После endAt он исчезает у студентов.

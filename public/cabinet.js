@@ -73,6 +73,7 @@ function paintProfile(section) {
             <div class="pf-fio">${esc(u.fio)}</div>
             <div class="pf-sub">${esc(roleLabel(u))}${u.group ? ' · ' + esc(u.group) : ''}</div>
             <div class="pf-sub pf-mail">${esc(u.email)}</div>
+            <div class="pf-sub">${t('Логин')}: <b>${esc(u.login || '—')}</b></div>
             <span class="pill pf-uni">${svg(pr.icon)}${esc(pr.name)}</span>
           </div>
         </div>

@@ -11,8 +11,10 @@ function samePersonName(a, b) {
 }
 
 function portalGroup(value) {
-  const match = /^(ИСУ|БТ)(20\d{2})-(\d+)$/.exec(String(value || '').trim());
-  return match ? { faculty: match[1], year: Number(match[2]) % 100, group: Number(match[3]) } : null;
+  const match = /^(ИСУ|БТ|ISU|BT|BM|BD)-?(20\d{2}|\d{2})-(\d+)$/.exec(String(value || '').normalize('NFKC').trim().toUpperCase());
+  if (!match) return null;
+  const faculty = ({ ISU: 'ИСУ', BT: 'БТ' })[match[1]] || match[1];
+  return { faculty, year: Number(match[2]) % 100, group: Number(match[3]) };
 }
 
 function legacyGroup(user) {
@@ -95,7 +97,9 @@ function syncPortalUsers(db, accounts) {
     let exam = [...db.users.values()].find(user => user.portalUserId === portal.id);
     const duplicatePortalAccounts = accounts.filter(other => other && other.role === portal.role &&
       samePersonName(other.fio, portal.fio) && sameAccountGroup(portal, other)).length > 1;
-    if (!exam && !duplicatePortalAccounts) {
+    // Synthetic demo identities must never be fuzzy-linked to a legacy student with a similar name.
+    const synthetic = String(portal.email || '').toLowerCase().endsWith('.invalid');
+    if (!exam && !duplicatePortalAccounts && !synthetic) {
       const candidates = [...db.users.values()].filter(user => !user.portalUserId && user.role === portal.role &&
         samePersonName(user.name, portal.fio) &&
         (portal.role !== 'student' || sameGroup(legacyGroup(user), group)));
@@ -115,6 +119,7 @@ function syncPortalUsers(db, accounts) {
       portalUserId: portal.id,
       portalActive: true,
       portalGroup: portal.role === 'student' ? portal.group || '' : '',
+      groups: portal.role === 'teacher' && Array.isArray(portal.groups) ? [...new Set(portal.groups.filter(g => typeof g === 'string' && g.length <= 100))] : [],
       ...(group ? { faculty: group.faculty, year: group.year, group: group.group } : {}),
     };
     delete next.passHash;

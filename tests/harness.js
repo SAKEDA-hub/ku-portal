@@ -10,7 +10,7 @@ const root = path.join(__dirname, '..');
 
 function installation(t, demo = false, extraEnv = {}) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'ku-integration-'));
-  const env = { ...process.env, PORT: '0', IP: '127.0.0.1', KU_DATA_DIR: data, DEMO: demo ? '1' : '0', KU_TRUSTED_PROXIES: '', ...extraEnv };
+  const env = { ...process.env, NODE_ENV:'test', PORT: '0', IP: '127.0.0.1', KU_DATA_DIR: data, DEMO: demo ? '1' : '0', KU_TRUSTED_PROXIES: '', ...extraEnv };
   let proc, base, output = '';
   async function stop() {
     if (proc && proc.exitCode === null && proc.signalCode === null) {

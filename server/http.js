@@ -4,6 +4,31 @@ const { isIP, BlockList } = require('node:net');
 const zlib = require('node:zlib');
 const normalize = ip => String(ip || '').replace(/^::ffff:(?=\d+\.)/i, '');
 
+/* Explicit limits for public HTTP connections. Prevents slow header/body clients from
+   holding sockets indefinitely; leaves enough time for the portal's large bounded uploads. */
+const HTTP_LIMITS = Object.freeze({ maxHeaderSize: 16 * 1024, headersTimeout: 30_000, requestTimeout: 120_000, keepAliveTimeout: 5_000, maxRequestsPerSocket: 1_000, maxHeadersCount: 100 });
+function configureHttpServer(server) {
+  server.headersTimeout = HTTP_LIMITS.headersTimeout;
+  server.requestTimeout = HTTP_LIMITS.requestTimeout;
+  server.keepAliveTimeout = HTTP_LIMITS.keepAliveTimeout;
+  server.maxRequestsPerSocket = HTTP_LIMITS.maxRequestsPerSocket;
+  server.maxHeadersCount = HTTP_LIMITS.maxHeadersCount;
+  return server;
+}
+
+/* Resolve a static asset only when its real filesystem target remains inside the real web root.
+   This blocks accidental/private-file disclosure through symlinks, not only '..' path traversal. */
+function resolveStaticFile(root, candidate) {
+  try {
+    const realRoot = require('node:fs').realpathSync(root);
+    const realFile = require('node:fs').realpathSync(candidate);
+    const relative = require('node:path').relative(realRoot, realFile);
+    if (relative === '' || relative === '..' || relative.startsWith('..' + require('node:path').sep) || require('node:path').isAbsolute(relative)) return null;
+    if (!require('node:fs').statSync(realFile).isFile()) return null;
+    return realFile;
+  } catch { return null; }
+}
+
 /* KU_TRUSTED_PROXIES: IP-адреса или диапазоны CIDR (10.0.0.0/8, fd00::/8) через запятую */
 function parseTrusted(value) {
   const list = new BlockList();
@@ -105,4 +130,4 @@ function deviceLabel(ua) {
   return [br, os].filter(Boolean).join(', ') || (ua ? ua.slice(0, 40) : '');
 }
 
-module.exports = { deviceLabel, clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic, reportProxy };
+module.exports = { deviceLabel, clientIp, isHttps, HttpError, readJson, parseTrusted, sendStatic, reportProxy, resolveStaticFile, HTTP_LIMITS, configureHttpServer };

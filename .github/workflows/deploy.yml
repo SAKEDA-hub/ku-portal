@@ -8,7 +8,8 @@
 #      ALWAYSDATA_SITE_ID       — ID сайта (число в адресе страницы сайта в панели alwaysdata)
 # Переменная Actions ALWAYSDATA_KNOWN_HOSTS задаёт проверенный публичный SSH-ключ хоста.
 # При отсутствии учётных данных SSH шаг выкладки пропускается.
-# Код кладётся в ~/ku-portal; data/db.json и data/exam-sync.json не трогаются (их нет в git).
+# Репозиторий обновляется в ~/ku-portal, а запущенный сайт получает код в ~/ku-portal-mysql-new/KU-Portal.
+# Каталог данных data/ не входит в git и не затрагивается.
 # Старый адрес GitHub Pages можно оставить как резервный, но основной сайт открывайте на alwaysdata.
 name: Deploy
 
@@ -71,9 +72,10 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           SSH="sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=20 ${ACCOUNT}@${HOST}"
-          # только файлы из git: data/db.json и data/exam-sync.json на сервере остаются как есть
+          # Только файлы из git; существующий каталог данных MySQL остаётся на месте.
           git archive --format=tar HEAD | $SSH 'mkdir -p ~/ku-portal && tar -xf - -C ~/ku-portal'
-          git rev-parse HEAD | $SSH 'cd ~/ku-portal && cat > .release-commit.tmp && mv .release-commit.tmp .release-commit'
+          git archive --format=tar HEAD | $SSH 'mkdir -p ~/ku-portal-mysql-new/KU-Portal && tar -xf - -C ~/ku-portal-mysql-new/KU-Portal'
+          git rev-parse HEAD | $SSH 'read -r sha; for d in ~/ku-portal ~/ku-portal-mysql-new/KU-Portal; do printf "%s\n" "$sha" > "$d/.release-commit.tmp" && mv "$d/.release-commit.tmp" "$d/.release-commit"; done'
 
       - name: Restart site
         if: steps.cfg.outputs.skip != '1'

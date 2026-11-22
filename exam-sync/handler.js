@@ -48,11 +48,17 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
     } catch (error) { console.error('[exam-sync] сеансы не сохранены:', error.code || error.message); }
   }
   const streams = new Map();
-  const loginLimit = createLimiter({ max: 50, windowMs: 15 * 60_000 });
-  const accountLimit = createLimiter({ max: 10, windowMs: 15 * 60_000 });
-  const passwordLimit = createLimiter({ max: 8, windowMs: 15 * 60_000 });
-  const dummy = {}; setPasswordSync(dummy, crypto.randomUUID());
-  const uidByLogin = login => [...db.users.values()].find(u => u.login.toLowerCase() === login);
+const loginLimit = createLimiter({ max: 50, windowMs: 15 * 60_000 });
+const accountLimit = createLimiter({ max: 10, windowMs: 15 * 60_000 });
+const passwordLimit = createLimiter({ max: 8, windowMs: 15 * 60_000 });
+const dummy = {}; setPasswordSync(dummy, crypto.randomUUID());
+const uidByLogin = login => [...db.users.values()].find(u => u.login.toLowerCase() === login);
+const canonicalGroup = value => {
+  const m = /^(ИСУ|БТ|ISU|BT|BM|BD)-?(20\d{2}|\d{2})-(\d+)$/.exec(String(value || '').normalize('NFKC').trim().toUpperCase());
+  if (!m) return String(value || '').trim().toUpperCase();
+  const faculty = ({ ISU:'ИСУ', BT:'БТ' })[m[1]] || m[1];
+  return `${faculty}-${String(Number(m[2]) % 100).padStart(2, '0')}-${Number(m[3])}`;
+};
 
   function persist(next) {
     const nextRev = rev + 1;
@@ -297,7 +303,17 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
     if (route === '/api/sync' && body.changes.grades) audit('exam.grades', user.id, 'grades');
     return json(res, { ...current(s), ...result });
   }
-  handle.openRooms = () => [...db.rooms.values()].filter(r => r.open).map(r => ({ id: r.id, title: r.title }));
+  handle.openRooms = user => [...db.rooms.values()].filter(room => {
+    if (!room.open) return false;
+    const groups = Array.isArray(room.groups) && room.groups.length ? room.groups
+      : Array.isArray(room.subgroups) ? room.subgroups : [];
+    if (user?.role === 'teacher') {
+      const assigned = new Set((Array.isArray(user.groups) ? user.groups : []).map(canonicalGroup));
+      return groups.length ? groups.some(group => assigned.has(canonicalGroup(group))) : room.ownerId === user.id;
+    }
+    if (!groups.length) return true;
+    return groups.some(group => canonicalGroup(group) === canonicalGroup(user?.group));
+  }).map(room => ({ id: room.id, title: room.title }));
   return handle;
 }
 

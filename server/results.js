@@ -2,20 +2,14 @@
 
 /* Закрытый API учебной базы результатов. Все проверки прав выполняются здесь, на сервере.
  * Доступ — только преподавателям и администрации:
- *   вход через сеанс KU Portal (portal-login): преподаватель или администратор (право results) — вся база с правкой;
- *   собственный логин базы — только у учётных записей с ролью teacher; студенческие логины не входят.
+ *   вход через сеанс KU Portal (portal-login): преподаватель или сотрудник с правом results — вся база с правкой;
+ *   собственный вход по паролю отключён; права портала перепроверяются при каждом запросе.
  * Права портала перепроверяются при каждом запросе: отзыв допуска или роли действует сразу. */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { promisify } = require('util');
 const { createStore, writeJsonAtomic } = require('./store');
 const { clientIp, readJson, HttpError } = require('./http');
-const { createLimiter } = require('./security');
-
-const scrypt = promisify(crypto.scrypt);
-
-const SCRYPT = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const TOKEN_TTL = 8 * 60 * 60 * 1000;
 const MAX_DOCX = 5 * 1024 * 1024;
 const SKILLS = new Set(['тесты', 'письмо', 'говорение']);
@@ -56,13 +50,18 @@ function createResults({ dataDir, portal = null }) {
     valid: d => !!d && d.version === 1 && ['users', 'tests', 'components', 'results', 'scores'].every(k => Array.isArray(d[k])),
   });
   let db = store.load();
+  let credentialsRemoved = false;
+  for (const user of db.users) {
+    for (const field of ['passHash', 'salt', 'passAlgo', 'password', 'passwordHash', 'tempPasswordUntil']) {
+      if (Object.hasOwn(user, field)) { delete user[field]; credentialsRemoved = true; }
+    }
+  }
+  if (credentialsRemoved) {
+    store.replace(db);
+    store.clearBackups();
+    store.save(db);
+  }
   const sessions = new Map();
-  // Ограничения входа: пара логин + IP (чужой человек не запирает владельца), общий по IP и по логину — выше
-  const LIMIT_MS = 15 * 60 * 1000;
-  const loginByUserIp = createLimiter({ max: 5, windowMs: LIMIT_MS });
-  const loginByUser = createLimiter({ max: 40, windowMs: LIMIT_MS });
-  const loginByIp = createLimiter({ max: 50, windowMs: LIMIT_MS });
-  const dummy = { salt: crypto.randomBytes(16).toString('hex'), passHash: '00'.repeat(64) };
   const json = (res, body, status = 200) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(body));
@@ -75,16 +74,22 @@ function createResults({ dataDir, portal = null }) {
       throw error;
     }
   };
-  /* Кем человек из портала входит в базу: преподаватель или администратор; остальные — никем */
+  /* Кем человек из портала входит в базу: только преподаватель или сотрудник с правом results. */
   function portalIdentity(access) {
-    if (!access || !['teacher', 'admin'].includes(access.role)) return null;
-    return { id: 'portal:' + access.id, username: access.fio, role: access.role, portal: true };
+    if (!access) return null;
+    const allowed = access.role === 'teacher' || (access.role === 'staff' && access.perms?.results);
+    if (!allowed) return null;
+    return { id: 'portal:' + access.id, username: access.fio, role: 'teacher', portal: true };
   }
   const userOf = req => {
     const raw = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const s = sessions.get(raw);
     if (!s || s.exp < Date.now()) { sessions.delete(raw); return null; }
-    const user = s.portalId ? portalIdentity(portal && portal.byId(s.portalId)) : db.users.find(u => u.id === s.uid && u.role === 'teacher');
+    const access = s.portalId ? portal && portal.byId(s.portalId) : null;
+    const user = s.portalId ? portalIdentity(access) : db.users.find(u => u.id === s.uid && u.role === 'teacher');
+    if (s.portalId && Number(access?.authVersion || 0) !== Number(s.authVersion || 0)) {
+      sessions.delete(raw); return null;
+    }
     if (!user) { sessions.delete(raw); return null; }
     s.exp = Date.now() + TOKEN_TTL;
     return user;
@@ -98,13 +103,6 @@ function createResults({ dataDir, portal = null }) {
   const BODY_LIMIT = { '/api/results/test-file': Math.ceil(MAX_DOCX * 1.5) + 100_000 };
   const reject = (res, status, error) => { json(res, { error }, status); return true; };
   const teacher = (u, res) => canViewAll(u) ? false : reject(res, 403, 'Только преподаватель или администратор может выполнять это действие');
-  async function passwordOk(user, password) {
-    const target = user && user.passAlgo === 'scrypt' && user.salt && user.passHash ? user : dummy;
-    const got = await scrypt(String(password).slice(0, 256), target.salt, 64, SCRYPT);
-    const want = Buffer.from(target.passHash, 'hex');
-    return target === user && got.length === want.length && crypto.timingSafeEqual(got, want);
-  }
-
   async function handle(req, res, url) {
     const p = url.pathname;
     if (!p.startsWith('/api/results/')) return false;
@@ -121,21 +119,9 @@ function createResults({ dataDir, portal = null }) {
       if (!access) return reject(res, 401, 'Войдите в KU Portal');
       const user = portalIdentity(access);
       if (!user) return reject(res, 403, 'Учебная база результатов доступна только преподавателям и администрации');
-      return startSession(res, { portalId: access.id }, user);
+      return startSession(res, { portalId: access.id, authVersion: Number(access.authVersion || 0) }, user);
     }
-    if (p === '/api/results/login' && req.method === 'POST') {
-      const username = String(body.username || '').trim().slice(0, 100);
-      const ip = clientIp(req), name = username.toLowerCase(), pair = name + '|' + ip;
-      const tooMany = () => reject(res, 429, 'Слишком много попыток. Попробуйте через 15 минут.');
-      if (loginByUserIp.blocked(pair) || loginByUser.blocked(name) || loginByIp.blocked(ip)) return tooMany();
-      const releasePair = loginByUserIp.reserve(pair), releaseUser = loginByUser.reserve(name), releaseIp = loginByIp.reserve(ip);
-      if (!releasePair || !releaseUser || !releaseIp) return tooMany();
-      const user = db.users.find(u => u.username === username);
-      if (!await passwordOk(user, body.password || '')) return reject(res, 401, 'Неверный логин или пароль');
-      releasePair(); releaseUser(); releaseIp();
-      if (user.role !== 'teacher') return reject(res, 403, 'Учебная база результатов доступна только преподавателям и администрации');
-      return startSession(res, { uid: user.id }, user);
-    }
+    if (p === '/api/results/login' && req.method === 'POST') return reject(res, 403, 'Войдите через KU Portal');
     if (p === '/api/results/health' && req.method === 'GET') return json(res, { ready: db.users.length > 0 });
     const u = userOf(req);
     if (!u) return reject(res, 401, 'Войдите в систему');

@@ -1,8 +1,7 @@
 'use strict';
 /* KU Portal → KU Message (мессенджер университета, отдельное приложение под /ku-message/ на сервере, папка ku-message/).
  *
- * Пункт меню «KU Message» (#/chats) открывает мессенджер сразу (ревью п.1: без промежуточной страницы)
- * с тем же переходом, что и в онлайн-экзамен (appTransition). Пользователь не входит заново: портал получает
+ * Пункт меню «KU Message» открывает мессенджер сразу без промежуточного экрана. Пользователь не входит заново: портал получает
  * одноразовый код (/api/message/handoff, 60 с) и передаёт его в адресе после # вместе с оформлением и языком портала
  * и адресом возврата. Здесь же — значок непрочитанного у пункта меню.
  * Подключается перед app.js; хелперы app.js используются только во время вызова.
@@ -26,9 +25,9 @@ async function openMessage(newTab, open) { // open — раздел KU Message, 
     const { code } = await api('/message/handoff', { method: 'POST', body: {} });
     const th = resolvedTheme();
     const u = new URL(messagePath(), location.origin);
-    u.hash = new URLSearchParams({ code, back: location.href.split('#')[0] + '#/', lang: getLang(), theme: th.palette, mode: th.mode || 'light', ...(open ? { open } : {}) }).toString();
+    u.hash = new URLSearchParams({ code, back: serviceReturnUrl(), lang: getLang(), theme: th.palette, mode: th.mode || 'light', ...(open ? { open } : {}) }).toString();
     if (w) { w.opener = null; w.location.href = u.href; }
-    else appTransition(u.href, { icon: 'kumsg', title: t('Открываем KU Message…'), sub: t('Переходим в мессенджер университета') });
+    else appTransition(u.href);
   } catch (e) { if (w) w.close(); toast(e.message, true); }
 }
 

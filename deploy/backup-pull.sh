@@ -23,8 +23,8 @@ rm -rf -- "$partial"
 rsync -a --delete --exclude 'ku-corpus.json.gz' --exclude '*.tmp' ${prev:+--link-dest="$prev"} \
   -e "ssh -i '$KEY' -o BatchMode=yes -o ConnectTimeout=20" "$HOST:ku-portal/data/" "$partial/" \
   || fail "сервер недоступен или нет доступа по ключу"
-# копия должна читаться: главная база — корректный JSON со списком пользователей
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d.get("users"), list) and d["users"]' "$partial/db.json" \
+# копия должна читаться: файл либо содержит список пользователей, либо является AES-GCM-конвертом
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert (isinstance(d.get("users"), list) and d["users"]) or (d.get("_kuEncrypted") == 1 and d.get("alg") == "A256GCM")' "$partial/db.json" \
   || fail "db.json в копии не читается или в нём нет пользователей — старые копии не тронуты"
 rm -rf -- "$target"; mv "$partial" "$target"
 touch "$target" # срок хранения — от дня копии, а не от даты папки на сервере (её переносит rsync -a)

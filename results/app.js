@@ -31,12 +31,7 @@ function noAccessView(message) {
   app.innerHTML = `<section class="card" style="max-width:520px;margin:6vh auto"><h1>Учебная база</h1><div class="notice">${esc(message || 'Доступ закрыт')}</div><p><a href="/">← Вернуться в KU Portal</a></p></section>`;
 }
 function loginView(message = '') {
-  app.innerHTML = `<section class="card" style="max-width:480px;margin:6vh auto"><h1>Вход в учебную базу</h1><p class="muted">Введите логин и личный пароль.</p><form id="login" class="form"><input id="username" autocomplete="username" placeholder="Логин" required><input id="password" type="password" autocomplete="current-password" placeholder="Пароль" required><button>Войти</button></form><div class="error">${esc(message)}</div></section>`;
-  document.getElementById('login').onsubmit = async e => {
-    e.preventDefault();
-    try { const r = await api('login', { method:'POST', body:{ username:document.getElementById('username').value.trim(), password:document.getElementById('password').value } }); token = r.token; sessionStorage.setItem(TOKEN_KEY, token); await load(); }
-    catch (err) { loginView(err.message); }
-  };
+  app.innerHTML = `<section class="card" style="max-width:480px;margin:6vh auto"><h1>Учебная база результатов</h1><p class="muted">Вход выполняется через ваш аккаунт KU Portal.</p><div class="error">${esc(message)}</div><a class="btn" href="/">Войти через KU Portal</a></section>`;
 }
 const totalMax = test => (data.components || []).filter(c => c.testId === test.id).reduce((s,c) => s + c.maxPoints, 0);
 function render() {

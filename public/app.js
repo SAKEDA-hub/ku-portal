@@ -572,7 +572,7 @@ const EXAM_COLOR = { ku: 'incampus', arizona: 'intl' }; // палитра пор
 function examLaunchUrl() {
   const u = new URL(EXAM_SYNC_PATH, location.origin);
   u.searchParams.set('from', 'ku-portal');
-  u.searchParams.set('back', location.href.split('#')[0] + '#/'); // с учётом пути (GitHub Pages: /ku-portal/); на главную, иначе экзамен откроется снова
+  u.searchParams.set('back', serviceReturnUrl()); // возвращаем на страницу, откуда открыли сервис
   u.searchParams.set('lang', getLang()); // язык интерфейса — и в онлайн-экзамене
   // Оформление портала целиком: цвет (с учётом «Авто»), режим, размер текста, «меньше анимации».
   // Kozybayev → inCampus, Arizona → «Международный кампус», остальные палитры в экзамене называются так же.
@@ -584,26 +584,11 @@ function examLaunchUrl() {
   return u.href;
 }
 function examTransition(href) {
-  appTransition(href, { icon: 'monitor', title: t('Открываем онлайн-экзамен…'), sub: t('Переходим в сервис экзаменов') });
+  appTransition(href);
 }
-/* Переход в отдельный сервис (онлайн-экзамен, KU Message): мост «портал → сервис» и плавный уход со страницы */
-function appTransition(href, o) {
-  const ov = document.createElement('div');
-  ov.className = 'oe-ov';
-  ov.setAttribute('role', 'status');
-  ov.setAttribute('aria-live', 'polite');
-  ov.innerHTML = `
-    <div class="oe-ov-in">
-      <div class="oe-bridge"><span class="oe-app ku">${svg(programOf(S.user).icon)}</span><span class="oe-track"><i></i></span><span class="oe-app ex">${svg(o.icon)}</span></div>
-      <div class="oe-ov-t">${esc(o.title)}</div>
-      <div class="oe-ov-s">${esc(o.sub)}</div>
-    </div>`;
-  document.body.appendChild(ov);
-  requestAnimationFrame(() => ov.classList.add('on'));
-  const reduced = (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) || getPrefs().reduceMotion;
-  setTimeout(() => { location.href = href; }, reduced ? 50 : 900);
-  // Вернулись кнопкой «Назад» из bfcache — убрать оверлей
-  window.addEventListener('pageshow', function h(e) { if (e.persisted) { ov.remove(); window.removeEventListener('pageshow', h); } });
+/* Переход сразу в отдельный сервис, без промежуточного экрана. */
+function appTransition(href) {
+  location.assign(href);
 }
 /* «Экзамен» в меню — сразу переход в онлайн-экзамен (ревью п.1: без промежуточной страницы).
    Адрес в истории меняется на главную, чтобы «Назад» из экзамена не открывал его снова. */
@@ -676,6 +661,20 @@ function route() {
     default: return viewHome();
   }
 }
+function serviceReturnUrl() {
+  const route = location.hash.replace(/^#\/?/, '').split('/')[0];
+  const fallback = ['chats', 'chat', 'exam'].includes(route) ? '#/' : (location.hash || '#/');
+  return location.origin + location.pathname + location.search + fallback;
+}
+// Обычный щелчок сразу выполняет SSO; Ctrl/Meta-click продолжает работать как новая вкладка.
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[data-nav="message"], a[data-nav="exam"]');
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (!S.user || S.user.mustChangePassword) return;
+  event.preventDefault();
+  if (link.dataset.nav === 'message') viewMessage();
+  else viewExam();
+});
 window.addEventListener('hashchange', route);
 (async function init() {
   if (S.token) {

@@ -13,6 +13,7 @@ const normalized = (value, sensitive) => {
 // The student receives the choices independently from their correct ordering or pairing.
 function studentQuestion(q) {
   const out = { id: q.id, type: q.type, text: q.text, points: q.points };
+  if (Array.isArray(q.media)) out.media = q.media.map(({ kind, name, src }) => ({ kind, name, src }));
   if (q.type === 'single' || q.type === 'multi') out.options = q.options;
   if (q.type === 'order') out.items = sorted(q.items);
   if (q.type === 'match') {
