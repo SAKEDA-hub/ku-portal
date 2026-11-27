@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('node:child_process');
 const { Readable } = require('node:stream');
 const { setPassword, setPasswordSync, checkPassword, needsRehash, createLimiter, PASSWORD_MIN, secureDataDirectory } = require('../server/security');
 const { createStore, writeJsonAtomic, encodeStoredJson, decodeStoredJson, readStoreJson } = require('../server/store');
@@ -205,7 +206,7 @@ test('Online Exam links existing work through one-use portal SSO and invalidates
 test('results sessions expire immediately after the portal password changes', async () => {
   const dir = tmpDir();
   let authVersion = 1;
-  const access = () => ({ id:'tch_1', fio:'Teacher', role:'teacher', authVersion });
+  const access = () => ({ id:'tch_1', fio:'Teacher', role:'teacher', perms:{ results:true }, authVersion });
   const results = createResults({ dataDir:dir, portal:{ fromRequest:req => req.headers.authorization === 'Bearer portal' ? access() : null, byId:id => id === 'tch_1' ? access() : null } });
   const request = async (method, route, body, token) => {
     const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
@@ -259,6 +260,30 @@ test('encrypted one-time account rotation replaces credentials, revokes sessions
     stageBundledRotations({ DATA:dir, bundleDir }); admin.applyProvision();
     assert.equal(saved, 1); assert.equal(backupsCleared, 1);
     assert.deepStrictEqual(readStoreJson(path.join(dir, 'account-rotation-batches.json')), { applied:[batchId] });
+  } finally {
+    if (previousKey === undefined) delete process.env.KU_DATA_ENCRYPTION_KEY; else process.env.KU_DATA_ENCRYPTION_KEY = previousKey;
+    fs.rmSync(dir, { recursive:true, force:true });
+  }
+});
+
+test('rotation bundle creator encrypts passwords and staging rejects plaintext', () => {
+  const dir = tmpDir(), bundles = path.join(dir, 'bundles');
+  const previousKey = process.env.KU_DATA_ENCRYPTION_KEY, key = crypto.randomBytes(32).toString('hex');
+  process.env.KU_DATA_ENCRYPTION_KEY = key;
+  try {
+    const secret = 'new-test-password';
+    execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts/create-rotation-bundle.js'), bundles], {
+      input:JSON.stringify({ accounts:[{ userId:'std_1', password:secret }] }),
+      env:{ ...process.env, KU_DATA_ENCRYPTION_KEY:key }, encoding:'utf8',
+    });
+    const name = fs.readdirSync(bundles)[0], file = path.join(bundles, name);
+    assert.equal(fs.statSync(file).mode & 0o077, 0);
+    assert.ok(!fs.readFileSync(file, 'utf8').includes(secret));
+    assert.equal(stageBundledRotations({ DATA:dir, bundleDir:bundles }), 1);
+    assert.equal(readStoreJson(path.join(dir, 'portal-provision', name.replace(/\.enc$/, ''))).accounts.length, 1);
+    const plain = path.join(bundles, crypto.randomUUID() + '.json.enc');
+    fs.writeFileSync(plain, JSON.stringify({ action:'rotate-accounts', accounts:[] }), { mode:0o600 });
+    assert.throws(() => stageBundledRotations({ DATA:dir, bundleDir:bundles }), /зашифрован/);
   } finally {
     if (previousKey === undefined) delete process.env.KU_DATA_ENCRYPTION_KEY; else process.env.KU_DATA_ENCRYPTION_KEY = previousKey;
     fs.rmSync(dir, { recursive:true, force:true });

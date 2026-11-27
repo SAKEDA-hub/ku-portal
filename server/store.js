@@ -300,4 +300,4 @@ function createMysqlDocumentStore(key, { keep }) {
   };
 }
 
-module.exports = { createStore, writeJsonAtomic, writeStoreJson, readStoreJson, isEncrypted, encodeStoredJson, decodeStoredJson };
+module.exports = { createStore, writeJsonAtomic, writeStoreJson, readStoreJson, isEncrypted, encodeStoredJson, decodeStoredJson, encryptionKey };

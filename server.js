@@ -412,7 +412,7 @@ const examSync = require('./exam-sync/handler').createExamSync({
 function resultsAccess(u) {
   if (!u || !grantOf(u)) return null;
   // учебная база — только по праву «учебная база» (ревью п.6: у преподавателей по умолчанию её нет)
-  return { id: u.id, fio: u.fio, role: !permsOf(u).results ? null : u.role === 'teacher' ? 'teacher' : 'admin' };
+  return { id: u.id, fio: u.fio, role: u.role, perms: permsOf(u), authVersion: u.authVersion };
 }
 const results = require('./server/results').createResults({ dataDir: DATA, portal: {
   fromRequest: req => resultsAccess(userOf(req)),
@@ -432,7 +432,8 @@ const account = require('./server/account').createAccount({ getDB: () => db, sav
   pubUser, settingsOf, SETTING_DEFAULTS, SETTING_TEXT_MAX, PASS_SHORT, subjName, teacherFio, WEEKDAYS });
 const study = require('./server/study').createStudy({ getDB: () => db, saveDB, ok, bad, audit, nid, isOnline, settingsOf, pushInbox, subjName, teacherFio,
   avgOf, nextLesson, detectDiscipline, teacherHasGroup, teacherGroups, WEEKDAYS });
-const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA, help });
+const admin = require('./server/admin').createAdmin({ getDB: () => db, saveDB, ok, bad, sec, audit, passError, reqToken, dropUserSessions, isOnline, DATA, help,
+  clearRotationBackups: () => store.clearBackups() });
 const MUST_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/settings', '/api/sessions', '/api/inbox']);
 const publicAIRate = sec.createLimiter({ max: 30, windowMs: 60_000 });
 const handoffCodes = new Map(); // одноразовые коды перехода в KU Message: code → { uid, exp }

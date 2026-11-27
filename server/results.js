@@ -77,9 +77,9 @@ function createResults({ dataDir, portal = null }) {
   /* Кем человек из портала входит в базу: только преподаватель или сотрудник с правом results. */
   function portalIdentity(access) {
     if (!access) return null;
-    const allowed = access.role === 'teacher' || (access.role === 'staff' && access.perms?.results);
+    const allowed = (access.role === 'teacher' || access.role === 'staff') && access.perms?.results;
     if (!allowed) return null;
-    return { id: 'portal:' + access.id, username: access.fio, role: 'teacher', portal: true };
+    return { id: 'portal:' + access.id, username: access.fio, role: access.role === 'staff' ? 'admin' : 'teacher', portal: true };
   }
   const userOf = req => {
     const raw = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
