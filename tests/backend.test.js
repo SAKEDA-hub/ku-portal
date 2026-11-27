@@ -70,7 +70,8 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
         ['legacy-student', { id:'legacy-student', login:'ИСУ-25-1g-1', name:'Example Tester', role:'student', faculty:'ИСУ', year:25, group:1 }],
       ],
       tests:[['old-test', { id:'old-test', title:'Saved test', ownerId:'legacy-teacher', questions:[{ id:'q1', type:'single', text:'Q', options:['a'], correct:0, points:1 }] }]],
-      rooms:[], attempts:[['saved-attempt', { id:'saved-attempt', userId:'legacy-student', roomId:'old-room', testId:'old-test', testTitle:'Saved test', details:[], score:1, max:1 }]],
+      rooms:[['old-room', { id:'old-room', ownerId:'legacy-teacher', title:'Old room', groups:['ИСУ-25-1'], open:true, test:{ on:true, testIds:['old-test'] } }]],
+      attempts:[['saved-attempt', { id:'saved-attempt', userId:'legacy-student', roomId:'old-room', testId:'old-test', testTitle:'Saved test', details:[], score:1, max:1 }]],
       writings:[], queue:[], grades:[], timers:[],
     },
   };
@@ -84,6 +85,7 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
   const users = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users;
   const teacherPortal = users.find(u => u.email === teacher.email), studentPortal = users.find(u => u.email === student.email);
   app.cli('approve', teacherPortal.id); app.cli('approve', studentPortal.id);
+  app.cli('groups', teacherPortal.id, student.group);
   const teacherToken = (await app.request('/api/auth/login', { body:teacher })).value.token;
   const studentToken = (await app.request('/api/auth/login', { body:student })).value.token;
   const issue = token => app.request('/api/exam/handoff', { token, body:{} });
@@ -120,11 +122,9 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
 
 test('online exam migrates embedded media out of JSON and serves the same content after restart', async t => {
   const app = installation(t);
-  const salt = '0123456789abcdef';
-  const passHash = crypto.createHash('sha256').update(salt + 'teacher-password').digest('hex');
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/w2sAAAAASUVORK5CYII=';
   const snapshot = { format:2, rev:1, db:{
-    users:[['teacher', { id:'teacher', login:'teacher', name:'Teacher', role:'teacher', salt, passHash }]],
+    users:[['teacher', { id:'teacher', login:'teacher', name:'Example Teacher', role:'teacher' }]],
     tests:[['media-test', { id:'media-test', title:'Media test', ownerId:'teacher', questions:[{ id:'q1', text:'Question', media:[{ kind:'image', name:'image.png', src:image }] }] }]],
     rooms:[], attempts:[], writings:[], queue:[], grades:[], timers:[],
   } };
@@ -132,7 +132,15 @@ test('online exam migrates embedded media out of JSON and serves the same conten
   await app.start();
 
   const call = (route, options) => app.request('/exam-sync/api/' + route, options);
-  let session = await call('login', { body:{ login:'teacher', password:'teacher-password' } });
+  const teacher = { lastName:'Example', firstName:'Teacher', email:'teacher@example.test', password:'teacher-password', role:'teacher' };
+  assert.equal((await app.request('/api/auth/register', { body:teacher })).status, 202);
+  const portalId = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0].id;
+  app.cli('approve', portalId);
+  const portalLogin = await app.request('/api/auth/login', { body:teacher });
+  assert.equal(portalLogin.status, 200);
+  const handoff = await app.request('/api/exam/handoff', { token:portalLogin.value.token, body:{} });
+  assert.equal(handoff.status, 200);
+  let session = await call('portal/redeem', { body:{ code:handoff.value.code } });
   assert.equal(session.status, 200);
   assert.equal(session.value.db.tests[0].questions[0].media[0].src, image);
   const dbFile = path.join(app.data, 'exam-sync.json');
@@ -142,7 +150,7 @@ test('online exam migrates embedded media out of JSON and serves the same conten
   assert.equal(fs.readdirSync(path.join(app.data, 'exam-media')).filter(name => /^[a-f0-9]{64}$/.test(name)).length, 1);
 
   await app.stop(); await app.start();
-  session = await call('login', { body:{ login:'teacher', password:'teacher-password' } });
+  session = await call('state', { token:session.value.token });
   assert.equal(session.status, 200);
   assert.equal(session.value.db.tests[0].questions[0].media[0].src, image);
 });
