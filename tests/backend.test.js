@@ -15,6 +15,21 @@ const { installation } = require('./harness');
 
 const portalUser = { lastName: 'Example', firstName: 'Tester', email: 'person@example.test', group: 'ИСУ2025-1', password: 'local-test-password' };
 
+test('duplicate registration does not reveal an existing email and still uses the registration limit', async t => {
+  const app = installation(t); await app.start();
+  const person = { ...portalUser, role:'teacher' };
+  const first = await app.request('/api/auth/register', { body:person });
+  assert.equal(first.status, 202);
+  assert.deepEqual(first.value, { pending:true });
+  const duplicate = await app.request('/api/auth/register', { body:{ ...person, firstName:'Different' } });
+  assert.equal(duplicate.status, first.status);
+  assert.deepEqual(duplicate.value, first.value);
+  for (let i = 0; i < 8; i++) assert.equal((await app.request('/api/auth/register', { body:person })).status, 202);
+  assert.equal((await app.request('/api/auth/register', { body:person })).status, 429);
+  const db = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'), 'utf8'));
+  assert.equal(db.users.length, 1);
+});
+
 test('portal requires an operator grant, supports restart, KU Message handoff and immediate revocation', async t => {
   const app = installation(t); await app.start();
   const call = app.request;
@@ -101,6 +116,35 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
   assert.ok(!inventory.includes(teacher.password) && !inventory.includes(student.password));
   assert.equal((await app.request('/api/auth/logout', { token:studentToken, body:{} })).status, 200);
   assert.equal((await app.request('/exam-sync/api/state', { token:studentExam.value.token })).status, 401);
+});
+
+test('online exam migrates embedded media out of JSON and serves the same content after restart', async t => {
+  const app = installation(t);
+  const salt = '0123456789abcdef';
+  const passHash = crypto.createHash('sha256').update(salt + 'teacher-password').digest('hex');
+  const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/w2sAAAAASUVORK5CYII=';
+  const snapshot = { format:2, rev:1, db:{
+    users:[['teacher', { id:'teacher', login:'teacher', name:'Teacher', role:'teacher', salt, passHash }]],
+    tests:[['media-test', { id:'media-test', title:'Media test', ownerId:'teacher', questions:[{ id:'q1', text:'Question', media:[{ kind:'image', name:'image.png', src:image }] }] }]],
+    rooms:[], attempts:[], writings:[], queue:[], grades:[], timers:[],
+  } };
+  fs.writeFileSync(path.join(app.data, 'exam-sync.json'), JSON.stringify(snapshot));
+  await app.start();
+
+  const call = (route, options) => app.request('/exam-sync/api/' + route, options);
+  let session = await call('login', { body:{ login:'teacher', password:'teacher-password' } });
+  assert.equal(session.status, 200);
+  assert.equal(session.value.db.tests[0].questions[0].media[0].src, image);
+  const dbFile = path.join(app.data, 'exam-sync.json');
+  const stored = fs.readFileSync(dbFile, 'utf8');
+  assert.equal(stored.includes('data:image/png;base64'), false);
+  assert.match(stored, /ku-media:v1:/);
+  assert.equal(fs.readdirSync(path.join(app.data, 'exam-media')).filter(name => /^[a-f0-9]{64}$/.test(name)).length, 1);
+
+  await app.stop(); await app.start();
+  session = await call('login', { body:{ login:'teacher', password:'teacher-password' } });
+  assert.equal(session.status, 200);
+  assert.equal(session.value.db.tests[0].questions[0].media[0].src, image);
 });
 
 test('production upgrade preserves exam IDs and results, retires old credentials and issues individual sessions', async t => {
