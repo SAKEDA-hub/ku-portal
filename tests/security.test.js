@@ -153,21 +153,25 @@ test('AES-GCM store encryption hides database contents and detects a wrong key',
   }
 });
 
-test('Online Exam rejects old passwords, redeems one-use portal SSO and preserves linked work', async () => {
+test('Online Exam links existing work through one-use portal SSO and invalidates changed sessions', async () => {
   const dir = tmpDir(), file = path.join(dir, 'exam-sync.json');
   const data = { format: 2, rev: 1, db: Object.fromEntries(collections.map(c => [c, []])) };
-  data.db.users = [['std_3', { id:'std_3', login:'old-login', name:'Student', role:'student', salt:'x', passHash:'old-hash', passAlgo:'scrypt' }]];
+  data.db.users = [['std_3', { id:'std_3', login:'old-login', name:'Test Student', role:'student', faculty:'ИСУ', year:2025, group:1 }]];
   data.db.grades = [['g1', { id:'g1', userId:'std_3', roomId:'room1', part:'test', score:8 }]];
   writeJsonAtomic(file, data);
   let redeemed = false, authVersion = 0;
-  const portalUser = () => ({ id:'std_3', email:'student@example.test', fio:'Student', role:'student', perms:{}, authVersion });
+  const portalUser = () => ({ id:'std_3', email:'student@example.test', fio:'Test Student', role:'student', group:'ИСУ2025-1', groups:[], perms:{}, authVersion });
   const options = { base:'/exam-sync', dataFile:file, demo:false,
-    redeemPortalCode: async code => code === 'valid-once' && !redeemed ? (redeemed = true, { id:'std_3' }) : null,
-    portalUserById: id => id === 'std_3' ? portalUser() : null };
+    resolvePortalHandoff: async code => code === 'valid-once' && !redeemed
+      ? (redeemed = true, { user:portalUser(), sessionId:'portal-session', accounts:[portalUser()] }) : null,
+    validatePortalSession: session => session === 'portal-session' && authVersion === 0,
+    verifyPortalPassword: async () => false,
+    getPortalAccounts: () => [portalUser()] };
   const handler = createExamSync(options);
   const request = async (target, method, route, body, token) => {
     const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
     req.url = route; req.method = method; req.headers = token ? { authorization:'Bearer ' + token } : {};
+    req.socket = { remoteAddress:'127.0.0.1' };
     const res = { statusCode:200, headers:{}, setHeader(k, v) { this.headers[k] = v; },
       writeHead(code, headers = {}) { this.statusCode = code; Object.assign(this.headers, headers); },
       end(text = '') { this.body = text; } };
@@ -176,22 +180,22 @@ test('Online Exam rejects old passwords, redeems one-use portal SSO and preserve
     return { status:res.statusCode, json:() => JSON.parse(res.body || '{}') };
   };
   try {
-    const oldLogin = await request(handler, 'POST', '/exam-sync/api/login', {login:'old-login',password:'old'});
-    assert.equal(oldLogin.status, 403);
-    const login = await request(handler, 'POST', '/exam-sync/api/sso/redeem', {code:'valid-once'});
+    const login = await request(handler, 'POST', '/exam-sync/api/portal/redeem', {code:'valid-once'});
     assert.equal(login.status, 200);
     const state = login.json();
-    assert.equal(state.user.id, 'std_3'); assert.equal(state.user.login, 'student@example.test');
+    assert.equal(state.user.id, 'std_3'); assert.equal(state.user.authSource, 'portal');
     assert.equal(state.db.grades[0].id, 'g1');
+    const oldLogin = await request(handler, 'POST', '/exam-sync/api/login', {login:'old-login',password:'old'});
+    assert.equal(oldLogin.status, 401, JSON.stringify(oldLogin.json()));
     assert.equal((await request(handler, 'GET', '/exam-sync/api/state', undefined, state.token)).status, 200);
     const restarted = createExamSync(options);
-    assert.equal((await request(restarted, 'GET', '/exam-sync/api/state', undefined, state.token)).status, 401);
+    assert.equal((await request(restarted, 'GET', '/exam-sync/api/state', undefined, state.token)).status, 200);
     authVersion++;
     assert.equal((await request(handler, 'GET', '/exam-sync/api/state', undefined, state.token)).status, 401);
     const persisted = JSON.parse(fs.readFileSync(file, 'utf8'));
     const user = persisted.db.users.find(([id]) => id === 'std_3')[1];
     assert.equal(user.passHash, undefined); assert.equal(user.salt, undefined);
-    const replay = await request(handler, 'POST', '/exam-sync/api/sso/redeem', {code:'valid-once'});
+    const replay = await request(handler, 'POST', '/exam-sync/api/portal/redeem', {code:'valid-once'});
     assert.equal(replay.status, 401);
   } finally {
     fs.rmSync(dir, { recursive:true, force:true });

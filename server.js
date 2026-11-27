@@ -516,8 +516,12 @@ async function handleRequest(req, res) {
       // новая регистрация студента — только группа из справочника (ИСУ2025-2 и т.п.); прежние группы у старых студентов остаются
       if (role === 'student' && !GROUPS.isCatalogGroup(group)) return bad(res, 400, 'Выберите группу из списка');
       const em = String(email).trim().toLowerCase();
-      if (db.users.some((x) => x.email === em)) return bad(res, 400, 'Такой email уже зарегистрирован');
       registerByIp.hit(clientIp(req));
+      if (db.users.some((x) => x.email === em)) {
+        // Same status/body and one scrypt operation as a new account: don't expose whether an address exists.
+        await sec.checkPassword(NO_USER, String(password));
+        return send(res, 202, { pending: true });
+      }
       const fio = [lastName, firstName, middleName].filter(Boolean).map((s) => String(s).trim()).join(' ');
       const user = {
         id: nid(ROLE_PREFIX[role]),

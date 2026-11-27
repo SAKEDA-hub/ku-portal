@@ -8,6 +8,7 @@ const { readJson, clientIp, HttpError, sendStatic } = require('../server/http');
 const { createLimiter, checkPassword, setPassword, setPasswordSync, PASSWORD_MIN, htmlPolicy } = require('../server/security');
 const { collections, view, publicUser, startTest, submitTest, submitWriting, applyChanges, validId } = require('./model');
 const { syncPortalUsers } = require('./identity');
+const { createMediaStore } = require('./media-store');
 
 const empty = () => ({ format: 2, rev: 0, db: Object.fromEntries(collections.map(c => [c, []])) });
 function valid(snapshot) {
@@ -23,11 +24,14 @@ function createExamSync({ base = '/exam-sync', dataFile, demo = false, seedFile 
   getPortalAccounts = () => [] }) {
   const directory = path.dirname(dataFile);
   const audit = require('../server/audit').createAudit(directory);
+  const mediaStore = createMediaStore(path.join(directory, 'exam-media'), path.join(directory, 'backups'));
   const index = fs.readFileSync(path.join(__dirname, 'index.html'));
   const policy = htmlPolicy(index);
   const store = createStore({ file: dataFile, backupDir: path.join(directory, 'backups'), space: 0, valid,
     empty: () => demo ? JSON.parse(fs.readFileSync(seedFile, 'utf8')) : empty() });
   const snapshot = store.load();
+  const migratedMedia = mediaStore.externalize(snapshot.db);
+  snapshot.db = migratedMedia.data;
   let rev = snapshot.rev;
   let db = Object.fromEntries(collections.map(c => [c, new Map(snapshot.db[c])]));
   /* Сеансы переживают перезапуск сервера (обновление во время экзамена не выкидывает студентов):
@@ -62,8 +66,13 @@ const canonicalGroup = value => {
 
   function persist(next) {
     const nextRev = rev + 1;
-    store.save({ format: 2, rev: nextRev, db: Object.fromEntries(collections.map(c => [c, [...next[c]]])) });
-    db = next; rev = nextRev;
+    const media = mediaStore.externalize(Object.fromEntries(collections.map(c => [c, [...next[c]]])));
+    const saved = { format: 2, rev: nextRev, db: media.data };
+    mediaStore.snapshot(new Date().toISOString().slice(0, 10));
+    store.save(saved);
+    db = Object.fromEntries(collections.map(c => [c, new Map(media.data[c])]));
+    rev = nextRev;
+    mediaStore.prune(media.data);
     for (const [res, token] of streams) {
       if (!sessionFor(token)) { res.end(); streams.delete(res); }
       else res.write('data: ' + JSON.stringify({ rev }) + '\n\n');
@@ -71,7 +80,7 @@ const canonicalGroup = value => {
   }
 
   // Legacy clients received the complete user table. Keep IDs and coursework, require new credentials.
-  let migrated = snapshot.format !== 2;
+  let migrated = snapshot.format !== 2 || migratedMedia.changed;
   if (migrated) for (const [id, old] of db.users) {
     const u = publicUser(old);
     if (demo && typeof old.password === 'string') setPasswordSync(u, old.password);
@@ -145,7 +154,7 @@ const canonicalGroup = value => {
 
   function current(s) {
     const user = db.users.get(s.uid);
-    return { rev, user: publicUser(user), gradingUntil: s.gradingUntil || 0, db: view(db, user) };
+    return { rev, user: publicUser(user), gradingUntil: s.gradingUntil || 0, db: mediaStore.hydrate(view(db, user)) };
   }
   const requireSession = token => {
     const session = sessionFor(token);
