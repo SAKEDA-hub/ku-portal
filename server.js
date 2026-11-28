@@ -717,6 +717,11 @@ if (DEMO_ON || process.env.NODE_ENV !== 'test') messages.seedDemoMaterials();
 migrateTeacherGroups();
 migrateUsernames();
 loadSessions();
+const moderationCleanup = require('./server/moderation').cleanExistingChat(db);
+if (moderationCleanup.firstRun) {
+  saveDB();
+  console.log('[moderation] existing chat cleanup complete:', JSON.stringify({ scanned: moderationCleanup.scanned, changed: moderationCleanup.changed }));
+}
 admin.applyProvision();
 setInterval(admin.applyProvision, 5000).unref(); // сброс пароля командой с хоста (scripts/access.js reset-password)
 server.listen(PORT, HOST, () => {
