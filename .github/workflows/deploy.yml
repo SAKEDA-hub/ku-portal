@@ -25,10 +25,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
       - name: Check JS syntax
         run: |
           for f in server.js server/*.js scripts/*.js exam-sync/*.js public/*.js ku-message/*.js results/*.js admin/*.js; do
@@ -61,7 +62,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: steps.cfg.outputs.skip != '1'
 
       - name: Upload code to alwaysdata
