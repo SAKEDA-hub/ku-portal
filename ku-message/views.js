@@ -247,6 +247,7 @@ function paintSpace(first) {
   const d = V.data;
   if (first) { const firstNonEmpty = SPACE_TABS.find(([k]) => count(d, k)); V.tab = firstNonEmpty ? firstNonEmpty[0] : 'lecture'; }
   const tabs = SPACE_TABS.filter(([k]) => k !== 'other' || count(d, 'other') || d.manage);
+  const pinned = d.materials.find((m) => m.pinned);
   const pane = document.querySelector('.pane');
   pane.innerHTML = `
     <header class="pane-h space-h" style="--h:${hue(M.ch)}">
@@ -256,24 +257,26 @@ function paintSpace(first) {
     </header>
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-k="${k}" class="${V.tab === k ? 'on' : ''}">${t(l)}<span>${count(d, k)}</span></button>`).join('')}
       ${d.manage ? `<span class="grow"></span><button class="btn pri sm" id="addBtn" title="${t(V.tab === 'task' ? 'Задание' : 'Добавить')}">${svg('plus')}<span>${t(V.tab === 'task' ? 'Задание' : 'Добавить')}</span></button>` : ''}</nav>
+    ${pinned ? `<div class="pinned material-pinned">${svg('pin')}<span><b>${t('Закреплённый материал')}</b><small>${esc(pinned.title)}</small></span>${pinned.file ? fileCard(pinned.file) : ''}</div>` : ''}
     <div class="pane-b feed"><div class="col">${V.tab === 'task' ? tasksHTML(d) : postsHTML(d, V.tab)}</div></div>`;
   pane.querySelector('.tabs').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) { V.tab = b.dataset.k; paintSpace(false); } };
   const add = pane.querySelector('#addBtn'); if (add) add.onclick = () => (V.tab === 'task' ? taskDlg() : materialDlg(V.tab));
   bindFiles(pane);
   pane.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => { const k = b.dataset.kind; const x = (k === 'task' ? d.tasks : d.materials).find((r) => r.id === b.dataset.edit); k === 'task' ? taskDlg(x) : materialDlg(x.kind, x); }));
   pane.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => confirmDlg(t('Удалить?'), t('Публикация исчезнет у всех студентов.'), () => act(b.dataset.kind === 'task' ? '/message/task/delete' : '/message/material/delete', { id: b.dataset.del }, t('Удалено')))));
+  pane.querySelectorAll('[data-pin]').forEach((b) => (b.onclick = () => act('/message/material/pin', { id: b.dataset.pin, on: b.dataset.on !== 'true' }, t(b.dataset.on === 'true' ? 'Файл откреплён' : 'Файл закреплён вверху канала'))));
 }
 const count = (d, k) => (k === 'task' ? d.tasks.length : d.materials.filter((m) => m.kind === k).length);
-function manageBtns(d, id, kind) {
-  return d.manage ? `<span class="acts"><button class="ib sm" data-edit="${esc(id)}" data-kind="${kind}" title="${t('Изменить')}">${svg('edit')}</button><button class="ib sm" data-del="${esc(id)}" data-kind="${kind}" title="${t('Удалить')}">${svg('trash')}</button></span>` : '';
+function manageBtns(d, id, kind, pinned = false) {
+  return d.manage ? `<span class="acts">${kind === 'material' ? `<button class="ib sm" data-pin="${esc(id)}" data-on="${!!pinned}" title="${t(pinned ? 'Открепить' : 'Закрепить')}">${svg('pin')}</button>` : ''}<button class="ib sm" data-edit="${esc(id)}" data-kind="${kind}" title="${t('Изменить')}">${svg('edit')}</button><button class="ib sm" data-del="${esc(id)}" data-kind="${kind}" title="${t('Удалить')}">${svg('trash')}</button></span>` : '';
 }
 function postsHTML(d, kind) {
   const list = d.materials.filter((m) => m.kind === kind).sort((a, b) => a.at - b.at); // по порядку: Лекция 1, 2, 3…
   if (!list.length) return `<div class="empty">${svg('book')}<b>${t(kind === 'lecture' ? 'Лекций пока нет' : kind === 'practice' ? 'Практик пока нет' : 'Материалов пока нет')}</b><span>${t(d.manage ? 'Нажмите «Добавить», чтобы опубликовать — студенты получат уведомление.' : 'Когда преподаватель опубликует, они появятся здесь.')}</span></div>`;
-  return list.map((m, i) => `<article class="post">
+  return list.map((m, i) => `<article class="post" id="material-${esc(m.id)}">
     <div class="num">${kind === 'other' ? svg('file') : i + 1}</div>
     <div class="post-c">
-      <div class="post-h"><span class="kicker">${t(KIND[kind])}${kind === 'other' ? '' : ' ' + (i + 1)}</span><small>${esc(fmtDay(isoOf(m.at)))}${m.edited ? ' · ' + t('изменено') : ''}</small>${manageBtns(d, m.id, 'material')}</div>
+      <div class="post-h"><span class="kicker">${t(KIND[kind])}${kind === 'other' ? '' : ' ' + (i + 1)}</span><small>${esc(fmtDay(isoOf(m.at)))}${m.edited ? ' · ' + t('изменено') : ''}</small>${manageBtns(d, m.id, 'material', m.pinned)}</div>
       <h3>${esc(m.title)}</h3>
       ${m.text ? `<p class="txt">${md(m.text)}</p>` : ''}
       ${m.file ? fileCard(m.file) : ''}

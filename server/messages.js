@@ -17,6 +17,7 @@ const MIN_TASK_DAYS = 7; // обычные короткие задания не 
 const { fileProblem, fileRef, extOf, IMAGE_MIME } = require('./files'); // какие вложения принимаются — server/files.js
 const MATERIAL_KINDS = ['lecture', 'practice', 'other'];
 const DAY_MS = 86400000;
+const DEMO_FILE_KEY = 'ku-portal-demo-course-file-v1';
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -141,7 +142,7 @@ function createMessages(ctx) {
       && [...(c.posts || []), ...(c.chat || [])].some((row) => row.file?.id === fileId));
   }
   const pubMsg = (m) => ({ id: m.id, from: m.from, text: m.text, file: m.file || null, at: m.at });
-  const pubMaterial = (m) => ({ id: m.id, kind: m.kind, title: m.title, text: m.text, file: m.file || null, at: m.at, edited: m.edited || null });
+  const pubMaterial = (m) => ({ id: m.id, kind: m.kind, title: m.title, text: m.text, file: m.file || null, at: m.at, edited: m.edited || null, pinned: !!m.pinned });
   const pubTask = (t) => ({ id: t.id, title: t.title, text: t.text, due: t.due, file: t.file || null, at: t.at, edited: t.edited || null });
 
   /* ------------------------------ Ответы ------------------------------ */
@@ -227,6 +228,67 @@ function createMessages(ctx) {
     return ok(res);
   }
 
+  /* One private TXT file and one pinned post per active subject channel. Markers keep this idempotent. */
+  function seedDemoMaterials() {
+    const db = store();
+    const subjects = db.subjects.filter((sub) => sub && sub.id && sub.teacherId && subjectGroups(sub).length);
+    if (!subjects.length) return 0;
+    const seededSubjects = new Set(Array.isArray(db.chat.demoCourseMaterialSeededSubjects) ? db.chat.demoCourseMaterialSeededSubjects : []);
+    let registryChanged = !Array.isArray(db.chat.demoCourseMaterialSeededSubjects);
+    const bytes = Buffer.from([
+      'KU Portal — демонстрационный материал', '',
+      'Это пробный файл для показа канала учебного предмета.',
+      'Преподаватель может заменить его собственными материалами или открепить публикацию.',
+      'Файл не содержит данных студентов.', '',
+    ].join('\n'), 'utf8');
+    let created = 0;
+    let fileChanged = false;
+    for (const sub of subjects) {
+      if (seededSubjects.has(sub.id)) continue;
+      const key = `ku-portal-demo-course-material-v1:${sub.id}`;
+      const fileId = crypto.createHash('sha256').update(`${DEMO_FILE_KEY}:${sub.id}`).digest('hex').slice(0, 24);
+      const filePath = path.join(UPLOADS, fileId);
+      let file = db.files.find((f) => f.id === fileId);
+      if (file && file.demoKey !== key) {
+        console.error('[messages] demo material file id is already in use; channel skipped');
+        continue;
+      }
+      if (!file) {
+        if (fs.existsSync(filePath)) {
+          if (!fs.readFileSync(filePath).equals(bytes)) {
+            console.error('[messages] demo material file path is already in use; channel skipped');
+            continue;
+          }
+        } else {
+          fs.writeFileSync(filePath, bytes, { flag: 'wx', mode: 0o600 });
+        }
+        file = { id: fileId, name: 'KU Portal — демонстрационный материал.txt', size: bytes.length,
+          owner: sub.teacherId, at: Date.now(), demoKey: key };
+        db.files.push(file);
+        fileChanged = true;
+      } else if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, bytes, { flag: 'wx', mode: 0o600 });
+        fileChanged = true;
+      } else if (!fs.readFileSync(filePath).equals(bytes)) {
+        console.error('[messages] demo material file contents changed; channel skipped');
+        continue;
+      }
+      if (!db.chat.materials.some((m) => m.demoKey === key)) {
+        db.chat.materials.push({ id: crypto.createHash('sha256').update(key).digest('hex').slice(0, 24),
+          ch: 's:' + sub.id, teacherId: sub.teacherId, kind: 'other', title: 'Демонстрационный файл курса',
+          text: 'Пробный закреплённый файл для демонстрации работы канала предмета.',
+          file: { id: fileId, name: file.name, size: file.size }, at: Date.now(), pinned: true, demoKey: key });
+        created++;
+      }
+      seededSubjects.add(sub.id);
+      registryChanged = true;
+    }
+    if (registryChanged) db.chat.demoCourseMaterialSeededSubjects = [...seededSubjects];
+    if (created || fileChanged || registryChanged) saveDB();
+    if (created) console.log('[messages] seeded demo pinned course materials:', created);
+    return created;
+  }
+
   async function message(p, req, res, u, body, url) {
     const db = store();
     if (p === '/api/message/list' && req.method === 'GET') return ok(res, listView(db, u));
@@ -262,6 +324,14 @@ function createMessages(ctx) {
     }
     if (p === '/api/message/material' && req.method === 'POST') return postMaterial(db, u, body, res);
     if (p === '/api/message/material/edit' && req.method === 'POST') return editPost(db, u, body, res, 'material');
+    if (p === '/api/message/material/pin' && req.method === 'POST') {
+      const m = db.chat.materials.find((x) => x.id === body.id);
+      if (!m || !access(u, m.ch).manage) return bad(res, 403, 'Закреплять может преподаватель предмета');
+      const on = body.on === true;
+      for (const other of db.chat.materials) if (other.ch === m.ch) other.pinned = on && other === m;
+      saveDB();
+      return ok(res, { pinned: on });
+    }
     if (p === '/api/message/material/delete' && req.method === 'POST') return deletePost(db, u, body, res, 'material');
     if (p === '/api/message/task' && req.method === 'POST') return postTask(db, u, body, res);
     if (p === '/api/message/task/edit' && req.method === 'POST') return editPost(db, u, body, res, 'task');
@@ -316,11 +386,13 @@ function createMessages(ctx) {
     return false;
   }
 
-  return async function handle(p, req, res, u, body, url) {
+  const handle = async function handle(p, req, res, u, body, url) {
     if (p.startsWith('/api/message/')) return message(p, req, res, u, body, url);
     if (p.startsWith('/api/files')) return files(p, req, res, u, body, url);
     return false;
   };
+  handle.seedDemoMaterials = seedDemoMaterials;
+  return handle;
 }
 
 module.exports = { createMessages, MAX_FILE_BYTES };
