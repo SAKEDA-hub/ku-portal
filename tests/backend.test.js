@@ -15,6 +15,21 @@ const { installation } = require('./harness');
 
 const portalUser = { lastName: 'Example', firstName: 'Tester', email: 'person@example.test', group: 'ИСУ2025-1', password: 'local-test-password' };
 
+async function portalExamPair(app) {
+  const teacher = { ...portalUser, firstName:'Teacher', email:'exam-teacher@example.test', role:'teacher' };
+  const student = { ...portalUser, firstName:'Student', email:'exam-student@example.test', role:'student' };
+  for (const person of [teacher, student]) assert.equal((await app.request('/api/auth/register', { body:person })).status, 202);
+  const users = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users;
+  for (const user of users) app.cli('approve', user.id);
+  app.cli('groups', users.find(user => user.email === teacher.email).id, student.group);
+  const redeem = async person => {
+    const portalToken = (await app.request('/api/auth/login', { body:person })).value.token;
+    const code = (await app.request('/api/exam/handoff', { token:portalToken, body:{} })).value.code;
+    return { portalToken, exam: (await app.request('/exam-sync/api/portal/redeem', { body:{ code } })).value };
+  };
+  return { teacher, student, lecturer:await redeem(teacher), learner:await redeem(student) };
+}
+
 test('duplicate registration does not reveal an existing email and still uses the registration limit', async t => {
   const app = installation(t); await app.start();
   const person = { ...portalUser, role:'teacher' };
@@ -70,7 +85,8 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
         ['legacy-student', { id:'legacy-student', login:'ИСУ-25-1g-1', name:'Example Tester', role:'student', faculty:'ИСУ', year:25, group:1 }],
       ],
       tests:[['old-test', { id:'old-test', title:'Saved test', ownerId:'legacy-teacher', questions:[{ id:'q1', type:'single', text:'Q', options:['a'], correct:0, points:1 }] }]],
-      rooms:[], attempts:[['saved-attempt', { id:'saved-attempt', userId:'legacy-student', roomId:'old-room', testId:'old-test', testTitle:'Saved test', details:[], score:1, max:1 }]],
+      rooms:[['old-room', { id:'old-room', ownerId:'legacy-teacher', title:'Old room', groups:['ИСУ-25-1'], open:true, test:{ on:true, testIds:['old-test'] } }]],
+      attempts:[['saved-attempt', { id:'saved-attempt', userId:'legacy-student', roomId:'old-room', testId:'old-test', testTitle:'Saved test', details:[], score:1, max:1 }]],
       writings:[], queue:[], grades:[], timers:[],
     },
   };
@@ -84,6 +100,7 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
   const users = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users;
   const teacherPortal = users.find(u => u.email === teacher.email), studentPortal = users.find(u => u.email === student.email);
   app.cli('approve', teacherPortal.id); app.cli('approve', studentPortal.id);
+  app.cli('groups', teacherPortal.id, student.group);
   const teacherToken = (await app.request('/api/auth/login', { body:teacher })).value.token;
   const studentToken = (await app.request('/api/auth/login', { body:student })).value.token;
   const issue = token => app.request('/api/exam/handoff', { token, body:{} });
@@ -120,11 +137,9 @@ test('online exam uses the approved KU Portal ID and keeps matched legacy work',
 
 test('online exam migrates embedded media out of JSON and serves the same content after restart', async t => {
   const app = installation(t);
-  const salt = '0123456789abcdef';
-  const passHash = crypto.createHash('sha256').update(salt + 'teacher-password').digest('hex');
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/w2sAAAAASUVORK5CYII=';
   const snapshot = { format:2, rev:1, db:{
-    users:[['teacher', { id:'teacher', login:'teacher', name:'Teacher', role:'teacher', salt, passHash }]],
+    users:[['teacher', { id:'teacher', login:'teacher', name:'Example Teacher', role:'teacher' }]],
     tests:[['media-test', { id:'media-test', title:'Media test', ownerId:'teacher', questions:[{ id:'q1', text:'Question', media:[{ kind:'image', name:'image.png', src:image }] }] }]],
     rooms:[], attempts:[], writings:[], queue:[], grades:[], timers:[],
   } };
@@ -132,7 +147,15 @@ test('online exam migrates embedded media out of JSON and serves the same conten
   await app.start();
 
   const call = (route, options) => app.request('/exam-sync/api/' + route, options);
-  let session = await call('login', { body:{ login:'teacher', password:'teacher-password' } });
+  const teacher = { lastName:'Example', firstName:'Teacher', email:'teacher@example.test', password:'teacher-password', role:'teacher' };
+  assert.equal((await app.request('/api/auth/register', { body:teacher })).status, 202);
+  const portalId = JSON.parse(fs.readFileSync(path.join(app.data, 'db.json'))).users[0].id;
+  app.cli('approve', portalId);
+  const portalLogin = await app.request('/api/auth/login', { body:teacher });
+  assert.equal(portalLogin.status, 200);
+  const handoff = await app.request('/api/exam/handoff', { token:portalLogin.value.token, body:{} });
+  assert.equal(handoff.status, 200);
+  let session = await call('portal/redeem', { body:{ code:handoff.value.code } });
   assert.equal(session.status, 200);
   assert.equal(session.value.db.tests[0].questions[0].media[0].src, image);
   const dbFile = path.join(app.data, 'exam-sync.json');
@@ -142,7 +165,7 @@ test('online exam migrates embedded media out of JSON and serves the same conten
   assert.equal(fs.readdirSync(path.join(app.data, 'exam-media')).filter(name => /^[a-f0-9]{64}$/.test(name)).length, 1);
 
   await app.stop(); await app.start();
-  session = await call('login', { body:{ login:'teacher', password:'teacher-password' } });
+  session = await call('state', { token:session.value.token });
   assert.equal(session.status, 200);
   assert.equal(session.value.db.tests[0].questions[0].media[0].src, image);
 });
@@ -170,8 +193,9 @@ test('production upgrade preserves exam IDs and results, retires old credentials
   assert.deepEqual(Object.keys(student.db.users[0]).sort(), ['id','login','name','role']);
   const teacher = (await signIn({ login: 'examiner', password: teacherPassword })).value;
   assert.ok(teacher.db.users.every(u => !('password' in u || 'passHash' in u || 'salt' in u)));
-  assert.equal(teacher.db.attempts.length, seed.db.attempts.length);
+  assert.equal(teacher.db.attempts.length, 0); // без назначенных групп чужие результаты скрыты
   const stored = JSON.parse(fs.readFileSync(path.join(app.data, 'exam-sync.json')));
+  assert.equal(stored.db.attempts.length, seed.db.attempts.length); // записи сохранены
   assert.ok(stored.db.users.every(([,u]) => !('password' in u)));
   assert.equal(stored.db.users.find(([id]) => id === old.id)[1].passAlgo, 'scrypt');
   assert.deepEqual(fs.readdirSync(path.join(app.data, 'exam-provision')), []);
@@ -182,24 +206,18 @@ test('production upgrade preserves exam IDs and results, retires old credentials
   assert.equal((await call('state', { token: teacher.token })).status, 200); // остальные сеансы переживают перезапуск
 });
 
-test('exam teacher and student complete a test, change a password and grade a written submission', async t => {
-  const app = installation(t, true); await app.start();
+test('portal teacher and student complete a test, change a password and grade a written submission', async t => {
+  const app = installation(t); await app.start();
   const call = (name, token, body) => app.request('/exam-sync/api/' + name, { token, body });
-  const sign = async (login, password) => {
-    const response = await call('login', null, { login, password }); assert.equal(response.status, 200); return response.value;
-  };
-  const teacher = await sign('teacher', 'admin');
-  const token = teacher.token;
-  let created = await call('student', token, { login: 'learner', name: 'Learner', password: 'individual-password' });
-  assert.equal(created.status, 200);
-  const learner = await sign('learner', 'individual-password'), who = learner.token;
+  const pair = await portalExamPair(app);
+  const token = pair.lecturer.exam.token, learner = pair.learner.exam, who = learner.token;
   const roomId = 'room-integration', testId = 'test-integration';
   const exam = { id: testId, title: 'Exam', timeLimit: 10, passPercent: 60, showAnswers: false,
     questions: [{ id:'q1', type:'single', text:'Choose', options:['a', 'b'], correct:1, points:2 }] };
-  const room = { id: roomId, title:'Room', open:true, test:{ on:true, testIds:[testId], max:40 },
+  const room = { id: roomId, title:'Room', open:true, groups:[pair.student.group], test:{ on:true, testIds:[testId], max:40 },
     writing:{ on:true, minutes:0, max:30 }, speaking:{ on:true, max:30 } };
   const up = (...rows) => ({ up:rows, del:[] });
-  const update = await call('sync', token, { rev: learner.rev, changes: { tests:up(exam), rooms:up(room) } });
+  const update = await call('sync', token, { rev: (await call('state', token)).value.rev, changes: { tests:up(exam), rooms:up(room) } });
   assert.equal(update.status, 200);
   const run = await call('start', who, { roomId, testId });
   assert.equal(run.status, 200);
@@ -218,15 +236,18 @@ test('exam teacher and student complete a test, change a password and grade a wr
   const grade = { rev: submitted.value.rev, changes:{ grades:up(mark) } };
   assert.equal((await call('sync', who, grade)).status, 403);
   assert.equal((await call('sync', token, grade)).status, 403);
-  assert.equal((await call('grade-unlock', token, { password:'admin' })).status, 200);
+  assert.equal((await call('grade-unlock', token, { password:pair.teacher.password })).status, 200);
   assert.equal((await call('sync', token, grade)).status, 200);
   assert.equal((await call('state', who)).value.db.grades[0].score, 18);
-  const other = await sign('learner', 'individual-password');
-  assert.equal((await call('password', who, { password:'individual-password', next:'new-individual-password' })).status, 200);
-  assert.equal((await call('state', other.token)).status, 401);
-  assert.equal((await call('state', who)).status, 200);
-  assert.equal(fs.existsSync(path.join(app.data, 'db.json')), false);
-  assert.equal(fs.existsSync(path.join(app.data, 'demo', 'db.json')), true);
+  const otherPortalToken = (await app.request('/api/auth/login', { body:pair.student })).value.token;
+  const otherCode = (await app.request('/api/exam/handoff', { token:otherPortalToken, body:{} })).value.code;
+  const otherExamToken = (await app.request('/exam-sync/api/portal/redeem', { body:{ code:otherCode } })).value.token;
+  assert.equal((await app.request('/api/auth/password', { token:pair.learner.portalToken,
+    body:{ current:pair.student.password, next:'new-individual-password' } })).status, 200);
+  assert.equal((await call('state', otherExamToken)).status, 401);
+  assert.equal((await call('state', who)).status, 200); // текущий сеанс портала сохраняется
+  assert.equal((await app.request('/api/auth/login', { body:pair.student })).status, 401);
+  assert.equal((await app.request('/api/auth/login', { body:{ ...pair.student, password:'new-individual-password' } })).status, 200);
 });
 
 test('student question projection and scoring cover all supported question types', () => {
@@ -257,13 +278,13 @@ test('a student can only remove their own waiting queue entry', () => {
 });
 
 test('timed writing reveals its prompt after server start and preserves the submitted text on retries', async t => {
-  const app = installation(t, true); await app.start();
+  const app = installation(t); await app.start();
   const call = (name, token, body) => app.request('/exam-sync/api/' + name, { token, body });
-  const lecturer = (await call('login', null, { login:'teacher', password:'admin' })).value;
-  const student = (await call('login', null, { login:'user3', password:'1' })).value;
-  const room = { id:'timed-room', title:'Writing', open:true, test:{on:false,testIds:[]},
+  const pair = await portalExamPair(app);
+  const lecturer = pair.lecturer.exam, student = pair.learner.exam;
+  const room = { id:'timed-room', title:'Writing', open:true, groups:[pair.student.group], test:{on:false,testIds:[]},
     writing:{on:true,minutes:10,prompt:'Write a short essay'}, speaking:{on:false} };
-  await call('sync', lecturer.token, { rev:lecturer.rev, changes:{rooms:{up:[room],del:[]}} });
+  assert.equal((await call('sync', lecturer.token, { rev:(await call('state', lecturer.token)).value.rev, changes:{rooms:{up:[room],del:[]}} })).status, 200);
   const state = (await call('state', student.token)).value;
   assert.equal(state.db.rooms.find(r => r.id === room.id).writing.prompt, '');
   const body = { roomId:room.id, text:'Written work' };
@@ -313,19 +334,12 @@ test('behind a trusted proxy limits and sessions use the visitor address and HST
   assert.equal((await call('/api/auth/login', { body: portalUser, headers: { 'x-forwarded-for': '192.0.2.4' } })).status, 200);
 });
 
-test('results database login is limited per visitor address and the owner can still sign in', async t => {
+test('results database rejects direct login from every visitor address', async t => {
   const app = installation(t, false, { KU_TRUSTED_PROXIES: '127.0.0.0/8' });
-  const salt = crypto.randomBytes(16).toString('hex');
-  const passHash = crypto.scryptSync('results-password', salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }).toString('hex');
-  fs.writeFileSync(path.join(app.data, 'results.json'), JSON.stringify({ version: 1, tests: [], components: [], results: [], scores: [],
-    users: [{ id: 'user_1', username: 'pupil', role: 'teacher', salt, passHash, passAlgo: 'scrypt' }] }));
   await app.start();
-  const login = (password, ip) => app.request('/api/results/login', { body: { username: 'pupil', password }, headers: { 'x-forwarded-for': ip } });
-  for (let i = 0; i < 5; i++) assert.equal((await login('wrong', '192.0.2.50')).status, 401);
-  assert.equal((await login('results-password', '192.0.2.50')).status, 429);
-  const owner = await login('results-password', '192.0.2.51');
-  assert.equal(owner.status, 200);
-  assert.equal((await app.request('/api/results/me', { token: owner.value.token })).value.user.username, 'pupil');
+  // Прямой вход в учебную базу закрыт для всех: только сеанс KU Portal с правом results.
+  assert.equal((await app.request('/api/results/login', { body:{ username:'pupil', password:'wrong' }, headers:{ 'x-forwarded-for':'192.0.2.50' } })).status, 403);
+  assert.equal((await app.request('/api/results/login', { body:{ username:'pupil', password:'results-password' }, headers:{ 'x-forwarded-for':'192.0.2.51' } })).status, 403);
   assert.equal((await app.request('/api/results/login', { body: 'x'.repeat(10) })).status, 400);
 });
 
